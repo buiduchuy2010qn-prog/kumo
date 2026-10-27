@@ -389,7 +389,7 @@ namespace Kumo
             DrawCenterText(g, badgeTxt, _fBadge, IsLight ? Color.FromArgb(3, 105, 161) : Color.FromArgb(125, 195, 255), verBadge);
 
             // Quick Theme Mode Pill + Language Switcher Pill on Right
-            string themeLabel = (_state.UiThemeMode == 0) ? (_state.IsVietnamese ? "\u2600 S\u00E1ng to\u00E0n b\u1ED9" : "\u2600 Full Light") : ((_state.UiThemeMode == 1) ? (_state.IsVietnamese ? "\u25CF Tai th\u1ECF \u0110en" : "\u25CF Black Notch") : (_state.IsVietnamese ? "\u25D0 T\u1ED1i" : "\u25D0 Dark"));
+            string themeLabel = _state.IsSettingsLight ? (_state.IsVietnamese ? "\u2600 B\u1EA3ng S\u00E1ng" : "\u2600 Light Panel") : (_state.IsVietnamese ? "\u25D0 B\u1EA3ng T\u1ED1i" : "\u25D0 Dark Panel");
             RectangleF themeRect = new RectangleF(winW - U(304f), U(11f), U(110f), U(26f));
             DrawActionPill(g, "toggle_theme", themeRect, themeLabel, false);
 
@@ -612,14 +612,13 @@ namespace Kumo
                 _state.T("Cài đặt chung", "General Settings"),
                 _state.T("Quản lý khởi động, kích thước tai thỏ, linh vật Kumo và chế độ thu nhỏ thông minh.", "Configure startup, notch size, Kumo mascot, and smart minimal behavior."));
 
-            y = DrawSectionHeader(g, x, y, _state.T("GIAO DIỆN SÁNG / TỐI (EYE-CARE THEME)", "INTERFACE THEME"));
+            y = DrawSectionHeader(g, x, y, _state.T("GIAO DI\u1EC6N B\u1EA2NG QU\u1EA2N L\u00DD (PANEL THEME)", "CONTROL PANEL THEME"));
             y = DrawSegmentedCard(g, x, y, w, "seg_theme_",
-                _state.T("Chế độ màu giao diện", "Color theme mode"),
-                _state.T("Giao diện Sáng dịu mắt giúp đọc chữ rõ nét, không chói tối.", "Soft daylight theme protects your eyes from dark-screen glare."),
+                _state.T("M\u00E0u n\u1EC1n b\u1EA3ng Qu\u1EA3n L\u00FD C\u00E0i \u0110\u1EB7t", "Settings panel appearance"),
+                _state.T("B\u1EA3ng qu\u1EA3n l\u00FD tr\u1EAFng s\u00E1ng d\u1ECBu m\u1EAFt; tai th\u1ECF lu\u00F4n gi\u1EEF m\u00E0u \u0111en nh\u01B0 c\u0169.", "White eye-care control panel; the notch stays classic black."),
                 new string[] {
-                    _state.T("☀ Sáng toàn bộ", "☀ Full Light"),
-                    _state.T("🌗 Tai thỏ Đen", "🌗 Black Notch"),
-                    _state.T("🌙 Tối", "🌙 Dark")
+                    _state.T("\u2600 Tr\u1EAFng s\u00E1ng", "\u2600 Light"),
+                    _state.T("\u25D0 T\u1ED1i", "\u25D0 Dark")
                 },
                 _state.UiThemeMode);
             y += U(8f);
@@ -1262,13 +1261,13 @@ namespace Kumo
             }
             if (id == "toggle_theme")
             {
-                _state.UiThemeMode = (_state.UiThemeMode + 1) % 3;
+                _state.UiThemeMode = (_state.UiThemeMode == 0) ? 1 : 0;
                 SaveAndApply();
                 return;
             }
             if (id.StartsWith("seg_theme_"))
             {
-                int tm; if (int.TryParse(id.Substring("seg_theme_".Length), out tm) && tm >= 0 && tm <= 2) { _state.UiThemeMode = tm; SaveAndApply(); }
+                int tm; if (int.TryParse(id.Substring("seg_theme_".Length), out tm) && tm >= 0 && tm <= 1) { _state.UiThemeMode = tm; SaveAndApply(); }
                 return;
             }
             if (id == "toggle_lang")

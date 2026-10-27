@@ -24,11 +24,11 @@ namespace Kumo
 
         // ==================== GENERAL & NOTCH SETTINGS ====================
         public bool IsVietnamese = true;
-        public int UiThemeMode = 1; // 0: Light All, 1: Light Settings + Nusa Black Notch (Default), 2: Dark
+        public int UiThemeMode = 0; // 0: White/Light Control Panel (Default), 1: Dark Control Panel (Notch is ALWAYS Classic Black)
         public int ThemeIndex = 0;
 
-        public bool IsSettingsLight { get { return UiThemeMode != 2; } }
-        public bool IsNotchLight { get { return UiThemeMode == 0; } }
+        public bool IsSettingsLight { get { return UiThemeMode == 0; } }
+        public bool IsNotchLight { get { return false; } }
         public int MonitorIndex = 0;
         public int CompactMode = 0;
 
@@ -156,7 +156,7 @@ namespace Kumo
 
         public void ResetDefaults()
         {
-            UiThemeMode = 1;
+            UiThemeMode = 0;
             NotchSizePreset = 0;
             AlwaysMinimal = false;
             AutoMinimalEnabled = true;
@@ -227,7 +227,7 @@ namespace Kumo
                         string v = line.Substring(eq + 1).Trim();
                         if (k == "lang") IsVietnamese = (v == "vi");
                         else if (k == "theme") int.TryParse(v, out ThemeIndex);
-                        else if (k == "ui_theme_mode") { int.TryParse(v, out UiThemeMode); if (UiThemeMode < 0 || UiThemeMode > 2) UiThemeMode = 1; }
+                        else if (k == "ui_theme_mode") { int.TryParse(v, out UiThemeMode); if (UiThemeMode < 0 || UiThemeMode > 2) UiThemeMode = 0; }
                         else if (k == "monitor") int.TryParse(v, out MonitorIndex);
                         else if (k == "compact") int.TryParse(v, out CompactMode);
                         else if (k == "size_preset") int.TryParse(v, out NotchSizePreset);
@@ -353,7 +353,7 @@ namespace Kumo
             {
                 StringBuilder sb = new StringBuilder();
                 sb.AppendLine("lang=" + (IsVietnamese ? "vi" : "en"));
-                sb.AppendLine("ui_theme_v2=" + UiThemeMode);
+                sb.AppendLine("panel_theme_mode=" + UiThemeMode);
                 sb.AppendLine("theme=" + ThemeIndex);
                 sb.AppendLine("monitor=" + MonitorIndex);
                 sb.AppendLine("compact=" + CompactMode);
