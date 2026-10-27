@@ -10,8 +10,7 @@ using System.Windows.Forms;
 [assembly: AssemblyCompany("Kumo Desktop")]
 [assembly: AssemblyProduct("Kumo")]
 [assembly: AssemblyCopyright("Copyright © 2026 Kumo Desktop")]
-[assembly: AssemblyVersion("1.0.0.0")]
-[assembly: AssemblyFileVersion("1.0.0.0")]
+// Dynamic version via BuildInfo.g.cs
 
 namespace Kumo
 {

@@ -8,63 +8,134 @@ on:
     branches: [ "main" ]
   workflow_dispatch:
     inputs:
-      release_tag:
-        description: "Tag phien ban de phat hanh Release (vd: v1.0.0, de trong neu chi build Artifact)"
+      custom_version:
+        description: "Số phiên bản tuỳ ý (vd: 1.2.0, 2.0.5-beta; để trống sẽ tự nhảy 1.1.<số_build>)"
         required: false
-        default: "v1.0.0"
+        default: ""
+      publish_release:
+        description: "Phát hành / ghi đè trực tiếp lên GitHub Releases (Latest)"
+        required: false
+        type: boolean
+        default: true
 
 permissions:
   contents: write
 
 jobs:
   build-windows:
-    name: Build KumoSetup.exe on GitHub Cloud (x64)
+    name: Build & Overwrite-Test KumoSetup.exe (x64)
     runs-on: windows-latest
     steps:
       - name: Checkout mã nguồn
         uses: actions/checkout@v4
 
-      - name: Tạo Icon & Biên dịch KumoSetup.exe trên GitHub Cloud
+      - name: Xác định số phiên bản động (Dynamic Version)
+        id: ver
         shell: pwsh
         run: |
+          $v = "${{ inputs.custom_version }}".Trim()
+          if ([string]::IsNullOrWhiteSpace($v)) {
+            if ($env:GITHUB_REF -like "refs/tags/*") {
+              $v = $env:GITHUB_REF_NAME
+            } else {
+              $v = "1.1.${{ github.run_number }}"
+            }
+          }
+          $cleanVer = $v.TrimStart('v', 'V').Trim()
+          if ([string]::IsNullOrWhiteSpace($cleanVer)) { $cleanVer = "1.1.${{ github.run_number }}" }
+          $tag = "v$cleanVer"
+          "version=$cleanVer" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "tag=$tag" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          Write-Host "Resolved Dynamic Version = $cleanVer (Release Tag = $tag)"
+
+      - name: Tạo Icon, Biên dịch & Kiểm thử Cài Đè Trực Tiếp (Live Overwrite Test)
+        shell: pwsh
+        run: |
+          $targetVer = "${{ steps.ver.outputs.version }}"
           Remove-Item .\Kumo.ico -Force -ErrorAction SilentlyContinue
           powershell -ExecutionPolicy Bypass -File .\GenerateLogo.ps1 -OutDir .
-          powershell -ExecutionPolicy Bypass -File .\build.ps1
 
-      - name: Kiểm thử tự động & Tạo mã băm SHA256
-        shell: pwsh
-        run: |
+          Write-Host "=== Bước A: Giả lập bản cũ v1.0.0 đang chạy trên máy ==="
+          powershell -ExecutionPolicy Bypass -File .\build.ps1 -Version "1.0.0"
+          Start-Process -FilePath .\KumoSetup.exe -ArgumentList @("--silent") -Wait
+          $installDir = Join-Path $env:LOCALAPPDATA "Programs\Kumo"
+          $installedExe = Join-Path $installDir "Kumo.exe"
+          $dataDir = Join-Path $env:LOCALAPPDATA "Kumo"
+          New-Item -ItemType Directory -Path $dataDir -Force | Out-Null
+          $markerFile = Join-Path $dataDir "keep_userdata_test.json"
+          '{"keepUserData":true}' | Set-Content -Path $markerFile -Encoding UTF8
+
+          $runningOld = Start-Process -FilePath $installedExe -PassThru
+          Start-Sleep -Milliseconds 900
+
+          Write-Host "=== Bước B: Biên dịch bản động mới v$targetVer ==="
+          powershell -ExecutionPolicy Bypass -File .\build.ps1 -Version "$targetVer"
+
           New-Item -ItemType Directory -Path .\artifacts_preview -Force | Out-Null
           Start-Process -FilePath .\KumoSetup.exe -ArgumentList @("--preview-setup", ".\artifacts_preview") -Wait
           if (-not (Test-Path ".\artifacts_preview\preview_kumo_setup_welcome.png")) {
             throw "Setup UI smoke test failed!"
           }
+
+          Write-Host "=== Bước C: Chạy KumoSetup.exe CÀI ĐÈ trực tiếp lên bản v1.0.0 đang chạy ==="
+          Start-Process -FilePath .\KumoSetup.exe -ArgumentList @("--silent") -Wait
+
+          $newProdVer = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($installedExe).ProductVersion
+          $regVer = (Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Kumo").DisplayVersion
+          Write-Host "Installed ProductVersion after overwrite = $newProdVer | Registry DisplayVersion = $regVer"
+          if ($regVer -ne $targetVer) {
+            throw "Overwrite Registry DisplayVersion mismatch: expected $targetVer, got $regVer"
+          }
+          if (-not (Test-Path $markerFile)) {
+            throw "User data was NOT preserved during in-place overwrite!"
+          }
+          Write-Host "LIVE OVERWRITE TEST PASSED: v1.0.0 -> v$targetVer (User data preserved!)"
+
+          Start-Process -FilePath .\KumoSetup.exe -ArgumentList @("--uninstall", "--silent") -Wait
+
           $hash = (Get-FileHash .\KumoSetup.exe -Algorithm SHA256).Hash.ToLower()
           "$hash  KumoSetup.exe" | Set-Content -Path .\SHA256SUMS.txt -Encoding ASCII
           Get-Item .\Kumo.exe, .\KumoSetup.exe, .\SHA256SUMS.txt | Select-Object Name, Length
-          Write-Host "SHA256(KumoSetup.exe) = $hash"
+          Write-Host "SHA256(KumoSetup.exe v$targetVer) = $hash"
 
       - name: Đóng gói KumoSetup Artifact trên GitHub
         uses: actions/upload-artifact@v4
         with:
-          name: KumoSetup-Windows-x64
+          name: KumoSetup-v${{ steps.ver.outputs.version }}-Windows-x64
           path: |
             KumoSetup.exe
             SHA256SUMS.txt
+            artifacts_preview/*.png
 
-      - name: Tự động phát hành / cập nhật GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
+      - name: Tự động phát hành / ghi đè GitHub Release (Latest)
+        if: github.event_name != 'pull_request' && (github.event_name != 'workflow_dispatch' || inputs.publish_release == true)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: pwsh
         run: |
-          $tag = "${{ inputs.release_tag }}"
-          if ([string]::IsNullOrWhiteSpace($tag)) { $tag = $env:GITHUB_REF_NAME }
-          Write-Host "Uploading cloud-built KumoSetup.exe to GitHub Release $tag..."
+          $tag = "${{ steps.ver.outputs.tag }}"
+          $hash = (Get-Content .\SHA256SUMS.txt -Raw).Trim()
+          $tpl = @'
+          ## ☁️ Kumo __TAG__ — Official Overwrite-Ready Setup (Windows 10/11 x64)
+
+          - **Phiên bản động (Dynamic Build)**: `__TAG__` (đóng dấu tự động vào `Kumo.exe`, `KumoSetup.exe`, Windows Apps & Features).
+          - **Hỗ trợ Cài Đè Trực Tiếp (In-Place Overwrite)**: Chạy `KumoSetup.exe` đè thẳng lên bất kỳ bản Kumo cũ nào đang mở (tự đóng tiến trình cũ an toàn, không lỗi khoá tệp, **giữ nguyên 100% cài đặt & dữ liệu**), hoặc nhấn **Kiểm tra & Cài đè** ngay trong **Kumo Settings → Giới thiệu**.
+
+          ### Kiểm tra toàn vẹn (SHA-256)
+          ```text
+          __HASH__
+          ```
+          '@
+          $lines = ($tpl -split "`r?`n") | ForEach-Object { if ($_.Length -ge 10) { $_.Substring(10) } else { $_ } }
+          $notes = ($lines -join "`n").Replace('__TAG__', $tag).Replace('__HASH__', $hash)
+          $notesFile = Join-Path $env:RUNNER_TEMP "release_notes.md"
+          [System.IO.File]::WriteAllText($notesFile, $notes, (New-Object System.Text.UTF8Encoding($false)))
+
           $exists = $true
           try { gh release view $tag | Out-Null } catch { $exists = $false }
           if (-not $exists) {
-            gh release create $tag .\KumoSetup.exe .\SHA256SUMS.txt --title "Kumo $tag — Official Windows Setup" --generate-notes
+            gh release create $tag .\KumoSetup.exe .\SHA256SUMS.txt --title "Kumo $tag - Official Windows Setup (Overwrite-Ready)" --notes-file $notesFile --latest
           } else {
             gh release upload $tag .\KumoSetup.exe .\SHA256SUMS.txt --clobber
+            gh release edit $tag --title "Kumo $tag - Official Windows Setup (Overwrite-Ready)" --notes-file $notesFile --latest
           }

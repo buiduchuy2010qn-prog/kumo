@@ -309,7 +309,7 @@ namespace Kumo
                 {
                     Todos.Add(new TodoItem { Done = false, Text = "Theo dõi hiệu năng CPU / SSD / GPU" });
                     Todos.Add(new TodoItem { Done = false, Text = "Uống đủ 2.0L nước hôm nay" });
-                    Todos.Add(new TodoItem { Done = true, Text = "Cài đặt thành công Kumo v1.0" });
+                    Todos.Add(new TodoItem { Done = true, Text = "Cài đặt thành công Kumo v" + KumoBuildInfo.Version });
                 }
             }
             catch { }

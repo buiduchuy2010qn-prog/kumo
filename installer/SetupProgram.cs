@@ -19,8 +19,7 @@ using Microsoft.Win32;
 [assembly: AssemblyCompany("Kumo Desktop")]
 [assembly: AssemblyProduct("Kumo")]
 [assembly: AssemblyCopyright("Copyright © 2026 Kumo Desktop")]
-[assembly: AssemblyVersion("1.0.0.0")]
-[assembly: AssemblyFileVersion("1.0.0.0")]
+// Dynamic version injected via BuildInfo.g.cs
 
 namespace KumoSetup
 {
@@ -178,11 +177,45 @@ namespace KumoSetup
                 }
             }
             catch { }
+            string defDir = GetDefaultInstallDir();
+            if (File.Exists(Path.Combine(defDir, "Kumo.exe"))) return defDir;
+            return null;
+        }
+
+        public static string GetInstalledVersion()
+        {
+            try
+            {
+                using (RegistryKey rk = Registry.CurrentUser.OpenSubKey(UninstallRegKey, false))
+                {
+                    if (rk != null)
+                    {
+                        object dv = rk.GetValue("DisplayVersion");
+                        if (dv != null && !string.IsNullOrEmpty(dv.ToString())) return dv.ToString();
+                    }
+                }
+            }
+            catch { }
+            try
+            {
+                string dir = GetExistingInstallDir();
+                if (!string.IsNullOrEmpty(dir))
+                {
+                    string exe = Path.Combine(dir, "Kumo.exe");
+                    if (File.Exists(exe))
+                    {
+                        string fv = FileVersionInfo.GetVersionInfo(exe).ProductVersion;
+                        if (!string.IsNullOrEmpty(fv)) return fv;
+                    }
+                }
+            }
+            catch { }
             return null;
         }
 
         public static void StopRunningProcesses()
         {
+            int selfPid = Process.GetCurrentProcess().Id;
             string[] names = new string[] { "Kumo", "PulseNotch" };
             for (int n = 0; n < names.Length; n++)
             {
@@ -193,14 +226,73 @@ namespace KumoSetup
                     {
                         try
                         {
-                            p.Kill();
-                            p.WaitForExit(1500);
+                            if (p.Id == selfPid) continue;
+                            try { p.CloseMainWindow(); } catch { }
+                            if (!p.WaitForExit(250))
+                            {
+                                p.Kill();
+                                p.WaitForExit(2500);
+                            }
                         }
                         catch { }
                     }
                 }
                 catch { }
             }
+        }
+
+        public static void WriteBytesOverwriteSafe(string targetPath, byte[] bytes)
+        {
+            string dir = Path.GetDirectoryName(targetPath);
+            if (!string.IsNullOrEmpty(dir))
+            {
+                Directory.CreateDirectory(dir);
+                try
+                {
+                    string[] staleOlds = Directory.GetFiles(dir, "*.old_*");
+                    for (int i = 0; i < staleOlds.Length; i++)
+                    {
+                        try { File.Delete(staleOlds[i]); } catch { }
+                    }
+                }
+                catch { }
+            }
+
+            Exception lastErr = null;
+            for (int attempt = 0; attempt < 10; attempt++)
+            {
+                try
+                {
+                    if (File.Exists(targetPath))
+                    {
+                        FileAttributes attrs = File.GetAttributes(targetPath);
+                        if ((attrs & FileAttributes.ReadOnly) != 0)
+                        {
+                            File.SetAttributes(targetPath, attrs & ~FileAttributes.ReadOnly);
+                        }
+                    }
+                    using (FileStream fs = new FileStream(targetPath, FileMode.Create, FileAccess.Write, FileShare.None))
+                    {
+                        fs.Write(bytes, 0, bytes.Length);
+                    }
+                    return;
+                }
+                catch (Exception ex)
+                {
+                    lastErr = ex;
+                    if (attempt == 3 && File.Exists(targetPath))
+                    {
+                        try
+                        {
+                            string movedOld = targetPath + ".old_" + Environment.TickCount;
+                            File.Move(targetPath, movedOld);
+                        }
+                        catch { }
+                    }
+                    Thread.Sleep(160);
+                }
+            }
+            if (lastErr != null) throw lastErr;
         }
 
         private static void CleanupLegacyBetaIfAny()
@@ -246,20 +338,28 @@ namespace KumoSetup
             string targetExe = Path.Combine(installDir, "Kumo.exe");
             string uninstExe = Path.Combine(installDir, "Uninstall.exe");
 
+            byte[] payloadBytes;
             using (Stream res = Assembly.GetExecutingAssembly().GetManifestResourceStream("Kumo.Payload.gz"))
             {
                 if (res == null) throw new InvalidOperationException("Missing embedded Kumo.Payload.gz resource.");
                 using (GZipStream gz = new GZipStream(res, CompressionMode.Decompress))
-                using (FileStream fs = new FileStream(targetExe, FileMode.Create, FileAccess.Write, FileShare.None))
+                using (MemoryStream ms = new MemoryStream())
                 {
-                    gz.CopyTo(fs);
+                    gz.CopyTo(ms);
+                    payloadBytes = ms.ToArray();
                 }
             }
+            WriteBytesOverwriteSafe(targetExe, payloadBytes);
 
             string selfExe = Application.ExecutablePath;
             if (!string.Equals(Path.GetFullPath(selfExe), Path.GetFullPath(uninstExe), StringComparison.OrdinalIgnoreCase))
             {
-                File.Copy(selfExe, uninstExe, true);
+                try
+                {
+                    byte[] selfBytes = File.ReadAllBytes(selfExe);
+                    WriteBytesOverwriteSafe(uninstExe, selfBytes);
+                }
+                catch { }
             }
 
             Thread.Sleep(160);
@@ -310,7 +410,7 @@ namespace KumoSetup
                 if (rk != null)
                 {
                     rk.SetValue("DisplayName", "Kumo");
-                    rk.SetValue("DisplayVersion", "1.0.0");
+                    rk.SetValue("DisplayVersion", KumoBuildInfo.Version);
                     rk.SetValue("Publisher", "Kumo Desktop");
                     rk.SetValue("DisplayIcon", targetExe);
                     rk.SetValue("InstallLocation", installDir);
@@ -335,7 +435,7 @@ namespace KumoSetup
             }
 
             Thread.Sleep(140);
-            if (onProgress != null) onProgress(1.0f, 4, "Cài đặt chính thức Kumo v1.0.0 hoàn tất!", "Official Kumo v1.0.0 installation complete!");
+            if (onProgress != null) onProgress(1.0f, 4, "Cài đặt / Cài đè Kumo v" + KumoBuildInfo.Version + " hoàn tất!", "Kumo v" + KumoBuildInfo.Version + " installation complete!");
         }
 
         public static void PerformUninstall(string installDir, bool removeUserData)
@@ -466,7 +566,7 @@ namespace KumoSetup
             _installDir = !string.IsNullOrEmpty(existing) ? existing : InstallerCore.GetDefaultInstallDir();
             _step = uninstallMode ? 10 : 0;
 
-            Text = uninstallMode ? "Uninstall Kumo" : "Kumo Setup — Official v1.0.0";
+            Text = uninstallMode ? "Uninstall Kumo" : ("Kumo Setup — Official v" + KumoBuildInfo.Version);
             FormBorderStyle = FormBorderStyle.None;
             StartPosition = FormStartPosition.CenterScreen;
             BackColor = Color.FromArgb(16, 19, 28);
@@ -640,7 +740,7 @@ namespace KumoSetup
                 }
             }
 
-            // Center Brand Title + "OFFICIAL v1.0.0" Pill Badge
+            // Center Brand Title + Dynamic OFFICIAL Version Pill Badge
             if (_step >= 10)
             {
                 DrawCenterText(g, T("Gỡ cài đặt Kumo", "Uninstall Kumo"), _fBrand, Color.White, new RectangleF(U(20f), U(44f), winW - U(40f), U(34f)));
@@ -650,7 +750,7 @@ namespace KumoSetup
             {
                 string brandTxt = "Kumo";
                 SizeF bSz = g.MeasureString(brandTxt, _fBrand);
-                float badgeW = U(118f);
+                string setupBadgeTxt = "OFFICIAL v" + KumoBuildInfo.Version; float badgeW = Math.Max(U(118f), g.MeasureString(setupBadgeTxt, _fBadge).Width + U(24f));
                 float totalHdrW = bSz.Width + U(8f) + badgeW;
                 float startHdrX = (winW - totalHdrW) * 0.5f;
 
@@ -664,7 +764,7 @@ namespace KumoSetup
                     g.FillPath(bb, bp);
                     g.DrawPath(bPen, bp);
                 }
-                DrawCenterText(g, "OFFICIAL v1.0.0", _fBadge, Color.FromArgb(125, 211, 252), offBadge);
+                DrawCenterText(g, setupBadgeTxt, _fBadge, Color.FromArgb(125, 211, 252), offBadge);
 
                 DrawCenterText(g,
                     T("Trình cài đặt chính thức Tai thỏ sống động Kumo cho Windows 10 & 11", "Official Living Notch Installer for Windows 10 & 11 (64-bit)"),
@@ -725,13 +825,21 @@ namespace KumoSetup
                 {
                     g.DrawPath(sp, gp);
                 }
+                string oldVer = InstallerCore.GetInstalledVersion();
+                bool hasExisting = (InstallerCore.GetExistingInstallDir() != null);
+                string specText = hasExisting && !string.IsNullOrEmpty(oldVer)
+                    ? T("Đang cài v" + oldVer + "  →  Cài đè lên v" + KumoBuildInfo.Version + " (Giữ nguyên dữ liệu)",
+                        "Installed v" + oldVer + "  →  Overwrite with v" + KumoBuildInfo.Version + " (Data kept)")
+                    : (T("Đích cài đặt: ", "Destination: ") + TruncateMiddle(_installDir, 44));
+
                 DrawLeftText(g,
-                    T("Đích cài đặt: ", "Destination: ") + TruncateMiddle(_installDir, 44),
-                    _fSmall, Color.FromArgb(168, 178, 202), specBar.X + U(14f), specBar.Y + specBar.Height * 0.5f);
+                    specText,
+                    _fSmall,
+                    hasExisting ? Color.FromArgb(52, 211, 153) : Color.FromArgb(168, 178, 202),
+                    specBar.X + U(14f), specBar.Y + specBar.Height * 0.5f);
                 DrawSecondaryBtn(g, "go_custom", new RectangleF(specBar.Right - U(104f), specBar.Y + U(6f), U(94f), U(26f)),
                     T("Tùy chỉnh...", "Customize..."));
 
-                bool hasExisting = (InstallerCore.GetExistingInstallDir() != null);
                 if (hasExisting)
                 {
                     DrawSecondaryBtn(g, "switch_uninst", new RectangleF(padX, winH - U(54f), U(138f), U(38f)),
@@ -739,13 +847,15 @@ namespace KumoSetup
                 }
                 else
                 {
-                    DrawLeftText(g, T("Bản phát hành chính thức · Không cần quyền Admin", "Official Release · No Admin rights required"),
+                    DrawLeftText(g, T("Hỗ trợ cài đè mọi phiên bản · Không cần quyền Admin", "Seamless in-place overwrite · No Admin required"),
                         _fSmall, Color.FromArgb(118, 130, 155), padX, winH - U(35f));
                 }
 
-                RectangleF instBtn = new RectangleF(winW - padX - U(224f), winH - U(54f), U(224f), U(38f));
+                RectangleF instBtn = new RectangleF(winW - padX - U(238f), winH - U(54f), U(238f), U(38f));
                 DrawPrimaryBtn(g, "start_install", instBtn,
-                    hasExisting ? T("Cập nhật Kumo v1.0", "Update Kumo v1.0") : T("Cài đặt chính thức (Install)", "Install Kumo Now"));
+                    hasExisting
+                        ? T("Cài đè / Nâng cấp v" + KumoBuildInfo.Version, "Overwrite / Upgrade v" + KumoBuildInfo.Version)
+                        : T("Cài đặt Kumo v" + KumoBuildInfo.Version, "Install Kumo v" + KumoBuildInfo.Version));
             }
             else if (_step == 1)
             {
@@ -864,7 +974,7 @@ namespace KumoSetup
                 }
 
                 DrawCenterText(g,
-                    T("✓ Đã cài đặt Kumo v1.0.0 Chính Thức thành công!", "✓ Kumo v1.0.0 Official has been installed!"),
+                    T("✓ Đã cài đặt Kumo v" + KumoBuildInfo.Version + " thành công!", "✓ Kumo v" + KumoBuildInfo.Version + " has been installed!"),
                     _fBold, Color.FromArgb(52, 211, 153), new RectangleF(okCard.X + U(14f), okCard.Y + U(16f), okCard.Width - U(28f), U(26f)));
                 DrawCenterText(g,
                     T("Bạn có thể tìm và mở 'Kumo' bất kỳ lúc nào trong Start Menu hoặc thanh tìm kiếm Windows.", "You can launch 'Kumo' anytime from the Windows Start Menu or Search."),
@@ -1325,6 +1435,7 @@ namespace KumoSetup
 
             bool isUninstall = false;
             bool isSilent = false;
+            bool relaunchAfterSilent = false;
             string exeName = Path.GetFileNameWithoutExtension(Application.ExecutablePath);
             if (!string.IsNullOrEmpty(exeName) && exeName.IndexOf("uninst", StringComparison.OrdinalIgnoreCase) >= 0)
             {
@@ -1351,6 +1462,7 @@ namespace KumoSetup
                         isUninstall = true;
                     if (a.Equals("--silent", StringComparison.OrdinalIgnoreCase) || a.Equals("/SILENT", StringComparison.OrdinalIgnoreCase) || a.Equals("/VERYSILENT", StringComparison.OrdinalIgnoreCase))
                         isSilent = true;
+                    if (a.Equals("--relaunch", StringComparison.OrdinalIgnoreCase) || a.Equals("/relaunch", StringComparison.OrdinalIgnoreCase)) relaunchAfterSilent = true;
                 }
             }
 
@@ -1363,7 +1475,24 @@ namespace KumoSetup
                 }
                 else
                 {
-                    InstallerCore.PerformInstall(InstallerCore.GetDefaultInstallDir(), true, true, true, null);
+                    string targetDir = InstallerCore.GetExistingInstallDir() ?? InstallerCore.GetDefaultInstallDir();
+                    InstallerCore.PerformInstall(targetDir, true, true, true, null);
+                    if (relaunchAfterSilent)
+                    {
+                        try
+                        {
+                            string exe = Path.Combine(targetDir, "Kumo.exe");
+                            if (File.Exists(exe))
+                            {
+                                ProcessStartInfo psi = new ProcessStartInfo();
+                                psi.FileName = exe;
+                                psi.WorkingDirectory = targetDir;
+                                psi.UseShellExecute = true;
+                                Process.Start(psi);
+                            }
+                        }
+                        catch { }
+                    }
                 }
                 return;
             }

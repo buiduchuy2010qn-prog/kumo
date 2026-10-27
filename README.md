@@ -4,7 +4,7 @@
   <p><b>Tai thỏ sống động thông minh (Dynamic Island) cho Windows 10 & 11</b><br/><i>Official Native Living Notch & Productivity Suite for Windows</i></p>
   <p>
     <a href="https://github.com/buiduchuy2010qn-prog/kumo/releases/latest/download/KumoSetup.exe">
-      <img src="https://img.shields.io/badge/T%E1%BA%A3i_b%E1%BB%99_c%C3%A0i_ch%C3%ADnh_th%E1%BB%A9c-KumoSetup.exe_(v1.0.0)-0ea5e9?style=for-the-badge&logo=windows" alt="Download KumoSetup.exe" />
+      <img src="https://img.shields.io/github/v/release/buiduchuy2010qn-prog/kumo?style=for-the-badge&logo=windows&label=T%E1%BA%A3i_KumoSetup.exe&color=0ea5e9" alt="Download KumoSetup.exe" />
     </a>
     <a href="https://github.com/buiduchuy2010qn-prog/kumo/actions/workflows/build.yml">
       <img src="https://img.shields.io/github/actions/workflow/status/buiduchuy2010qn-prog/kumo/build.yml?branch=main&style=for-the-badge&logo=githubactions&label=Cloud_Build" alt="GitHub Actions Cloud Build" />
@@ -66,3 +66,14 @@
 Dự án được cấu hình sẵn workflow [`.github/workflows/build.yml`](.github/workflows/build.yml):
 - Mỗi khi bạn sửa code trực tiếp trên web GitHub (`main`), máy chủ `windows-latest` của GitHub sẽ tự động tạo icon, biên dịch `Kumo.exe` + `KumoSetup.exe` và kiểm thử giao diện.
 - Vào tab **Actions → Build & Release Kumo Setup → Run workflow** (nhập tag ví dụ `v1.0.0` hoặc `v1.0.1`) để GitHub tự động build và đính kèm `KumoSetup.exe` + `SHA256SUMS.txt` thẳng vào mục **Releases** mà không cần build trên máy cá nhân.
+
+---
+
+## 🔄 Phiên bản động & Cài đè trực tiếp (Dynamic Versioning & In-Place Overwrite)
+
+- **Phiên bản không cố định (Rolling / Custom Versioning)**:
+  - Mỗi lần cập nhật lên nhánh `main`, GitHub Actions tự động tăng phiên bản động `v1.1.<số_build>` (ví dụ `v1.1.2`, `v1.1.3`...) và phát hành ngay lên **Releases (Latest)**.
+  - Bạn cũng có thể vào **Actions → Build & Release Kumo Setup → Run workflow** và nhập **bất kỳ số phiên bản tuỳ ý** nào (ví dụ `1.2.5`, `2.0.0-beta`, `2026.11`) hoặc đẩy Git Tag `v*` để hệ thống tự đóng dấu phiên bản đó vào toàn bộ `Kumo.exe` và `KumoSetup.exe`.
+- **Cài đè trực tiếp không mất dữ liệu (Seamless Overwrite)**:
+  - **Cách 1 (Từ bộ cài `KumoSetup.exe`)**: Chạy `KumoSetup.exe` mới đè thẳng lên máy đã cài Kumo. Trình cài đặt tự nhận diện phiên bản cũ (`Đang cài v... → Cài đè lên v...`), tự đóng tiến trình đang chạy, thay thế tệp thực thi an toàn (kể cả khi Windows còn giữ handle tệp cũ) và **giữ nguyên 100% cấu hình, danh sách việc cần làm & dữ liệu người dùng**.
+  - **Cách 2 (1 chạm ngay trong ứng dụng)**: Mở **Kumo Settings → Giới thiệu (About)** → nhấn **Kiểm tra bản mới trên GitHub** → nhấn **Tải & Cài đè ngay** để Kumo tự tải bản mới nhất, cài đè ngầm (`--silent --relaunch`) và tự khởi động lại sang phiên bản mới.

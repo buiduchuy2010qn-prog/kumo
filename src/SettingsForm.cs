@@ -28,6 +28,11 @@ namespace Kumo
         private readonly List<UiZone> _zones = new List<UiZone>();
         private string _hoverId = null;
         private bool _resetConfirmPending = false;
+        private int _updateState = 0;
+        private string _latestTag = "";
+        private string _latestSetupUrl = "";
+        private string _updateInfoVi = "Nhấn kiểm tra để tìm bản mới trên GitHub Releases (hỗ trợ tự tải & cài đè giữ nguyên dữ liệu).";
+        private string _updateInfoEn = "Check GitHub Releases for newer builds and overwrite seamlessly without losing data.";
 
         // Embedded dark TextBox for adding custom To-do items seamlessly
         private TextBox _todoInput;
@@ -347,14 +352,16 @@ namespace Kumo
             DrawLeftText(g, title, _fAppTitle, Color.White, U(62f), headerH * 0.5f);
 
             SizeF tSz = g.MeasureString(title, _fAppTitle);
-            RectangleF verBadge = new RectangleF(U(68f) + tSz.Width, U(14.5f), U(86f), U(19f));
+            string badgeTxt = "v" + KumoBuildInfo.Version;
+            SizeF bSz = g.MeasureString(badgeTxt, _fBadge);
+            RectangleF verBadge = new RectangleF(U(68f) + tSz.Width, U(14.5f), Math.Max(U(64f), bSz.Width + U(22f)), U(19f));
             FillRoundRect(g, verBadge, U(9.5f), Color.FromArgb(35, 37, 99, 235));
             using (Pen bp = new Pen(Color.FromArgb(90, 59, 130, 246), 1f))
             using (GraphicsPath vp = CreateRoundRect(verBadge, U(9.5f)))
             {
                 g.DrawPath(bp, vp);
             }
-            DrawCenterText(g, "Official v1.0", _fBadge, Color.FromArgb(125, 195, 255), verBadge);
+            DrawCenterText(g, badgeTxt, _fBadge, Color.FromArgb(125, 195, 255), verBadge);
 
             // Language Switcher Pill on Right
             RectangleF langRect = new RectangleF(winW - U(186f), U(11f), U(92f), U(26f));
@@ -390,7 +397,7 @@ namespace Kumo
                 "Đồng hồ Pomodoro",
                 "Nhắc uống nước",
                 "Công việc & Kệ tệp",
-                "Giới thiệu & Khôi phục"
+                "Cập nhật & Giới thiệu"
             };
             string[] labelsEn = new string[]
             {
@@ -400,7 +407,7 @@ namespace Kumo
                 "Pomodoro Timer",
                 "Water Reminder",
                 "To-do & File Shelf",
-                "About & Reset"
+                "Update & About"
             };
 
             float y = headerH + U(16f);
@@ -919,21 +926,41 @@ namespace Kumo
         private float DrawTabAbout(Graphics g, float x, float y, float w)
         {
             y = DrawPageTitle(g, x, y,
-                _state.T("Giới thiệu & Khôi phục", "About & Reset"),
+                _state.T("Cập nhật & Giới thiệu", "Update & About"),
                 _state.T("Thông tin phiên bản, thư mục lưu trữ cấu hình cục bộ và khôi phục mặc định.", "Version details, local configuration directory, and factory reset."));
 
-            RectangleF hero = new RectangleF(x, y, w, U(116f));
+            RectangleF hero = new RectangleF(x, y, w, U(112f));
             DrawCardShell(g, hero);
 
-            DrawLeftText(g, "Kumo v1.0.0 — Official Living Notch for Windows", _fPageHeader, Color.White, x + U(20f), y + U(28f));
+            DrawLeftText(g, "Kumo v" + KumoBuildInfo.Version + " — Official Living Notch", _fPageHeader, Color.White, x + U(20f), y + U(27f));
             DrawLeftText(g,
                 _state.T("Tai thỏ sống động siêu nhẹ cho Windows (Native Win32 · ~0% CPU khi nghỉ).", "Ultra-lightweight native living notch for Windows (Native Win32 · ~0% idle CPU)."),
-                _fRowDesc, Color.FromArgb(165, 175, 198), x + U(20f), y + U(56f));
+                _fRowDesc, Color.FromArgb(165, 175, 198), x + U(20f), y + U(55f));
             DrawLeftText(g,
-                _state.T("Âm nhạc, lời bài hát đồng bộ LRCLIB, Pomodoro, nhắc uống nước, To-do, Kệ tệp & Theo dõi phần cứng.", "Music, LRCLIB synced lyrics, Pomodoro, water reminder, To-do, File Shelf & System Monitor."),
-                _fRowDesc, Color.FromArgb(135, 148, 175), x + U(20f), y + U(80f));
+                _state.T("Hỗ trợ phiên bản động & cài đè trực tiếp không mất dữ liệu từ GitHub Releases.", "Supports dynamic rolling releases & seamless in-place overwrite updates via GitHub."),
+                _fRowDesc, Color.FromArgb(135, 148, 175), x + U(20f), y + U(79f));
 
-            y += U(132f);
+            y += U(124f);
+            y = DrawSectionHeader(g, x, y, _state.T("CẬP NHẬT & CÀI ĐÈ TRỰC TIẾP (OVERWRITE UPDATE)", "CLOUD UPDATE & IN-PLACE OVERWRITE"));
+
+            RectangleF updCard = new RectangleF(x, y, w, U(72f));
+            DrawCardShell(g, updCard);
+            DrawLeftText(g,
+                _state.T("Phiên bản đang chạy: v" + KumoBuildInfo.Version, "Installed version: v" + KumoBuildInfo.Version),
+                _fRowTitle, Color.White, x + U(16f), y + U(23f));
+            DrawLeftText(g,
+                _state.T(_updateInfoVi, _updateInfoEn),
+                _fSmall, (_updateState == 2) ? Color.FromArgb(52, 211, 153) : Color.FromArgb(145, 158, 185), x + U(16f), y + U(47f));
+
+            string updBtnTxt;
+            if (_updateState == 1) updBtnTxt = _state.T("Đang kiểm tra...", "Checking...");
+            else if (_updateState == 2) updBtnTxt = _state.T("Cài đè " + _latestTag, "Install " + _latestTag);
+            else if (_updateState == 3) updBtnTxt = _state.T("Cài đè lại " + _latestTag, "Reinstall " + _latestTag);
+            else if (_updateState == 4) updBtnTxt = _state.T("Đang cài đè...", "Updating...");
+            else updBtnTxt = _state.T("Kiểm tra bản mới", "Check Updates");
+
+            DrawActionPill(g, "cloud_update_btn", new RectangleF(x + w - U(172f), y + U(19f), U(156f), U(34f)), updBtnTxt, (_updateState == 2));
+            y += U(84f);
             y = DrawSectionHeader(g, x, y, _state.T("DỮ LIỆU & KHÔI PHỤC CÀI ĐẶT", "DATA & FACTORY RESET"));
 
             RectangleF actCard = new RectangleF(x, y, w, U(66f));
@@ -1394,6 +1421,48 @@ namespace Kumo
                 _state.ShelfFiles.Clear();
                 _state.Shelf.Clear();
                 SaveAndApply();
+            }
+            else if (id == "cloud_update_btn")
+            {
+                if (_updateState == 1 || _updateState == 4) return;
+                if ((_updateState == 2 || _updateState == 3) && !string.IsNullOrEmpty(_latestSetupUrl))
+                {
+                    _updateState = 4;
+                    _updateInfoVi = "Đang tải bộ cài " + _latestTag + " và tiến hành cài đè tự động...";
+                    _updateInfoEn = "Downloading " + _latestTag + " and performing seamless overwrite...";
+                    Invalidate();
+                    UpdaterService.DownloadAndOverwriteAsync(_latestSetupUrl, (ok, err) =>
+                    {
+                        try
+                        {
+                            BeginInvoke((MethodInvoker)delegate
+                            {
+                                if (ok) { Application.Exit(); }
+                                else { _updateState = 5; _updateInfoVi = "Lỗi tải: " + err; _updateInfoEn = "Error: " + err; Invalidate(); }
+                            });
+                        }
+                        catch { }
+                    });
+                    return;
+                }
+                _updateState = 1;
+                _updateInfoVi = "Đang kết nối GitHub Releases kiểm tra phiên bản mới nhất...";
+                _updateInfoEn = "Checking GitHub Releases for the latest build...";
+                Invalidate();
+                UpdaterService.CheckLatestReleaseAsync((ok, tag, url, isNewer, err) =>
+                {
+                    try
+                    {
+                        BeginInvoke((MethodInvoker)delegate
+                        {
+                            if (!ok) { _updateState = 5; _updateInfoVi = "Không thể kiểm tra: " + err; _updateInfoEn = "Check failed: " + err; }
+                            else if (isNewer) { _updateState = 2; _latestTag = tag; _latestSetupUrl = url; _updateInfoVi = "Phát hiện bản mới " + tag + "! Nhấn nút bên phải để tự tải & cài đè ngay."; _updateInfoEn = "New release " + tag + " available! Click to download & overwrite."; }
+                            else { _updateState = 3; _latestTag = tag; _latestSetupUrl = url; _updateInfoVi = "Bạn đang ở bản mới nhất (" + tag + "). Vẫn có thể bấm để cài đè lại."; _updateInfoEn = "Already on latest (" + tag + "). Click to reinstall."; }
+                            Invalidate();
+                        });
+                    }
+                    catch { }
+                });
             }
             else if (id == "open_datadir")
             {
