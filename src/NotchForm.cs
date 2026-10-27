@@ -7,6 +7,7 @@ using System.Drawing.Imaging;
 using System.Drawing.Text;
 using System.Globalization;
 using System.IO;
+using System.Threading;
 using System.Windows.Forms;
 
 namespace Kumo
@@ -65,8 +66,13 @@ namespace Kumo
         private uint _savedIdleInputTick = 0;
         private bool _previewForceWave = false;
         private DateTime _waveUntilUtc = DateTime.MinValue;
-        private Bitmap _scanBmp = null;
-        private byte[] _scanBuf = null;
+        private volatile bool _bgScanRunning = true;
+        private volatile bool _bgFullscreen = false;
+        private volatile bool _bgTabObstructed = false;
+        private IntPtr _cachedSelfHwnd = IntPtr.Zero;
+        private IntPtr _cachedSettingsHwnd = IntPtr.Zero;
+        private Rectangle _cachedScreenBounds = new Rectangle(0, 0, 1920, 1080);
+        private Thread _winScanThread = null;
         private int _obstructionStreak = 0;
         private bool _suppressHoverUntilLeave = false;
         private bool _isFullscreenHidden = false;
@@ -204,7 +210,20 @@ namespace Kumo
             _animTimer.Start();
 
             if (_osd != null) _osd.OsdChanged += OnSystemOsdChanged;
-            FormClosed += (s, e) => { if (_osd != null) _osd.OsdChanged -= OnSystemOsdChanged; };
+            _cachedScreenBounds = GetTargetScreen().Bounds;
+            HandleCreated += (s, e) => { _cachedSelfHwnd = Handle; };
+            FormClosed += (s, e) =>
+            {
+                _bgScanRunning = false;
+                if (_osd != null) _osd.OsdChanged -= OnSystemOsdChanged;
+            };
+            _winScanThread = new Thread(BackgroundWindowScanLoop)
+            {
+                IsBackground = true,
+                Priority = ThreadPriority.BelowNormal,
+                Name = "KumoWindowScan"
+            };
+            _winScanThread.Start();
             _secondTimer = new System.Windows.Forms.Timer();
             _secondTimer.Interval = 1000;
             _secondTimer.Tick += OnSecondTick;
@@ -307,6 +326,22 @@ namespace Kumo
                 _settingsForm = new SettingsForm(_state, this);
             }
             _settingsForm.OpenAtTab(tabIndex);
+            if (_settingsForm.IsHandleCreated)
+            {
+                _cachedSettingsHwnd = _settingsForm.Handle;
+                NativeMethods.SetForegroundWindow(_settingsForm.Handle);
+            }
+        }
+
+        public void RevealAndOpenSettings()
+        {
+            _isFullscreenHidden = false;
+            _autoMinimalObstruction = false;
+            if (!_alwaysMinimal) _isMicroPill = false;
+            UpdateTargetDimensions();
+            _needsRedraw = true;
+            RenderLayeredNotch();
+            OpenSettings(-1);
         }
 
         public void ApplySettingsLive()
@@ -329,7 +364,8 @@ namespace Kumo
                 Bounds = new Rectangle(_canvasWinX, _canvasWinY, _canvasW, _canvasH);
             }
 
-            _isFullscreenHidden = _state.HideInFullscreen && CheckFullscreenApp();
+            _cachedScreenBounds = GetTargetScreen().Bounds;
+            _isFullscreenHidden = _state.HideInFullscreen && _bgFullscreen;
             UpdateAutoMinimalState();
             UpdateTargetDimensions();
             _curW = Math.Min(_canvasW - U(50f), Math.Max(U(24f), _curW));
@@ -365,7 +401,7 @@ namespace Kumo
         {
             if (NativeMethods.WM_OPEN_SETTINGS != 0 && m.Msg == (int)NativeMethods.WM_OPEN_SETTINGS)
             {
-                OpenSettings(-1);
+                RevealAndOpenSettings();
                 return;
             }
             if (m.Msg == 0x0021) // WM_MOUSEACTIVATE
@@ -567,7 +603,8 @@ RefreshBatteryLevel();
                 }
             }
 
-            bool fsNow = _state.HideInFullscreen && CheckFullscreenApp();
+            _cachedScreenBounds = GetTargetScreen().Bounds;
+            bool fsNow = _state.HideInFullscreen && _bgFullscreen;
             if (fsNow != _isFullscreenHidden)
             {
                 _isFullscreenHidden = fsNow;
@@ -620,13 +657,11 @@ RefreshBatteryLevel();
                 return;
             }
 
-            // Priority #1: NEVER block browser/window tabs when Smart Auto-Minimal detects center obstruction!
-            bool rawObstructed = _alwaysMinimal || (_state.AutoMinimalEnabled && CheckTitleBarObstruction());
+            bool rawObstructed = _alwaysMinimal || (_state.AutoMinimalEnabled && _bgTabObstructed);
             if (rawObstructed != _autoMinimalObstruction)
             {
                 _obstructionStreak++;
-                // Shrink IMMEDIATELY (~0.18s) when tabs touch center; wait 3 checks (~0.54s) before expanding back
-                int neededStreak = (_alwaysMinimal || rawObstructed) ? 1 : 3;
+                int neededStreak = (_alwaysMinimal || rawObstructed) ? 1 : 2;
                 if (_obstructionStreak >= neededStreak)
                 {
                     _obstructionStreak = 0;
@@ -649,239 +684,117 @@ RefreshBatteryLevel();
             }
         }
 
-        private bool CheckFullscreenApp()
+        private static bool IsIgnoredShellClass(string cls)
         {
-            try
-            {
-                IntPtr fg = NativeMethods.GetForegroundWindow();
-                if (fg == IntPtr.Zero || (IsHandleCreated && fg == Handle)) return false;
-                if (_settingsForm != null && !_settingsForm.IsDisposed && _settingsForm.IsHandleCreated && fg == _settingsForm.Handle) return false;
-                if (!NativeMethods.IsWindowVisible(fg) || NativeMethods.IsIconic(fg)) return false;
-
-                System.Text.StringBuilder sb = new System.Text.StringBuilder(64);
-                NativeMethods.GetClassName(fg, sb, 64);
-                string cls = sb.ToString();
-                if (cls == "Progman" || cls == "WorkerW" || cls == "Shell_TrayWnd" || cls == "Shell_SecondaryTrayWnd")
-                    return false;
-
-                int style = NativeMethods.GetWindowLong(fg, NativeMethods.GWL_STYLE);
-                if ((style & NativeMethods.WS_CAPTION) != 0)
-                    return false;
-
-                NativeMethods.RECT wr;
-                if (!NativeMethods.GetWindowRect(fg, out wr)) return false;
-                Rectangle scr = GetTargetScreen().Bounds;
-                return (wr.Left <= scr.Left && wr.Top <= scr.Top && wr.Right >= scr.Right && wr.Bottom >= scr.Bottom);
-            }
-            catch
-            {
-                return false;
-            }
+            if (string.IsNullOrEmpty(cls)) return true;
+            return cls == "Progman" ||
+                   cls == "WorkerW" ||
+                   cls == "Shell_TrayWnd" ||
+                   cls == "Shell_SecondaryTrayWnd" ||
+                   cls == "NotifyIconOverflowWindow" ||
+                   cls == "TopLevelWindowForOverflowXamlIsland" ||
+                   cls == "XamlExplorerHostIslandWindow" ||
+                   cls == "Windows.UI.Core.CoreWindow" ||
+                   cls == "Windows.UI.Input.InputSite.WindowClass" ||
+                   cls == "MultitaskingViewFrame" ||
+                   cls == "TaskListThumbnailWnd" ||
+                   cls == "ForegroundStaging";
         }
 
-        private int ProbeWindowHitTest(IntPtr hwnd, int x, int y, out bool ok)
+        private void BackgroundWindowScanLoop()
         {
-            IntPtr res;
-            IntPtr ret = NativeMethods.SendMessageTimeout(
-                hwnd,
-                (uint)NativeMethods.WM_NCHITTEST,
-                IntPtr.Zero,
-                NativeMethods.MakePointLParam(x, y),
-                NativeMethods.SMTO_ABORTIFHUNG,
-                35,
-                out res);
-            if (ret == IntPtr.Zero)
+            System.Text.StringBuilder sb = new System.Text.StringBuilder(96);
+            float[] xOffsetsDp = new float[] { -90f, -60f, -30f, 0f, 30f, 60f, 90f };
+
+            while (_bgScanRunning)
             {
-                ok = false;
-                return 0;
-            }
-            ok = true;
-            return unchecked((int)res.ToInt64());
-        }
-
-        private bool CheckTitleBarObstruction()
-        {
-            try
-            {
-                IntPtr fg = NativeMethods.GetForegroundWindow();
-                if (fg == IntPtr.Zero || (IsHandleCreated && fg == Handle)) return false;
-                if (_settingsForm != null && !_settingsForm.IsDisposed && _settingsForm.IsHandleCreated && fg == _settingsForm.Handle) return false;
-                if (!NativeMethods.IsWindowVisible(fg) || NativeMethods.IsIconic(fg)) return false;
-
-                System.Text.StringBuilder sb = new System.Text.StringBuilder(96);
-                NativeMethods.GetClassName(fg, sb, 96);
-                string cls = sb.ToString();
-                if (cls == "Progman" || cls == "WorkerW" || cls == "Shell_TrayWnd" || cls == "Shell_SecondaryTrayWnd")
-                    return false;
-
-                NativeMethods.RECT wr;
-                if (!NativeMethods.GetWindowRect(fg, out wr)) return false;
-
-                Rectangle scr = GetTargetScreen().Bounds;
-                int centerX = scr.Left + scr.Width / 2;
-
-                // Must be docked/maximized at the top edge of this monitor and span across the Notch
-                if (wr.Top > scr.Top + (int)U(12f) || wr.Bottom <= scr.Top + (int)U(60f))
-                    return false;
-                if (wr.Left > centerX - (int)U(110f) || wr.Right < centerX + (int)U(110f))
-                    return false;
-
-                int topEdge = Math.Max(scr.Top, wr.Top);
-
-                // LAYER 1: Direct Win32 WM_NCHITTEST to foreground window across the entire Notch span!
-                // Bypasses Kumo's own overlay HWND and asks Chrome/Edge/Brave/Firefox/Explorer directly
-                // whether (x, y) is empty draggable titlebar (HTCAPTION=2) or an interactive Tab / '+' button (HTCLIENT=1)!
-                bool isKnownTabbedApp =
-                    cls.IndexOf("Chrome_WidgetWin", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                    cls.IndexOf("MozillaWindowClass", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                    cls.Equals("CabinetWClass", StringComparison.OrdinalIgnoreCase) ||
-                    cls.Equals("WinUIDesktopWin32WindowClass", StringComparison.OrdinalIgnoreCase);
-
-                int yProbe1 = topEdge + Math.Max(10, (int)Math.Round(U(15f)));
-                int yProbe2 = topEdge + Math.Max(16, (int)Math.Round(U(23f)));
-                float[] xOffsetsDp = new float[] { -96f, -72f, -48f, -24f, 0f, 24f, 48f, 72f, 96f };
-
-                bool anyOk = false;
-                bool centerHasNonCaption = false;
-                for (int i = 0; i < xOffsetsDp.Length; i++)
+                try
                 {
-                    int px = centerX + (int)Math.Round(U(xOffsetsDp[i]));
-                    if (px <= wr.Left + 8 || px >= wr.Right - 8) continue;
+                    bool fs = false;
+                    bool tabObs = false;
+                    IntPtr fg = NativeMethods.GetForegroundWindow();
 
-                    bool ok1;
-                    int h1 = ProbeWindowHitTest(fg, px, yProbe1, out ok1);
-                    if (ok1)
+                    if (fg != IntPtr.Zero && fg != _cachedSelfHwnd && fg != _cachedSettingsHwnd &&
+                        NativeMethods.IsWindowVisible(fg) && !NativeMethods.IsIconic(fg) && !NativeMethods.IsWindowCloaked(fg))
                     {
-                        anyOk = true;
-                        if (h1 != NativeMethods.HTCAPTION && h1 != 0)
+                        sb.Length = 0;
+                        NativeMethods.GetClassName(fg, sb, 96);
+                        string cls = sb.ToString();
+
+                        if (!IsIgnoredShellClass(cls) && !cls.Equals("ApplicationFrameWindow", StringComparison.OrdinalIgnoreCase))
                         {
-                            centerHasNonCaption = true;
-                            break;
+                            NativeMethods.RECT wr;
+                            if (NativeMethods.GetWindowRect(fg, out wr))
+                            {
+                                Rectangle scr = _cachedScreenBounds;
+                                float sc = _scale;
+                                int style = NativeMethods.GetWindowLong(fg, NativeMethods.GWL_STYLE);
+
+                                // 1. True Fullscreen game / borderless video check
+                                if ((style & NativeMethods.WS_CAPTION) == 0 &&
+                                    wr.Left <= scr.Left && wr.Top <= scr.Top &&
+                                    wr.Right >= scr.Right && wr.Bottom >= scr.Bottom)
+                                {
+                                    fs = true;
+                                }
+
+                                // 2. Smart Browser/Explorer Tab collision check (zero CopyFromScreen, zero UI lag!)
+                                if (!fs && _state.AutoMinimalEnabled)
+                                {
+                                    bool isTabbedApp =
+                                        cls.IndexOf("Chrome_WidgetWin", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                        cls.IndexOf("MozillaWindowClass", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                        cls.Equals("CabinetWClass", StringComparison.OrdinalIgnoreCase) ||
+                                        cls.Equals("WinUIDesktopWin32WindowClass", StringComparison.OrdinalIgnoreCase);
+
+                                    int centerX = scr.Left + scr.Width / 2;
+                                    if (isTabbedApp &&
+                                        wr.Top <= scr.Top + (int)(12f * sc) &&
+                                        wr.Bottom > scr.Top + (int)(60f * sc) &&
+                                        wr.Left <= centerX - (int)(110f * sc) &&
+                                        wr.Right >= centerX + (int)(110f * sc))
+                                    {
+                                        int topEdge = Math.Max(scr.Top, wr.Top);
+                                        int yProbe = topEdge + Math.Max(12, (int)Math.Round(16f * sc));
+                                        for (int i = 0; i < xOffsetsDp.Length; i++)
+                                        {
+                                            int px = centerX + (int)Math.Round(xOffsetsDp[i] * sc);
+                                            IntPtr res;
+                                            IntPtr ret = NativeMethods.SendMessageTimeout(
+                                                fg,
+                                                (uint)NativeMethods.WM_NCHITTEST,
+                                                IntPtr.Zero,
+                                                NativeMethods.MakePointLParam(px, yProbe),
+                                                NativeMethods.SMTO_ABORTIFHUNG,
+                                                12,
+                                                out res);
+                                            if (ret == IntPtr.Zero)
+                                            {
+                                                // Window busy or elevated: stop probing immediately so we never stall!
+                                                break;
+                                            }
+                                            int hit = unchecked((int)res.ToInt64());
+                                            if (hit != NativeMethods.HTCAPTION && hit != 0)
+                                            {
+                                                tabObs = true;
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
 
-                    bool ok2;
-                    int h2 = ProbeWindowHitTest(fg, px, yProbe2, out ok2);
-                    if (ok2)
-                    {
-                        anyOk = true;
-                        if (h2 != NativeMethods.HTCAPTION && h2 != 0)
-                        {
-                            centerHasNonCaption = true;
-                            break;
-                        }
-                    }
+                    _bgFullscreen = fs;
+                    _bgTabObstructed = tabObs;
                 }
+                catch { }
 
-                if (anyOk)
-                {
-                    if (!centerHasNonCaption)
-                    {
-                        // Every point across the Notch span is pure draggable HTCAPTION -> safe to show full pill!
-                        return false;
-                    }
-                    if (isKnownTabbedApp)
-                    {
-                        // In Chromium/Firefox/Win11 Explorer, non-HTCAPTION in the tab strip ALWAYS means a Tab or '+' button!
-                        return true;
-                    }
-
-                    // For other custom windows, verify the app uses HTCAPTION in its empty right-side drag zone
-                    bool okRef1, okRef2;
-                    int refX1 = Math.Max(centerX + (int)U(120f), wr.Right - (int)U(185f));
-                    int refX2 = Math.Max(centerX + (int)U(120f), wr.Right - (int)U(235f));
-                    int hr1 = (refX1 < wr.Right - 40) ? ProbeWindowHitTest(fg, refX1, yProbe1, out okRef1) : 0;
-                    int hr2 = (refX2 < wr.Right - 40) ? ProbeWindowHitTest(fg, refX2, yProbe1, out okRef2) : 0;
-                    if (hr1 == NativeMethods.HTCAPTION || hr2 == NativeMethods.HTCAPTION)
-                    {
-                        return true;
-                    }
-                }
-
-                // LAYER 2: Dual-Wing + Reference Color Pixel Scanner Fallback (for elevated Admin windows where UIPI blocks WM_NCHITTEST)
-                int wingW = Math.Max(20, (int)Math.Round(U(64f)));
-                int scanH = Math.Max(10, (int)Math.Round(U(14f)));
-                int scanY = topEdge + Math.Max(8, (int)Math.Round(U(10f)));
-                int leftWingX = Math.Max(scr.Left + 4, centerX - (int)Math.Round(U(148f)));
-                int rightWingX = Math.Min(scr.Right - wingW - 4, centerX + (int)Math.Round(U(84f)));
-                int refStripX = Math.Max(rightWingX + wingW + 8, wr.Right - (int)Math.Round(U(230f)));
-
-                if (_scanBmp == null || _scanBmp.Width != wingW || _scanBmp.Height != scanH)
-                {
-                    if (_scanBmp != null) _scanBmp.Dispose();
-                    _scanBmp = new Bitmap(wingW, scanH, PixelFormat.Format32bppArgb);
-                }
-
-                int refR = -1, refG = -1, refB = -1;
-                if (refStripX + wingW < wr.Right - (int)U(150f))
-                {
-                    int refEdges;
-                    MeasureStripEdgesAndMean(refStripX, scanY, wingW, scanH, out refEdges, out refR, out refG, out refB);
-                }
-
-                int edgesL, lR, lG, lB;
-                MeasureStripEdgesAndMean(leftWingX, scanY, wingW, scanH, out edgesL, out lR, out lG, out lB);
-                if (edgesL >= 10) return true;
-                if (refR >= 0 && (Math.Abs(lR - refR) + Math.Abs(lG - refG) + Math.Abs(lB - refB)) > 24) return true;
-
-                int edgesR, rR, rG, rB;
-                MeasureStripEdgesAndMean(rightWingX, scanY, wingW, scanH, out edgesR, out rR, out rG, out rB);
-                if (edgesR >= 10) return true;
-                if (refR >= 0 && (Math.Abs(rR - refR) + Math.Abs(rG - refG) + Math.Abs(rB - refB)) > 24) return true;
-
-                return false;
-            }
-            catch
-            {
-                return false;
+                Thread.Sleep(280);
             }
         }
 
-        private void MeasureStripEdgesAndMean(int sx, int sy, int sw, int sh, out int edges, out int meanR, out int meanG, out int meanB)
-        {
-            edges = 0; meanR = 0; meanG = 0; meanB = 0;
-            using (Graphics gs = Graphics.FromImage(_scanBmp))
-            {
-                gs.CopyFromScreen(sx, sy, 0, 0, new Size(sw, sh), CopyPixelOperation.SourceCopy);
-            }
-            BitmapData bd = _scanBmp.LockBits(new Rectangle(0, 0, sw, sh), ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
-            try
-            {
-                int stride = bd.Stride;
-                int needed = stride * sh;
-                if (_scanBuf == null || _scanBuf.Length < needed) _scanBuf = new byte[needed];
-                System.Runtime.InteropServices.Marshal.Copy(bd.Scan0, _scanBuf, 0, needed);
-
-                long sumR = 0, sumG = 0, sumB = 0;
-                int count = 0;
-                for (int y = 1; y < sh; y++)
-                {
-                    int row = y * stride;
-                    for (int x = 1; x < sw; x++)
-                    {
-                        int idx = row + x * 4;
-                        int idxLeft = idx - 4;
-                        int b = _scanBuf[idx], g = _scanBuf[idx + 1], r = _scanBuf[idx + 2];
-                        sumR += r; sumG += g; sumB += b; count++;
-
-                        int dB = Math.Abs(b - _scanBuf[idxLeft]);
-                        int dG = Math.Abs(g - _scanBuf[idxLeft + 1]);
-                        int dR = Math.Abs(r - _scanBuf[idxLeft + 2]);
-                        if (Math.Max(dR, Math.Max(dG, dB)) > 16) edges++;
-                    }
-                }
-                if (count > 0)
-                {
-                    meanR = (int)(sumR / count);
-                    meanG = (int)(sumG / count);
-                    meanB = (int)(sumB / count);
-                }
-            }
-            finally
-            {
-                _scanBmp.UnlockBits(bd);
-            }
-        }
         private static float SmoothStep01(float x)
         {
             if (x <= 0f) return 0f;
@@ -1034,7 +947,7 @@ RefreshBatteryLevel();
             else
             {
                 bool insidePill = !_isFullscreenHidden && (_isMicroPill
-                    ? (absDx <= (int)U(32f) && relY >= 0 && relY <= (int)U(5.5f))
+                    ? (absDx <= (int)U(50f) && relY >= 0 && relY <= (int)U(9.0f))
                     : (absDx <= (int)U(76f) && relY >= 0 && relY <= (int)U(30f)));
 
                 if (!insidePill)

@@ -23,7 +23,7 @@ permissions:
 
 jobs:
   build-windows:
-    name: Build & Overwrite-Test KumoSetup.exe (x64)
+    name: Build & Overwrite-Test KumoSetup-v${{ steps.ver.outputs.version }}.exe (x64)
     runs-on: windows-latest
     steps:
       - name: Checkout mã nguồn
@@ -57,7 +57,7 @@ jobs:
 
           Write-Host "=== Bước A: Giả lập bản cũ v1.0.0 đang chạy trên máy ==="
           powershell -ExecutionPolicy Bypass -File .\build.ps1 -Version "1.0.0"
-          Start-Process -FilePath .\KumoSetup.exe -ArgumentList @("--silent") -Wait
+          if ($null -eq $targetSetup) { Start-Process -FilePath .\KumoSetup-v1.0.0.exe -ArgumentList @("--silent") -Wait } else { Start-Process -FilePath $targetSetup -ArgumentList @("--silent") -Wait }
           $installDir = Join-Path $env:LOCALAPPDATA "Programs\Kumo"
           $installedExe = Join-Path $installDir "Kumo.exe"
           $dataDir = Join-Path $env:LOCALAPPDATA "Kumo"
@@ -69,18 +69,19 @@ jobs:
           Start-Sleep -Milliseconds 900
 
           Write-Host "=== Bước B: Biên dịch bản động mới v$targetVer ==="
+          $targetSetup = ".\KumoSetup-v$targetVer.exe"
           powershell -ExecutionPolicy Bypass -File .\build.ps1 -Version "$targetVer"
 
           New-Item -ItemType Directory -Path .\artifacts_preview -Force | Out-Null
           Start-Process -FilePath .\Kumo.exe -ArgumentList @("--preview", ".\artifacts_preview") -Wait
           if (Test-Path ".\artifacts_preview\preview_err.txt") { throw (Get-Content ".\artifacts_preview\preview_err.txt" -Raw) }
-          Start-Process -FilePath .\KumoSetup.exe -ArgumentList @("--preview-setup", ".\artifacts_preview") -Wait
+          Start-Process -FilePath $targetSetup -ArgumentList @("--preview-setup", ".\artifacts_preview") -Wait
           if (-not (Test-Path ".\artifacts_preview\preview_kumo_setup_welcome.png")) {
             throw "Setup UI smoke test failed!"
           }
 
-          Write-Host "=== Bước C: Chạy KumoSetup.exe CÀI ĐÈ trực tiếp lên bản v1.0.0 đang chạy ==="
-          Start-Process -FilePath .\KumoSetup.exe -ArgumentList @("--silent") -Wait
+          Write-Host "=== Bước C: Chạy KumoSetup-v${{ steps.ver.outputs.version }}.exe CÀI ĐÈ trực tiếp lên bản v1.0.0 đang chạy ==="
+          if ($null -eq $targetSetup) { Start-Process -FilePath .\KumoSetup-v1.0.0.exe -ArgumentList @("--silent") -Wait } else { Start-Process -FilePath $targetSetup -ArgumentList @("--silent") -Wait }
 
           $newProdVer = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($installedExe).ProductVersion
           $regVer = (Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Kumo").DisplayVersion
@@ -93,19 +94,19 @@ jobs:
           }
           Write-Host "LIVE OVERWRITE TEST PASSED: v1.0.0 -> v$targetVer (User data preserved!)"
 
-          Start-Process -FilePath .\KumoSetup.exe -ArgumentList @("--uninstall", "--silent") -Wait
+          Start-Process -FilePath $targetSetup -ArgumentList @("--uninstall", "--silent") -Wait
 
-          $hash = (Get-FileHash .\KumoSetup.exe -Algorithm SHA256).Hash.ToLower()
-          "$hash  KumoSetup.exe" | Set-Content -Path .\SHA256SUMS.txt -Encoding ASCII
-          Get-Item .\Kumo.exe, .\KumoSetup.exe, .\SHA256SUMS.txt | Select-Object Name, Length
-          Write-Host "SHA256(KumoSetup.exe v$targetVer) = $hash"
+          $hash = (Get-FileHash $targetSetup -Algorithm SHA256).Hash.ToLower()
+          "$hash  KumoSetup-v$targetVer.exe" | Set-Content -Path .\SHA256SUMS.txt -Encoding ASCII
+          Get-Item .\Kumo.exe, $targetSetup, .\SHA256SUMS.txt | Select-Object Name, Length
+          Write-Host "SHA256(KumoSetup-v${{ steps.ver.outputs.version }}.exe v$targetVer) = $hash"
 
       - name: Đóng gói KumoSetup Artifact trên GitHub
         uses: actions/upload-artifact@v4
         with:
           name: KumoSetup-v${{ steps.ver.outputs.version }}-Windows-x64
           path: |
-            KumoSetup.exe
+            KumoSetup-v${{ steps.ver.outputs.version }}.exe
             SHA256SUMS.txt
             artifacts_preview/*.png
 
@@ -121,8 +122,8 @@ jobs:
           $tpl = @'
           ## ☁️ Kumo __TAG__ — Official Overwrite-Ready Setup (Windows 10/11 x64)
 
-          - **Phiên bản động (Dynamic Build)**: `__TAG__` (đóng dấu tự động vào `Kumo.exe`, `KumoSetup.exe`, Windows Apps & Features).
-          - **Hỗ trợ Cài Đè Trực Tiếp (In-Place Overwrite)**: Chạy `KumoSetup.exe` đè thẳng lên bất kỳ bản Kumo cũ nào đang mở (tự đóng tiến trình cũ an toàn, không lỗi khoá tệp, **giữ nguyên 100% cài đặt & dữ liệu**), hoặc nhấn **Kiểm tra & Cài đè** ngay trong **Kumo Settings → Giới thiệu**.
+          - **Phiên bản động (Dynamic Build)**: `__TAG__` (đóng dấu tự động vào `Kumo.exe`, `KumoSetup-v${{ steps.ver.outputs.version }}.exe`, Windows Apps & Features).
+          - **Hỗ trợ Cài Đè Trực Tiếp (In-Place Overwrite)**: Chạy `KumoSetup-v${{ steps.ver.outputs.version }}.exe` đè thẳng lên bất kỳ bản Kumo cũ nào đang mở (tự đóng tiến trình cũ an toàn, không lỗi khoá tệp, **giữ nguyên 100% cài đặt & dữ liệu**), hoặc nhấn **Kiểm tra & Cài đè** ngay trong **Kumo Settings → Giới thiệu**.
 
           ### Kiểm tra toàn vẹn (SHA-256)
           ```text
@@ -136,11 +137,11 @@ jobs:
           & gh release view $tag *> $null
           if ($LASTEXITCODE -ne 0) {
             Write-Host "Creating new GitHub Release $tag..."
-            & gh release create $tag .\KumoSetup.exe .\SHA256SUMS.txt --title "Kumo $tag - Official Windows Setup (Overwrite-Ready)" --notes-file $notesFile --latest
+            & gh release create $tag .\KumoSetup-v${{ steps.ver.outputs.version }}.exe .\SHA256SUMS.txt --title "Kumo $tag - Official Windows Setup (Overwrite-Ready)" --notes-file $notesFile --latest
             if ($LASTEXITCODE -ne 0) { throw "gh release create failed with code $LASTEXITCODE" }
           } else {
             Write-Host "Overwriting existing GitHub Release $tag..."
-            & gh release upload $tag .\KumoSetup.exe .\SHA256SUMS.txt --clobber
+            & gh release upload $tag .\KumoSetup-v${{ steps.ver.outputs.version }}.exe .\SHA256SUMS.txt --clobber
             if ($LASTEXITCODE -ne 0) { throw "gh release upload failed with code $LASTEXITCODE" }
             & gh release edit $tag --title "Kumo $tag - Official Windows Setup (Overwrite-Ready)" --notes-file $notesFile --latest
             if ($LASTEXITCODE -ne 0) { throw "gh release edit failed with code $LASTEXITCODE" }

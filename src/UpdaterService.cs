@@ -34,8 +34,8 @@ namespace Kumo
                     string latestTag = mTag.Groups[1].Value.Trim();
                     string cleanLatest = latestTag.TrimStart('v', 'V');
                     string cleanCur = (KumoBuildInfo.Version ?? "").TrimStart('v', 'V');
-                    string dlUrl = "https://github.com/" + KumoBuildInfo.RepoSlug + "/releases/latest/download/KumoSetup.exe";
-                    Match mUrl = Regex.Match(json, "\"browser_download_url\"\\s*:\\s*\"([^\"]*KumoSetup\\.exe)\"", RegexOptions.IgnoreCase);
+                    string dlUrl = "https://github.com/" + KumoBuildInfo.RepoSlug + "/releases/download/" + latestTag + "/KumoSetup-" + latestTag + ".exe";
+                    Match mUrl = Regex.Match(json, "\"browser_download_url\"\\s*:\\s*\"([^\"]*KumoSetup[^\"]*\\.exe)\"", RegexOptions.IgnoreCase);
                     if (mUrl.Success) dlUrl = mUrl.Groups[1].Value;
                     callback(true, latestTag, dlUrl, IsNewerOrDiff(cleanCur, cleanLatest), "");
                 }
@@ -76,7 +76,7 @@ namespace Kumo
                     ServicePointManager.SecurityProtocol = (SecurityProtocolType)3072;
                     string tempDir = Path.Combine(Path.GetTempPath(), "KumoAutoUpdate");
                     Directory.CreateDirectory(tempDir);
-                    string tempExe = Path.Combine(tempDir, "KumoSetup_" + Environment.TickCount + ".exe");
+                    string tempExe = Path.Combine(tempDir, "KumoSetup-v" + KumoBuildInfo.Version + "_" + Environment.TickCount + ".exe");
                     HttpWebRequest req = (HttpWebRequest)WebRequest.Create(setupUrl);
                     req.UserAgent = "Kumo-Updater/" + KumoBuildInfo.Version;
                     req.Timeout = 20000;

@@ -7,7 +7,8 @@ $projDir = $PSScriptRoot
 $csc = "C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
 $ico = Join-Path $projDir "Kumo.ico"
 $outExe = Join-Path $projDir "Kumo.exe"
-$outSetup = Join-Path $projDir "KumoSetup.exe"
+$setupFileName = "KumoSetup-v$dispVer.exe"
+$outSetup = Join-Path $projDir $setupFileName
 $objDir = Join-Path $projDir "obj"
 
 $rawVer = $Version
@@ -113,7 +114,7 @@ $gz.Write($rawBytes, 0, $rawBytes.Length)
 $gz.Close()
 $fsOut.Close()
 
-Write-Host "3/3 Compiling Official Overwrite-Ready Installer KumoSetup.exe (v$dispVer)..."
+Write-Host "3/3 Compiling Official Overwrite-Ready Installer $setupFileName..."
 $setupSrc = Join-Path $projDir "installer\SetupProgram.cs"
 & $csc /target:winexe /platform:x64 /optimize+ "/win32icon:$ico" "/resource:$payloadGz,Kumo.Payload.gz" "/out:$outSetup" `
     /r:System.dll,System.Core.dll,System.Drawing.dll,System.Windows.Forms.dll `

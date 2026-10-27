@@ -222,6 +222,19 @@ namespace Kumo
         [DllImport("dwmapi.dll")]
         public static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int attrValue, int attrSize);
 
+        [DllImport("dwmapi.dll")]
+        public static extern int DwmGetWindowAttribute(IntPtr hwnd, int dwAttribute, out int pvAttribute, int cbAttribute);
+
+        [DllImport("user32.dll")]
+        public static extern bool SetForegroundWindow(IntPtr hWnd);
+
+        public static bool IsWindowCloaked(IntPtr hwnd)
+        {
+            if (hwnd == IntPtr.Zero) return false;
+            try { int cloaked = 0; if (DwmGetWindowAttribute(hwnd, 14, out cloaked, 4) == 0) return cloaked != 0; } catch { }
+            return false;
+        }
+
         [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Auto)]
         public static extern IntPtr SendMessageTimeout(
             IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam,

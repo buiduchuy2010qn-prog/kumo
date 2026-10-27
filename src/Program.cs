@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.Drawing;
 using System.IO;
 using System.Reflection;
@@ -61,18 +62,57 @@ namespace Kumo
 
             bool openSettingsOnLaunch = (args != null && args.Length > 0 && args[0] == "--settings");
 
+            Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
+            Application.ThreadException += (s, ex) => { };
+            AppDomain.CurrentDomain.UnhandledException += (s, ex) => { };
+
             bool createdNew;
-            using (Mutex mutex = new Mutex(true, "Local\\Kumo.SingleInstance", out createdNew))
+            Mutex mutex = new Mutex(true, "Local\\Kumo.SingleInstance", out createdNew);
+            if (!createdNew)
             {
+                bool killedHung = false;
+                try
+                {
+                    int selfPid = Process.GetCurrentProcess().Id;
+                    foreach (Process p in Process.GetProcessesByName("Kumo"))
+                    {
+                        if (p.Id != selfPid && !p.Responding)
+                        {
+                            try { p.Kill(); p.WaitForExit(1500); killedHung = true; } catch { }
+                        }
+                    }
+                }
+                catch { }
+
+                if (killedHung)
+                {
+                    try { mutex.Dispose(); } catch { }
+                    Thread.Sleep(250);
+                    mutex = new Mutex(true, "Local\\Kumo.SingleInstance", out createdNew);
+                    openSettingsOnLaunch = true;
+                }
+
                 if (!createdNew)
                 {
-                    // Running Kumo.exe a second time pops open the Settings Manager on the running instance!
+                    try
+                    {
+                        using (EventWaitHandle ev = EventWaitHandle.OpenExisting("Local\\Kumo.OpenSettingsSignal"))
+                        {
+                            ev.Set();
+                        }
+                    }
+                    catch { }
                     if (NativeMethods.WM_OPEN_SETTINGS != 0)
                     {
                         NativeMethods.PostMessage(NativeMethods.HWND_BROADCAST, NativeMethods.WM_OPEN_SETTINGS, IntPtr.Zero, IntPtr.Zero);
                     }
+                    try { mutex.Dispose(); } catch { }
                     return;
                 }
+            }
+            using (mutex)
+            using (EventWaitHandle openSignal = new EventWaitHandle(false, EventResetMode.AutoReset, "Local\\Kumo.OpenSettingsSignal"))
+            {
 
                 Application.EnableVisualStyles();
                 Application.SetCompatibleTextRenderingDefault(false);
@@ -84,6 +124,12 @@ namespace Kumo
                 using (NotifyIcon tray = new NotifyIcon())
                 {
                     NotchForm form = new NotchForm(state, hw, media, osd);
+                    Thread sigThread = new Thread(delegate {
+                        while (!form.IsDisposed) {
+                            try { if (openSignal.WaitOne(500) && !form.IsDisposed && form.IsHandleCreated) form.BeginInvoke(new MethodInvoker(delegate { form.RevealAndOpenSettings(); })); } catch { break; }
+                        }
+                    }) { IsBackground = true, Name = "KumoOpenSignal" };
+                    sigThread.Start();
 
                     try
                     {
