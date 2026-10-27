@@ -113,6 +113,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: pwsh
         run: |
+          $ErrorActionPreference = "Continue"
           $tag = "${{ steps.ver.outputs.tag }}"
           $hash = (Get-Content .\SHA256SUMS.txt -Raw).Trim()
           $tpl = @'
@@ -126,16 +127,19 @@ jobs:
           __HASH__
           ```
           '@
-          $lines = ($tpl -split "`r?`n") | ForEach-Object { if ($_.Length -ge 10) { $_.Substring(10) } else { $_ } }
-          $notes = ($lines -join "`n").Replace('__TAG__', $tag).Replace('__HASH__', $hash)
+          $notes = $tpl.Replace('__TAG__', $tag).Replace('__HASH__', $hash)
           $notesFile = Join-Path $env:RUNNER_TEMP "release_notes.md"
           [System.IO.File]::WriteAllText($notesFile, $notes, (New-Object System.Text.UTF8Encoding($false)))
 
-          $exists = $true
-          try { gh release view $tag | Out-Null } catch { $exists = $false }
-          if (-not $exists) {
-            gh release create $tag .\KumoSetup.exe .\SHA256SUMS.txt --title "Kumo $tag - Official Windows Setup (Overwrite-Ready)" --notes-file $notesFile --latest
+          & gh release view $tag *> $null
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "Creating new GitHub Release $tag..."
+            & gh release create $tag .\KumoSetup.exe .\SHA256SUMS.txt --title "Kumo $tag - Official Windows Setup (Overwrite-Ready)" --notes-file $notesFile --latest
+            if ($LASTEXITCODE -ne 0) { throw "gh release create failed with code $LASTEXITCODE" }
           } else {
-            gh release upload $tag .\KumoSetup.exe .\SHA256SUMS.txt --clobber
-            gh release edit $tag --title "Kumo $tag - Official Windows Setup (Overwrite-Ready)" --notes-file $notesFile --latest
+            Write-Host "Overwriting existing GitHub Release $tag..."
+            & gh release upload $tag .\KumoSetup.exe .\SHA256SUMS.txt --clobber
+            if ($LASTEXITCODE -ne 0) { throw "gh release upload failed with code $LASTEXITCODE" }
+            & gh release edit $tag --title "Kumo $tag - Official Windows Setup (Overwrite-Ready)" --notes-file $notesFile --latest
+            if ($LASTEXITCODE -ne 0) { throw "gh release edit failed with code $LASTEXITCODE" }
           }
