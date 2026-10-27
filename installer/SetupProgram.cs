@@ -56,7 +56,7 @@ namespace KumoSetup
         public static void ApplyModernWindow(IntPtr hwnd)
         {
             if (hwnd == IntPtr.Zero) return;
-            try { int dark = 1; DwmSetWindowAttribute(hwnd, 20, ref dark, 4); } catch { }
+            try { int dark = 0; DwmSetWindowAttribute(hwnd, 20, ref dark, 4); } catch { }
             try { int round = 2; DwmSetWindowAttribute(hwnd, 33, ref round, 4); } catch { }
         }
 
@@ -569,7 +569,7 @@ namespace KumoSetup
             Text = uninstallMode ? "Uninstall Kumo" : ("Kumo Setup — Official v" + KumoBuildInfo.Version);
             FormBorderStyle = FormBorderStyle.None;
             StartPosition = FormStartPosition.CenterScreen;
-            BackColor = Color.FromArgb(16, 19, 28);
+            BackColor = Color.FromArgb(244, 247, 252);
             DoubleBuffered = true;
 
             try { Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); } catch { }
@@ -649,14 +649,14 @@ namespace KumoSetup
             g.TextRenderingHint = TextRenderingHint.ClearTypeGridFit;
             _hits.Clear();
 
-            g.Clear(Color.FromArgb(16, 19, 28));
+            g.Clear(Color.FromArgb(244, 247, 252));
 
             // ==================== 1. OFFICIAL HERO BANNER (116 dp) ====================
             RectangleF hero = new RectangleF(0, 0, winW, U(116f));
             using (LinearGradientBrush bg = new LinearGradientBrush(
                 hero,
-                Color.FromArgb(12, 16, 26),
-                Color.FromArgb(24, 32, 52),
+                Color.White,
+                Color.FromArgb(236, 243, 253),
                 LinearGradientMode.Vertical))
             {
                 g.FillRectangle(bg, hero);
@@ -722,8 +722,8 @@ namespace KumoSetup
             {
                 RectangleF minBtn = new RectangleF(winW - U(68f), U(10f), U(28f), U(24f));
                 _hits.Add(new HitRect { Id = "minimize", Rect = minBtn });
-                if (_hoverId == "minimize") FillRoundRect(g, minBtn, U(6f), Color.FromArgb(35, 255, 255, 255));
-                using (Pen mp = new Pen(Color.FromArgb(215, 255, 255, 255), U(1.6f)))
+                if (_hoverId == "minimize") FillRoundRect(g, minBtn, U(6f), Color.FromArgb(226, 232, 240));
+                using (Pen mp = new Pen(Color.FromArgb(51, 65, 85), U(1.6f)))
                 {
                     float mcx = minBtn.X + minBtn.Width * 0.5f, mcy = minBtn.Y + minBtn.Height * 0.5f;
                     g.DrawLine(mp, mcx - U(4.5f), mcy, mcx + U(4.5f), mcy);
@@ -732,7 +732,7 @@ namespace KumoSetup
                 RectangleF clsBtn = new RectangleF(winW - U(36f), U(10f), U(28f), U(24f));
                 _hits.Add(new HitRect { Id = "close", Rect = clsBtn });
                 if (_hoverId == "close") FillRoundRect(g, clsBtn, U(6f), Color.FromArgb(220, 225, 48, 62));
-                using (Pen cp = new Pen(Color.White, U(1.6f)))
+                using (Pen cp = new Pen(_hoverId == "close" ? Color.White : Color.FromArgb(51, 65, 85), U(1.6f)))
                 {
                     float ccx = clsBtn.X + clsBtn.Width * 0.5f, ccy = clsBtn.Y + clsBtn.Height * 0.5f;
                     g.DrawLine(cp, ccx - U(4f), ccy - U(4f), ccx + U(4f), ccy + U(4f));
@@ -743,8 +743,8 @@ namespace KumoSetup
             // Center Brand Title + Dynamic OFFICIAL Version Pill Badge
             if (_step >= 10)
             {
-                DrawCenterText(g, T("Gỡ cài đặt Kumo", "Uninstall Kumo"), _fBrand, Color.White, new RectangleF(U(20f), U(44f), winW - U(40f), U(34f)));
-                DrawCenterText(g, T("Gỡ ứng dụng và lối tắt Kumo khỏi hệ thống Windows của bạn.", "Remove Kumo application files and shortcuts from Windows."), _fSub, Color.FromArgb(156, 168, 194), new RectangleF(U(20f), U(80f), winW - U(40f), U(24f)));
+                DrawCenterText(g, T("Gỡ cài đặt Kumo", "Uninstall Kumo"), _fBrand, Color.FromArgb(15, 23, 42), new RectangleF(U(20f), U(44f), winW - U(40f), U(34f)));
+                DrawCenterText(g, T("Gỡ ứng dụng và lối tắt Kumo khỏi hệ thống Windows của bạn.", "Remove Kumo application files and shortcuts from Windows."), _fSub, Color.FromArgb(71, 85, 105), new RectangleF(U(20f), U(80f), winW - U(40f), U(24f)));
             }
             else
             {
@@ -754,7 +754,7 @@ namespace KumoSetup
                 float totalHdrW = bSz.Width + U(8f) + badgeW;
                 float startHdrX = (winW - totalHdrW) * 0.5f;
 
-                DrawLeftText(g, brandTxt, _fBrand, Color.White, startHdrX, U(60f));
+                DrawLeftText(g, brandTxt, _fBrand, Color.FromArgb(15, 23, 42), startHdrX, U(60f));
 
                 RectangleF offBadge = new RectangleF(startHdrX + bSz.Width + U(6f), U(50f), badgeW, U(21f));
                 using (LinearGradientBrush bb = new LinearGradientBrush(offBadge, Color.FromArgb(48, 14, 165, 233), Color.FromArgb(48, 99, 102, 241), LinearGradientMode.Horizontal))
@@ -764,11 +764,11 @@ namespace KumoSetup
                     g.FillPath(bb, bp);
                     g.DrawPath(bPen, bp);
                 }
-                DrawCenterText(g, setupBadgeTxt, _fBadge, Color.FromArgb(125, 211, 252), offBadge);
+                DrawCenterText(g, setupBadgeTxt, _fBadge, Color.FromArgb(3, 105, 161), offBadge);
 
                 DrawCenterText(g,
                     T("Trình cài đặt chính thức Tai thỏ sống động Kumo cho Windows 10 & 11", "Official Living Notch Installer for Windows 10 & 11 (64-bit)"),
-                    _fSub, Color.FromArgb(158, 170, 196), new RectangleF(U(20f), U(82f), winW - U(40f), U(24f)));
+                    _fSub, Color.FromArgb(71, 85, 105), new RectangleF(U(20f), U(82f), winW - U(40f), U(24f)));
             }
 
             float padX = U(28f);
@@ -819,8 +819,8 @@ namespace KumoSetup
 
                 // Official Spec Info Bar
                 RectangleF specBar = new RectangleF(padX, y, cw, U(38f));
-                FillRoundRect(g, specBar, U(9f), Color.FromArgb(22, 26, 38));
-                using (Pen sp = new Pen(Color.FromArgb(38, 45, 64), 1f))
+                FillRoundRect(g, specBar, U(9f), Color.White);
+                using (Pen sp = new Pen(Color.FromArgb(220, 228, 240), 1f))
                 using (GraphicsPath gp = CreateRoundRect(specBar, U(9f)))
                 {
                     g.DrawPath(sp, gp);
@@ -835,7 +835,7 @@ namespace KumoSetup
                 DrawLeftText(g,
                     specText,
                     _fSmall,
-                    hasExisting ? Color.FromArgb(52, 211, 153) : Color.FromArgb(168, 178, 202),
+                    hasExisting ? Color.FromArgb(5, 150, 105) : Color.FromArgb(51, 65, 85),
                     specBar.X + U(14f), specBar.Y + specBar.Height * 0.5f);
                 DrawSecondaryBtn(g, "go_custom", new RectangleF(specBar.Right - U(104f), specBar.Y + U(6f), U(94f), U(26f)),
                     T("Tùy chỉnh...", "Customize..."));
@@ -848,7 +848,7 @@ namespace KumoSetup
                 else
                 {
                     DrawLeftText(g, T("Hỗ trợ cài đè mọi phiên bản · Không cần quyền Admin", "Seamless in-place overwrite · No Admin required"),
-                        _fSmall, Color.FromArgb(118, 130, 155), padX, winH - U(35f));
+                        _fSmall, Color.FromArgb(100, 116, 139), padX, winH - U(35f));
                 }
 
                 RectangleF instBtn = new RectangleF(winW - padX - U(238f), winH - U(54f), U(238f), U(38f));
@@ -860,16 +860,16 @@ namespace KumoSetup
             else if (_step == 1)
             {
                 // STEP 1: CUSTOMIZE LOCATION & WINDOWS SHORTCUTS
-                DrawLeftText(g, T("THƯ MỤC CÀI ĐẶT (INSTALL LOCATION)", "INSTALL LOCATION"), _fSec, Color.FromArgb(96, 165, 250), padX, y + U(6f));
+                DrawLeftText(g, T("THƯ MỤC CÀI ĐẶT (INSTALL LOCATION)", "INSTALL LOCATION"), _fSec, Color.FromArgb(2, 132, 199), padX, y + U(6f));
                 y += U(20f);
 
                 RectangleF dirCard = new RectangleF(padX, y, cw, U(44f));
                 DrawCard(g, dirCard);
-                DrawLeftText(g, TruncateMiddle(_installDir, 52), _fDesc, Color.FromArgb(225, 232, 245), padX + U(14f), y + U(22f));
+                DrawLeftText(g, TruncateMiddle(_installDir, 52), _fDesc, Color.FromArgb(15, 23, 42), padX + U(14f), y + U(22f));
                 DrawSecondaryBtn(g, "browse", new RectangleF(padX + cw - U(96f), y + U(8f), U(86f), U(28f)), T("Đổi thư mục...", "Browse..."));
                 y += U(56f);
 
-                DrawLeftText(g, T("TÙY CHỌN TÍCH HỢP WINDOWS", "WINDOWS INTEGRATION"), _fSec, Color.FromArgb(96, 165, 250), padX, y + U(6f));
+                DrawLeftText(g, T("TÙY CHỌN TÍCH HỢP WINDOWS", "WINDOWS INTEGRATION"), _fSec, Color.FromArgb(2, 132, 199), padX, y + U(6f));
                 y += U(20f);
 
                 y = DrawCheckRow(g, padX, y, cw, "chk_startmenu",
@@ -894,11 +894,11 @@ namespace KumoSetup
                 DrawCard(g, pCard);
 
                 string pctStr = string.Format("{0}%", (int)Math.Round(_progress * 100f));
-                DrawLeftText(g, T(_statusVi, _statusEn), _fBold, Color.White, pCard.X + U(20f), pCard.Y + U(26f));
-                DrawRightText(g, pctStr, _fBold, Color.FromArgb(56, 189, 248), pCard.Right - U(20f), pCard.Y + U(26f));
+                DrawLeftText(g, T(_statusVi, _statusEn), _fBold, Color.FromArgb(15, 23, 42), pCard.X + U(20f), pCard.Y + U(26f));
+                DrawRightText(g, pctStr, _fBold, Color.FromArgb(2, 132, 199), pCard.Right - U(20f), pCard.Y + U(26f));
 
                 RectangleF barBg = new RectangleF(pCard.X + U(20f), pCard.Y + U(48f), pCard.Width - U(40f), U(11f));
-                FillRoundRect(g, barBg, U(5.5f), Color.FromArgb(35, 255, 255, 255));
+                FillRoundRect(g, barBg, U(5.5f), Color.FromArgb(226, 232, 240));
                 if (_progress > 0.01f)
                 {
                     RectangleF barFg = new RectangleF(barBg.X, barBg.Y, Math.Max(U(11f), barBg.Width * _progress), barBg.Height);
@@ -957,7 +957,7 @@ namespace KumoSetup
                         }
                     }
 
-                    Color tc = done ? Color.FromArgb(225, 235, 248) : (active ? Color.White : Color.FromArgb(115, 126, 150));
+                    Color tc = done ? Color.FromArgb(30, 41, 59) : (active ? Color.FromArgb(15, 23, 42) : Color.FromArgb(100, 116, 139));
                     DrawLeftText(g, _isVi ? stVi[i] : stEn[i], active ? _fBold : _fDesc, tc, pCard.X + U(50f), cy);
                     cy += U(35f);
                 }
@@ -966,7 +966,7 @@ namespace KumoSetup
             {
                 // STEP 3: OFFICIAL INSTALL COMPLETE
                 RectangleF okCard = new RectangleF(padX, y + U(4f), cw, U(88f));
-                FillRoundRect(g, okCard, U(11f), Color.FromArgb(20, 38, 36));
+                FillRoundRect(g, okCard, U(11f), Color.FromArgb(236, 253, 245));
                 using (Pen okPen = new Pen(Color.FromArgb(95, 16, 185, 129), 1f))
                 using (GraphicsPath gp = CreateRoundRect(okCard, U(11f)))
                 {
@@ -975,10 +975,10 @@ namespace KumoSetup
 
                 DrawCenterText(g,
                     T("✓ Đã cài đặt Kumo v" + KumoBuildInfo.Version + " thành công!", "✓ Kumo v" + KumoBuildInfo.Version + " has been installed!"),
-                    _fBold, Color.FromArgb(52, 211, 153), new RectangleF(okCard.X + U(14f), okCard.Y + U(16f), okCard.Width - U(28f), U(26f)));
+                    _fBold, Color.FromArgb(5, 150, 105), new RectangleF(okCard.X + U(14f), okCard.Y + U(16f), okCard.Width - U(28f), U(26f)));
                 DrawCenterText(g,
                     T("Bạn có thể tìm và mở 'Kumo' bất kỳ lúc nào trong Start Menu hoặc thanh tìm kiếm Windows.", "You can launch 'Kumo' anytime from the Windows Start Menu or Search."),
-                    _fDesc, Color.FromArgb(182, 196, 216), new RectangleF(okCard.X + U(14f), okCard.Y + U(46f), okCard.Width - U(28f), U(26f)));
+                    _fDesc, Color.FromArgb(51, 65, 85), new RectangleF(okCard.X + U(14f), okCard.Y + U(46f), okCard.Width - U(28f), U(26f)));
 
                 y += U(108f);
                 y = DrawCheckRow(g, padX, y, cw, "chk_launch",
@@ -998,8 +998,8 @@ namespace KumoSetup
                 DrawCard(g, uCard);
                 DrawCenterText(g,
                     T("Bạn có chắc muốn gỡ cài đặt Kumo khỏi Windows?", "Are you sure you want to uninstall Kumo from Windows?"),
-                    _fBold, Color.White, new RectangleF(uCard.X + U(14f), uCard.Y + U(16f), uCard.Width - U(28f), U(26f)));
-                DrawCenterText(g, _installDir, _fDesc, Color.FromArgb(145, 155, 178),
+                    _fBold, Color.FromArgb(15, 23, 42), new RectangleF(uCard.X + U(14f), uCard.Y + U(16f), uCard.Width - U(28f), U(26f)));
+                DrawCenterText(g, _installDir, _fDesc, Color.FromArgb(71, 85, 105),
                     new RectangleF(uCard.X + U(14f), uCard.Y + U(46f), uCard.Width - U(28f), U(24f)));
 
                 y += U(112f);
@@ -1018,13 +1018,13 @@ namespace KumoSetup
                 DrawCard(g, doneCard);
                 DrawCenterText(g,
                     T("Đã gỡ cài đặt Kumo hoàn tất.", "Kumo has been completely uninstalled."),
-                    _fBold, Color.White, new RectangleF(doneCard.X, doneCard.Y + U(30f), doneCard.Width, U(28f)));
+                    _fBold, Color.FromArgb(15, 23, 42), new RectangleF(doneCard.X, doneCard.Y + U(30f), doneCard.Width, U(28f)));
 
                 DrawPrimaryBtn(g, "close", new RectangleF(winW - padX - U(150f), winH - U(54f), U(150f), U(38f)),
                     T("Đóng (Close)", "Close"));
             }
 
-            using (Pen borderPen = new Pen(Color.FromArgb(38, 45, 64), 1f))
+            using (Pen borderPen = new Pen(Color.FromArgb(214, 223, 237), 1f))
             {
                 g.DrawLine(borderPen, 0, U(116f), winW, U(116f));
                 g.DrawRectangle(borderPen, 0, 0, winW - 1, winH - 1);
@@ -1046,7 +1046,7 @@ namespace KumoSetup
                 {
                     float nx = x + slotW * (i + 1) + slotW * 0.5f;
                     bool lineDone = (_step > i);
-                    using (Pen lp = new Pen(lineDone ? Color.FromArgb(56, 189, 248) : Color.FromArgb(42, 49, 68), U(1.8f)))
+                    using (Pen lp = new Pen(lineDone ? Color.FromArgb(14, 165, 233) : Color.FromArgb(203, 213, 225), U(1.8f)))
                     {
                         g.DrawLine(lp, cx + U(56f), cy, nx - U(56f), cy);
                     }
@@ -1063,7 +1063,7 @@ namespace KumoSetup
 
                 if (isCur)
                 {
-                    FillRoundRect(g, pill, U(13f), Color.FromArgb(38, 56, 189, 248));
+                    FillRoundRect(g, pill, U(13f), Color.FromArgb(224, 242, 254));
                     using (Pen bp = new Pen(Color.FromArgb(120, 56, 189, 248), 1f))
                     using (GraphicsPath gp = CreateRoundRect(pill, U(13f)))
                     {
@@ -1072,15 +1072,15 @@ namespace KumoSetup
                 }
 
                 string label = (isDone ? "✓ " : ((i + 1) + ". ")) + (_isVi ? namesVi[i] : namesEn[i]);
-                Color col = isCur ? Color.White : (isDone ? Color.FromArgb(52, 211, 153) : Color.FromArgb(115, 126, 150));
+                Color col = isCur ? Color.FromArgb(3, 105, 161) : (isDone ? Color.FromArgb(5, 150, 105) : Color.FromArgb(100, 116, 139));
                 DrawCenterText(g, label, _fStep, col, pill);
             }
         }
 
         private void DrawFeatureCard(Graphics g, RectangleF r, int iconKind, Color accent, string title, string desc)
         {
-            FillRoundRect(g, r, U(11f), Color.FromArgb(23, 27, 40));
-            using (Pen p = new Pen(Color.FromArgb(40, 47, 66), 1f))
+            FillRoundRect(g, r, U(11f), Color.White);
+            using (Pen p = new Pen(Color.FromArgb(220, 228, 240), 1f))
             using (GraphicsPath gp = CreateRoundRect(r, U(11f)))
             {
                 g.DrawPath(p, gp);
@@ -1125,9 +1125,9 @@ namespace KumoSetup
                 }
             }
 
-            DrawLeftText(g, title, _fBold, Color.White, r.X + U(52f), r.Y + U(21f));
+            DrawLeftText(g, title, _fBold, Color.FromArgb(15, 23, 42), r.X + U(52f), r.Y + U(21f));
             RectangleF descRect = new RectangleF(r.X + U(52f), r.Y + U(34f), r.Width - U(62f), r.Height - U(38f));
-            using (SolidBrush sb = new SolidBrush(Color.FromArgb(156, 168, 194)))
+            using (SolidBrush sb = new SolidBrush(Color.FromArgb(71, 85, 105)))
             {
                 g.DrawString(desc, _fSmall, sb, descRect);
             }
@@ -1139,8 +1139,8 @@ namespace KumoSetup
             _hits.Add(new HitRect { Id = id, Rect = r });
             bool hov = (_hoverId == id);
 
-            FillRoundRect(g, r, U(9f), hov ? Color.FromArgb(30, 36, 52) : Color.FromArgb(23, 27, 40));
-            using (Pen p = new Pen(hov ? Color.FromArgb(62, 74, 102) : Color.FromArgb(40, 46, 64), 1f))
+            FillRoundRect(g, r, U(9f), hov ? Color.FromArgb(248, 251, 255) : Color.White);
+            using (Pen p = new Pen(hov ? Color.FromArgb(165, 192, 230) : Color.FromArgb(220, 228, 240), 1f))
             using (GraphicsPath gp = CreateRoundRect(r, U(9f)))
             {
                 g.DrawPath(p, gp);
@@ -1158,22 +1158,22 @@ namespace KumoSetup
             }
             else
             {
-                FillRoundRect(g, box, U(6f), Color.FromArgb(16, 19, 28));
-                using (Pen bp = new Pen(Color.FromArgb(85, 96, 122), 1.4f))
+                FillRoundRect(g, box, U(6f), Color.FromArgb(241, 245, 251));
+                using (Pen bp = new Pen(Color.FromArgb(148, 163, 184), 1.4f))
                 using (GraphicsPath gp = CreateRoundRect(box, U(6f)))
                 {
                     g.DrawPath(bp, gp);
                 }
             }
 
-            DrawLeftText(g, label, _fBold, Color.White, x + U(46f), y + U(21f));
+            DrawLeftText(g, label, _fBold, Color.FromArgb(15, 23, 42), x + U(46f), y + U(21f));
             return y + U(48f);
         }
 
         private void DrawCard(Graphics g, RectangleF r)
         {
-            FillRoundRect(g, r, U(11f), Color.FromArgb(23, 27, 40));
-            using (Pen p = new Pen(Color.FromArgb(42, 48, 66), 1f))
+            FillRoundRect(g, r, U(11f), Color.White);
+            using (Pen p = new Pen(Color.FromArgb(220, 228, 240), 1f))
             using (GraphicsPath gp = CreateRoundRect(r, U(11f)))
             {
                 g.DrawPath(p, gp);
@@ -1205,13 +1205,13 @@ namespace KumoSetup
         {
             _hits.Add(new HitRect { Id = id, Rect = r });
             bool hov = (_hoverId == id);
-            FillRoundRect(g, r, r.Height * 0.5f, hov ? Color.FromArgb(48, 55, 76) : Color.FromArgb(32, 38, 54));
-            using (Pen p = new Pen(Color.FromArgb(62, 72, 96), 1f))
+            FillRoundRect(g, r, r.Height * 0.5f, hov ? Color.FromArgb(226, 235, 248) : Color.FromArgb(241, 245, 251));
+            using (Pen p = new Pen(Color.FromArgb(203, 213, 225), 1f))
             using (GraphicsPath gp = CreateRoundRect(r, r.Height * 0.5f))
             {
                 g.DrawPath(p, gp);
             }
-            DrawCenterText(g, text, _fDesc, Color.White, r);
+            DrawCenterText(g, text, _fDesc, Color.FromArgb(30, 41, 59), r);
         }
 
         private void OnWizMouseMove(object sender, MouseEventArgs e)

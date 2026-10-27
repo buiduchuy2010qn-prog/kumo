@@ -72,6 +72,8 @@ jobs:
           powershell -ExecutionPolicy Bypass -File .\build.ps1 -Version "$targetVer"
 
           New-Item -ItemType Directory -Path .\artifacts_preview -Force | Out-Null
+          Start-Process -FilePath .\Kumo.exe -ArgumentList @("--preview", ".\artifacts_preview") -Wait
+          if (Test-Path ".\artifacts_preview\preview_err.txt") { throw (Get-Content ".\artifacts_preview\preview_err.txt" -Raw) }
           Start-Process -FilePath .\KumoSetup.exe -ArgumentList @("--preview-setup", ".\artifacts_preview") -Wait
           if (-not (Test-Path ".\artifacts_preview\preview_kumo_setup_welcome.png")) {
             throw "Setup UI smoke test failed!"

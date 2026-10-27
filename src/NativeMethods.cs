@@ -16,8 +16,11 @@ namespace Kumo
         public const int GWL_STYLE = -16;
         public const int WS_CAPTION = 0x00C00000;
 
+        public const int WM_NCHITTEST = 0x0084;
         public const int WM_NCLBUTTONDOWN = 0x00A1;
+        public const int HTCLIENT = 0x0001;
         public const int HTCAPTION = 0x0002;
+        public const uint SMTO_ABORTIFHUNG = 0x0002;
         public static readonly IntPtr HWND_BROADCAST = new IntPtr(0xFFFF);
         public static readonly uint WM_OPEN_SETTINGS = RegisterWindowMessage("Kumo.OpenSettingsMessage");
 
@@ -219,12 +222,23 @@ namespace Kumo
         [DllImport("dwmapi.dll")]
         public static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int attrValue, int attrSize);
 
-        public static void ApplyModernDarkWindow(IntPtr hwnd)
+        [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Auto)]
+        public static extern IntPtr SendMessageTimeout(
+            IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam,
+            uint fuFlags, uint uTimeout, out IntPtr lpdwResult);
+
+        public static IntPtr MakePointLParam(int x, int y)
+        {
+            int packed = ((int)(short)y << 16) | (int)(ushort)(short)x;
+            return new IntPtr(packed);
+        }
+
+        public static void ApplyModernWindowTheme(IntPtr hwnd, bool isDark)
         {
             if (hwnd == IntPtr.Zero) return;
             try
             {
-                int dark = 1;
+                int dark = isDark ? 1 : 0;
                 DwmSetWindowAttribute(hwnd, 20, ref dark, 4); // DWMWA_USE_IMMERSIVE_DARK_MODE
             }
             catch { }
@@ -234,6 +248,11 @@ namespace Kumo
                 DwmSetWindowAttribute(hwnd, 33, ref round, 4); // DWMWA_WINDOW_CORNER_PREFERENCE
             }
             catch { }
+        }
+
+        public static void ApplyModernDarkWindow(IntPtr hwnd)
+        {
+            ApplyModernWindowTheme(hwnd, true);
         }
 
         [DllImport("shell32.dll")]

@@ -25,6 +25,23 @@ namespace Kumo
         private bool _isMicroPill = false;
         private bool _autoMinimalObstruction = false;
         private bool _alwaysMinimal = false;
+        private float _autoMinTimerSec = 0f;
+        private bool _manualWaveDemo = false;
+
+        private bool IsLight { get { return _state.IsNotchLight; } }
+        private Color InkPri { get { return IsLight ? Color.FromArgb(15, 23, 42) : InkPri; } }
+        private Color Nw(int a)
+        {
+            a = Math.Max(0, Math.Min(255, a));
+            int w = 255; if (!IsLight) return Color.FromArgb(a, w, w, w);
+            if (a >= 88) return Color.FromArgb(Math.Min(255, a + 28), 15, 23, 42);
+            return Color.FromArgb(Math.Max(10, (int)(a * 0.48f)), 15, 23, 42);
+        }
+        private Color VeilCol(int a)
+        {
+            a = Math.Max(0, Math.Min(255, a));
+            return IsLight ? Color.FromArgb(a, 248, 250, 254) : Color.FromArgb(a, 0, 0, 0);
+        }
         private bool _isLyricsSplit = false;
         private bool _showRestingMascot = true;
 
@@ -220,6 +237,7 @@ namespace Kumo
         {
             _showRestingMascot = true;
             _state.MascotEnabled = true;
+            _manualWaveDemo = true;
             _petState = 3;
             _isMicroPill = false;
             _waveUntilUtc = DateTime.UtcNow.AddSeconds(durationSec);
@@ -320,6 +338,21 @@ namespace Kumo
                 {
                     m.Result = new IntPtr(-1); // HTTRANSPARENT: pass clicks straight through when collapsed!
                     return;
+                }
+                if (!_isExpanded && _state.OpenByClick)
+                {
+                    int lp = unchecked((int)m.LParam.ToInt64());
+                    int sx = (short)(lp & 0xFFFF);
+                    int sy = (short)((lp >> 16) & 0xFFFF);
+                    Rectangle scr = GetTargetScreen().Bounds;
+                    int cx = scr.Left + scr.Width / 2;
+                    int maxHalfW = _isMicroPill ? (int)U(26f) : (int)U(76f);
+                    int maxH = _isMicroPill ? (int)U(6f) : (int)U(30f);
+                    if (Math.Abs(sx - cx) > maxHalfW || (sy - scr.Top) > maxH)
+                    {
+                        m.Result = new IntPtr(-1);
+                        return;
+                    }
                 }
             }
             base.WndProc(ref m);
@@ -525,8 +558,7 @@ namespace Kumo
                 return;
             }
 
-            // Keep 150x30 pill visible when Mascot is out OR when Music is actively playing (matches Nusa: "A smaller pill when nothing is playing"!)
-            if (_petState != 0 || (_media.HasMedia && _media.IsPlaying && !_alwaysMinimal))
+            if (_manualWaveDemo && _petState == 3 && DateTime.UtcNow < _waveUntilUtc)
             {
                 if (_isMicroPill)
                 {
@@ -537,15 +569,19 @@ namespace Kumo
                 return;
             }
 
+            // Priority #1: NEVER block browser/window tabs when Smart Auto-Minimal detects center obstruction!
             bool rawObstructed = _alwaysMinimal || (_state.AutoMinimalEnabled && CheckTitleBarObstruction());
             if (rawObstructed != _autoMinimalObstruction)
             {
                 _obstructionStreak++;
-                if (_alwaysMinimal || _obstructionStreak >= 2)
+                // Shrink IMMEDIATELY (~0.18s) when tabs touch center; wait 3 checks (~0.54s) before expanding back
+                int neededStreak = (_alwaysMinimal || rawObstructed) ? 1 : 3;
+                if (_obstructionStreak >= neededStreak)
                 {
                     _obstructionStreak = 0;
                     _autoMinimalObstruction = rawObstructed;
                     _isMicroPill = rawObstructed;
+                    if (_isMicroPill && !_manualWaveDemo) _petState = 0;
                     UpdateTargetDimensions();
                     _needsRedraw = true;
                 }
@@ -592,6 +628,26 @@ namespace Kumo
             }
         }
 
+        private int ProbeWindowHitTest(IntPtr hwnd, int x, int y, out bool ok)
+        {
+            IntPtr res;
+            IntPtr ret = NativeMethods.SendMessageTimeout(
+                hwnd,
+                (uint)NativeMethods.WM_NCHITTEST,
+                IntPtr.Zero,
+                NativeMethods.MakePointLParam(x, y),
+                NativeMethods.SMTO_ABORTIFHUNG,
+                35,
+                out res);
+            if (ret == IntPtr.Zero)
+            {
+                ok = false;
+                return 0;
+            }
+            ok = true;
+            return unchecked((int)res.ToInt64());
+        }
+
         private bool CheckTitleBarObstruction()
         {
             try
@@ -601,8 +657,8 @@ namespace Kumo
                 if (_settingsForm != null && !_settingsForm.IsDisposed && _settingsForm.IsHandleCreated && fg == _settingsForm.Handle) return false;
                 if (!NativeMethods.IsWindowVisible(fg) || NativeMethods.IsIconic(fg)) return false;
 
-                System.Text.StringBuilder sb = new System.Text.StringBuilder(64);
-                NativeMethods.GetClassName(fg, sb, 64);
+                System.Text.StringBuilder sb = new System.Text.StringBuilder(96);
+                NativeMethods.GetClassName(fg, sb, 96);
                 string cls = sb.ToString();
                 if (cls == "Progman" || cls == "WorkerW" || cls == "Shell_TrayWnd" || cls == "Shell_SecondaryTrayWnd")
                     return false;
@@ -612,64 +668,115 @@ namespace Kumo
 
                 Rectangle scr = GetTargetScreen().Bounds;
                 int centerX = scr.Left + scr.Width / 2;
-                int halfPillW = (int)Math.Round(U(75f));
 
-                if (wr.Top > scr.Top + (int)U(8f) || wr.Bottom <= scr.Top + (int)U(36f))
+                // Must be docked/maximized at the top edge of this monitor and span across the Notch
+                if (wr.Top > scr.Top + (int)U(12f) || wr.Bottom <= scr.Top + (int)U(60f))
                     return false;
-                if (wr.Left > centerX - (int)U(140f) || wr.Right < centerX + halfPillW)
+                if (wr.Left > centerX - (int)U(110f) || wr.Right < centerX + (int)U(110f))
                     return false;
 
-                int scanW = Math.Max(16, (int)Math.Round(U(42f)));
-                int scanH = Math.Max(10, (int)Math.Round(U(16f)));
-                int scanX = centerX - (int)Math.Round(U(134f));
-                int scanY = Math.Max(scr.Top, wr.Top) + (int)Math.Round(U(7f));
+                int topEdge = Math.Max(scr.Top, wr.Top);
 
-                if (_scanBmp == null || _scanBmp.Width != scanW || _scanBmp.Height != scanH)
-                {
-                    if (_scanBmp != null) _scanBmp.Dispose();
-                    _scanBmp = new Bitmap(scanW, scanH, PixelFormat.Format32bppArgb);
-                }
+                // LAYER 1: Direct Win32 WM_NCHITTEST to foreground window across the entire Notch span!
+                // Bypasses Kumo's own overlay HWND and asks Chrome/Edge/Brave/Firefox/Explorer directly
+                // whether (x, y) is empty draggable titlebar (HTCAPTION=2) or an interactive Tab / '+' button (HTCLIENT=1)!
+                bool isKnownTabbedApp =
+                    cls.IndexOf("Chrome_WidgetWin", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                    cls.IndexOf("MozillaWindowClass", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                    cls.Equals("CabinetWClass", StringComparison.OrdinalIgnoreCase) ||
+                    cls.Equals("WinUIDesktopWin32WindowClass", StringComparison.OrdinalIgnoreCase);
 
-                using (Graphics gs = Graphics.FromImage(_scanBmp))
-                {
-                    gs.CopyFromScreen(scanX, scanY, 0, 0, new Size(scanW, scanH), CopyPixelOperation.SourceCopy);
-                }
+                int yProbe1 = topEdge + Math.Max(10, (int)Math.Round(U(15f)));
+                int yProbe2 = topEdge + Math.Max(16, (int)Math.Round(U(23f)));
+                float[] xOffsetsDp = new float[] { -96f, -72f, -48f, -24f, 0f, 24f, 48f, 72f, 96f };
 
-                BitmapData bd = _scanBmp.LockBits(new Rectangle(0, 0, scanW, scanH), ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
-                int edgeCount = 0;
-                try
+                bool anyOk = false;
+                bool centerHasNonCaption = false;
+                for (int i = 0; i < xOffsetsDp.Length; i++)
                 {
-                    int stride = bd.Stride;
-                    int needed = stride * scanH;
-                    if (_scanBuf == null || _scanBuf.Length < needed)
+                    int px = centerX + (int)Math.Round(U(xOffsetsDp[i]));
+                    if (px <= wr.Left + 8 || px >= wr.Right - 8) continue;
+
+                    bool ok1;
+                    int h1 = ProbeWindowHitTest(fg, px, yProbe1, out ok1);
+                    if (ok1)
                     {
-                        _scanBuf = new byte[needed];
-                    }
-                    System.Runtime.InteropServices.Marshal.Copy(bd.Scan0, _scanBuf, 0, needed);
-
-                    for (int y = 1; y < scanH; y++)
-                    {
-                        int row = y * stride;
-                        for (int x = 1; x < scanW; x++)
+                        anyOk = true;
+                        if (h1 != NativeMethods.HTCAPTION && h1 != 0)
                         {
-                            int idx = row + x * 4;
-                            int idxLeft = idx - 4;
-                            int dB = Math.Abs(_scanBuf[idx] - _scanBuf[idxLeft]);
-                            int dG = Math.Abs(_scanBuf[idx + 1] - _scanBuf[idxLeft + 1]);
-                            int dR = Math.Abs(_scanBuf[idx + 2] - _scanBuf[idxLeft + 2]);
-                            int maxDiff = Math.Max(dR, Math.Max(dG, dB));
-                            if (maxDiff > 32)
-                            {
-                                edgeCount++;
-                                if (edgeCount >= 12) return true;
-                            }
+                            centerHasNonCaption = true;
+                            break;
+                        }
+                    }
+
+                    bool ok2;
+                    int h2 = ProbeWindowHitTest(fg, px, yProbe2, out ok2);
+                    if (ok2)
+                    {
+                        anyOk = true;
+                        if (h2 != NativeMethods.HTCAPTION && h2 != 0)
+                        {
+                            centerHasNonCaption = true;
+                            break;
                         }
                     }
                 }
-                finally
+
+                if (anyOk)
                 {
-                    _scanBmp.UnlockBits(bd);
+                    if (!centerHasNonCaption)
+                    {
+                        // Every point across the Notch span is pure draggable HTCAPTION -> safe to show full pill!
+                        return false;
+                    }
+                    if (isKnownTabbedApp)
+                    {
+                        // In Chromium/Firefox/Win11 Explorer, non-HTCAPTION in the tab strip ALWAYS means a Tab or '+' button!
+                        return true;
+                    }
+
+                    // For other custom windows, verify the app uses HTCAPTION in its empty right-side drag zone
+                    bool okRef1, okRef2;
+                    int refX1 = Math.Max(centerX + (int)U(120f), wr.Right - (int)U(185f));
+                    int refX2 = Math.Max(centerX + (int)U(120f), wr.Right - (int)U(235f));
+                    int hr1 = (refX1 < wr.Right - 40) ? ProbeWindowHitTest(fg, refX1, yProbe1, out okRef1) : 0;
+                    int hr2 = (refX2 < wr.Right - 40) ? ProbeWindowHitTest(fg, refX2, yProbe1, out okRef2) : 0;
+                    if (hr1 == NativeMethods.HTCAPTION || hr2 == NativeMethods.HTCAPTION)
+                    {
+                        return true;
+                    }
                 }
+
+                // LAYER 2: Dual-Wing + Reference Color Pixel Scanner Fallback (for elevated Admin windows where UIPI blocks WM_NCHITTEST)
+                int wingW = Math.Max(20, (int)Math.Round(U(64f)));
+                int scanH = Math.Max(10, (int)Math.Round(U(14f)));
+                int scanY = topEdge + Math.Max(8, (int)Math.Round(U(10f)));
+                int leftWingX = Math.Max(scr.Left + 4, centerX - (int)Math.Round(U(148f)));
+                int rightWingX = Math.Min(scr.Right - wingW - 4, centerX + (int)Math.Round(U(84f)));
+                int refStripX = Math.Max(rightWingX + wingW + 8, wr.Right - (int)Math.Round(U(230f)));
+
+                if (_scanBmp == null || _scanBmp.Width != wingW || _scanBmp.Height != scanH)
+                {
+                    if (_scanBmp != null) _scanBmp.Dispose();
+                    _scanBmp = new Bitmap(wingW, scanH, PixelFormat.Format32bppArgb);
+                }
+
+                int refR = -1, refG = -1, refB = -1;
+                if (refStripX + wingW < wr.Right - (int)U(150f))
+                {
+                    int refEdges;
+                    MeasureStripEdgesAndMean(refStripX, scanY, wingW, scanH, out refEdges, out refR, out refG, out refB);
+                }
+
+                int edgesL, lR, lG, lB;
+                MeasureStripEdgesAndMean(leftWingX, scanY, wingW, scanH, out edgesL, out lR, out lG, out lB);
+                if (edgesL >= 10) return true;
+                if (refR >= 0 && (Math.Abs(lR - refR) + Math.Abs(lG - refG) + Math.Abs(lB - refB)) > 24) return true;
+
+                int edgesR, rR, rG, rB;
+                MeasureStripEdgesAndMean(rightWingX, scanY, wingW, scanH, out edgesR, out rR, out rG, out rB);
+                if (edgesR >= 10) return true;
+                if (refR >= 0 && (Math.Abs(rR - refR) + Math.Abs(rG - refG) + Math.Abs(rB - refB)) > 24) return true;
 
                 return false;
             }
@@ -679,6 +786,51 @@ namespace Kumo
             }
         }
 
+        private void MeasureStripEdgesAndMean(int sx, int sy, int sw, int sh, out int edges, out int meanR, out int meanG, out int meanB)
+        {
+            edges = 0; meanR = 0; meanG = 0; meanB = 0;
+            using (Graphics gs = Graphics.FromImage(_scanBmp))
+            {
+                gs.CopyFromScreen(sx, sy, 0, 0, new Size(sw, sh), CopyPixelOperation.SourceCopy);
+            }
+            BitmapData bd = _scanBmp.LockBits(new Rectangle(0, 0, sw, sh), ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
+            try
+            {
+                int stride = bd.Stride;
+                int needed = stride * sh;
+                if (_scanBuf == null || _scanBuf.Length < needed) _scanBuf = new byte[needed];
+                System.Runtime.InteropServices.Marshal.Copy(bd.Scan0, _scanBuf, 0, needed);
+
+                long sumR = 0, sumG = 0, sumB = 0;
+                int count = 0;
+                for (int y = 1; y < sh; y++)
+                {
+                    int row = y * stride;
+                    for (int x = 1; x < sw; x++)
+                    {
+                        int idx = row + x * 4;
+                        int idxLeft = idx - 4;
+                        int b = _scanBuf[idx], g = _scanBuf[idx + 1], r = _scanBuf[idx + 2];
+                        sumR += r; sumG += g; sumB += b; count++;
+
+                        int dB = Math.Abs(b - _scanBuf[idxLeft]);
+                        int dG = Math.Abs(g - _scanBuf[idxLeft + 1]);
+                        int dR = Math.Abs(r - _scanBuf[idxLeft + 2]);
+                        if (Math.Max(dR, Math.Max(dG, dB)) > 16) edges++;
+                    }
+                }
+                if (count > 0)
+                {
+                    meanR = (int)(sumR / count);
+                    meanG = (int)(sumG / count);
+                    meanB = (int)(sumB / count);
+                }
+            }
+            finally
+            {
+                _scanBmp.UnlockBits(bd);
+            }
+        }
         private static float SmoothStep01(float x)
         {
             if (x <= 0f) return 0f;
@@ -730,15 +882,26 @@ namespace Kumo
 
             DateTime nowUtc = DateTime.UtcNow;
 
+            if (!_isExpanded && !_isFullscreenHidden)
+            {
+                _autoMinTimerSec += dt;
+                if (_autoMinTimerSec >= 0.18f)
+                {
+                    _autoMinTimerSec = 0f;
+                    UpdateAutoMinimalState();
+                }
+            }
+
             // ==================== 1. EXACT NUSA MASCOT LIFECYCLE ====================
             uint lastInputTick = NativeMethods.GetLastInputTick();
             uint idleMs = unchecked((uint)Environment.TickCount - lastInputTick);
 
-            if (_isExpanded || !_showRestingMascot || _isFullscreenHidden || (_media.HasMedia && _media.IsPlaying))
+            if (_isExpanded || !_showRestingMascot || _isFullscreenHidden || (_media.HasMedia && _media.IsPlaying) || ((_alwaysMinimal || _autoMinimalObstruction) && !_manualWaveDemo))
             {
                 if (_petState != 0)
                 {
                     _petState = 0;
+                    _manualWaveDemo = false;
                     _waveUntilUtc = DateTime.MinValue;
                 }
             }
@@ -782,6 +945,7 @@ namespace Kumo
                     if (nowUtc >= _waveUntilUtc)
                     {
                         _petState = 0;
+                        _manualWaveDemo = false;
                         UpdateAutoMinimalState();
                         _needsRedraw = true;
                     }
@@ -819,7 +983,7 @@ namespace Kumo
             else
             {
                 bool insidePill = !_isFullscreenHidden && (_isMicroPill
-                    ? (absDx <= (int)U(45f) && relY >= 0 && relY <= (int)U(7f))
+                    ? (absDx <= (int)U(32f) && relY >= 0 && relY <= (int)U(5.5f))
                     : (absDx <= (int)U(76f) && relY >= 0 && relY <= (int)U(30f)));
 
                 if (!insidePill)
@@ -1026,10 +1190,10 @@ namespace Kumo
                     for (int i = 4; i >= 1; i--)
                     {
                         float sp = i * U(1.8f);
-                        int shA = (int)(18f * (5 - i) * shScale);
+                        int shA = (int)((IsLight ? 9f : 18f) * (5 - i) * shScale);
                         if (shA <= 0) continue;
                         using (GraphicsPath spath = CreateNusaNotchPath(x0 - sp * 0.2f, bodyW + sp * 0.4f, bodyH + sp * 0.85f, r + sp * 0.3f, ear))
-                        using (SolidBrush sb = new SolidBrush(Color.FromArgb(shA, 0, 0, 0)))
+                        using (SolidBrush sb = new SolidBrush(Color.FromArgb(shA, 15, 23, 42)))
                         {
                             g.FillPath(sb, spath);
                         }
@@ -1038,9 +1202,12 @@ namespace Kumo
 
                 using (GraphicsPath path = CreateNusaNotchPath(x0, bodyW, bodyH, r, ear))
                 {
-                    using (SolidBrush blackBrush = new SolidBrush(Color.FromArgb(255, 0, 0, 0)))
+                    Color shellFill = IsLight
+                        ? ((bodyH <= U(9f)) ? Color.FromArgb(205, 100, 116, 145) : Color.FromArgb(255, 248, 250, 254))
+                        : Color.FromArgb(255, 0, 0, 0);
+                    using (SolidBrush shellBrush = new SolidBrush(shellFill))
                     {
-                        g.FillPath(blackBrush, path);
+                        g.FillPath(shellBrush, path);
                     }
 
                     GraphicsState clipState = g.Save();
@@ -1063,7 +1230,7 @@ namespace Kumo
                             int veil = (int)((1.0f - colProg) * 255f);
                             if (veil > 2)
                             {
-                                using (SolidBrush vb = new SolidBrush(Color.FromArgb(Math.Min(255, veil), 0, 0, 0)))
+                                using (SolidBrush vb = new SolidBrush(VeilCol(veil)))
                                 {
                                     g.FillRectangle(vb, x0 - ear, 0f, bodyW + ear * 2f, bodyH + 2f);
                                 }
@@ -1081,7 +1248,7 @@ namespace Kumo
                             int veil = (int)((1.0f - expProg) * 255f);
                             if (veil > 2)
                             {
-                                using (SolidBrush vb = new SolidBrush(Color.FromArgb(Math.Min(255, veil), 0, 0, 0)))
+                                using (SolidBrush vb = new SolidBrush(VeilCol(veil)))
                                 {
                                     g.FillRectangle(vb, x0 - ear, 0f, bodyW + ear * 2f, bodyH + 2f);
                                 }
@@ -1090,6 +1257,14 @@ namespace Kumo
                     }
 
                     g.Restore(clipState);
+
+                    if (IsLight && bodyH > U(9f))
+                    {
+                        using (Pen borderPen = new Pen(Color.FromArgb(220, 198, 210, 228), U(1.1f)))
+                        {
+                            g.DrawPath(borderPen, path);
+                        }
+                    }
                 }
             }
         }
@@ -1137,7 +1312,7 @@ namespace Kumo
                     DrawBatteryRing(g, x0 + U(20f), U(15f));
                 }
 
-                DrawCenteredText(g, DateTime.Now.ToString("HH:mm"), _fIdleTime, Color.White, x0 + U(75f), U(15f));
+                DrawCenteredText(g, DateTime.Now.ToString("HH:mm"), _fIdleTime, InkPri, x0 + U(75f), U(15f));
                 if (_state.EqualizerEnabled)
                 {
                     DrawEqualizerBars(g, x0 + U(131f), U(15f));
@@ -1147,7 +1322,7 @@ namespace Kumo
                 if (cEase < 0.99f)
                 {
                     int clockVeil = (int)((1.0f - cEase) * 255f);
-                    using (SolidBrush vb = new SolidBrush(Color.FromArgb(Math.Min(255, clockVeil), 0, 0, 0)))
+                    using (SolidBrush vb = new SolidBrush(VeilCol(clockVeil)))
                     {
                         g.FillRectangle(vb, x0 - U(12f), 0f, w + U(24f), h + 2f);
                     }
@@ -1225,7 +1400,7 @@ namespace Kumo
                     float eyeW = U(8.4f);
                     float eyeH = Math.Max(U(1.8f), U(12.4f) * blink * droop * mEase);
 
-                    using (SolidBrush white = new SolidBrush(Color.FromArgb(eyeAlpha, 255, 255, 255)))
+                    using (SolidBrush white = new SolidBrush((IsLight ? Color.FromArgb(eyeAlpha, 30, 41, 59) : Nw(eyeAlpha))))
                     {
                         g.FillEllipse(white, baseLx - eyeW * 0.5f, ey - eyeH * 0.5f, eyeW, eyeH);
                         g.FillEllipse(white, baseRx - eyeW * 0.5f, ey - eyeH * 0.5f, eyeW, eyeH);
@@ -1264,7 +1439,7 @@ namespace Kumo
         {
             if (alpha <= 1) return;
             float hw = U(4.5f);
-            using (Pen p = new Pen(Color.FromArgb(alpha, 255, 255, 255), U(2.45f)))
+            using (Pen p = new Pen((IsLight ? Color.FromArgb(alpha, 30, 41, 59) : Nw(alpha)), U(2.45f)))
             {
                 p.StartCap = LineCap.Round; p.EndCap = LineCap.Round; p.LineJoin = LineJoin.Round;
                 g.DrawBezier(p, new PointF(ex - hw, ey + U(1.8f)), new PointF(ex - U(1.7f), ey - U(4.2f)), new PointF(ex + U(1.7f), ey - U(4.2f)), new PointF(ex + hw, ey + U(1.8f)));
@@ -1275,7 +1450,7 @@ namespace Kumo
         {
             if (alpha <= 1) return;
             float hw = U(4.2f);
-            using (Pen p = new Pen(Color.FromArgb(alpha, 255, 255, 255), U(2.1f)))
+            using (Pen p = new Pen((IsLight ? Color.FromArgb(alpha, 30, 41, 59) : Nw(alpha)), U(2.1f)))
             {
                 p.StartCap = LineCap.Round; p.EndCap = LineCap.Round;
                 g.DrawBezier(p, new PointF(ex - hw, ey - U(1.2f)), new PointF(ex - U(1.6f), ey + U(2.6f)), new PointF(ex + U(1.6f), ey + U(2.6f)), new PointF(ex + hw, ey - U(1.2f)));
@@ -1290,8 +1465,8 @@ namespace Kumo
             g.RotateTransform(angleDeg);
             g.TranslateTransform(0f, -U(2.0f));
 
-            using (SolidBrush white = new SolidBrush(Color.FromArgb(alpha, 255, 255, 255)))
-            using (Pen fingerPen = new Pen(Color.FromArgb(alpha, 255, 255, 255), U(1.85f)))
+            using (SolidBrush white = new SolidBrush((IsLight ? Color.FromArgb(alpha, 30, 41, 59) : Nw(alpha))))
+            using (Pen fingerPen = new Pen((IsLight ? Color.FromArgb(alpha, 30, 41, 59) : Nw(alpha)), U(1.85f)))
             {
                 fingerPen.StartCap = LineCap.Round;
                 fingerPen.EndCap = LineCap.Round;
@@ -1320,8 +1495,8 @@ namespace Kumo
                 RectangleF hdrClockHit = new RectangleF(x0 + U(136f), U(6f), U(205f), U(24f));
                 _hitZones.Add(new HitZone { Id = "hdr_clock", Rect = hdrClockHit });
 
-                using (SolidBrush bDate = new SolidBrush(Color.FromArgb(_hoveredId == "hdr_clock" ? 255 : 225, 255, 255, 255)))
-                using (SolidBrush bTime = new SolidBrush(Color.White))
+                using (SolidBrush bDate = new SolidBrush(Nw(_hoveredId == "hdr_clock" ? 255 : 225)))
+                using (SolidBrush bTime = new SolidBrush(InkPri))
                 {
                     g.DrawString(dateStr, _fHdrDate, bDate, dateX, dateY);
                     g.DrawString(timeStr, _fHdrTime, bTime, dateX + dSz.Width + U(2f), dateY);
@@ -1406,8 +1581,8 @@ namespace Kumo
                 ? (!string.IsNullOrEmpty(_media.CurrentArtist) ? _media.CurrentArtist : _state.T("Đang mở trình phát", "Media Player"))
                 : _state.T("Mở nhạc trên YouTube, Spotify hoặc trình duyệt", "Play music on Spotify, YouTube or browser");
 
-            Color titleCol = hasMedia ? Color.White : Color.FromArgb(205, 255, 255, 255);
-            Color subCol = hasMedia ? Color.FromArgb(155, 255, 255, 255) : Color.FromArgb(110, 255, 255, 255);
+            Color titleCol = hasMedia ? InkPri : Nw(205);
+            Color subCol = hasMedia ? Nw(155) : Nw(110);
 
             DrawLeftVCenteredText(g, Truncate(title, 30), _fMusicTitle, titleCol, x0 + U(110f), U(44f));
             DrawLeftVCenteredText(g, Truncate(artist, 48), _fMusicSub, subCol, x0 + U(110f), U(62f));
@@ -1417,7 +1592,7 @@ namespace Kumo
             double rem = Math.Max(0.0, dur - pos);
             float pct = (hasMedia && dur > 0.5) ? (float)Math.Max(0.0, Math.Min(1.0, pos / dur)) : 0.0f;
 
-            Color timeCol = hasMedia ? Color.White : Color.FromArgb(95, 255, 255, 255);
+            Color timeCol = hasMedia ? InkPri : Nw(95);
             DrawLeftVCenteredText(g, FormatMMSS((int)pos), _fTimeSmall, timeCol, x0 + U(34f), U(91f));
             string rightTime = (!hasMedia) ? "00:00" : (dur > 0.5 ? ("-" + FormatMMSS((int)rem)) : "LIVE");
             DrawRightVCenteredText(g, rightTime, _fTimeSmall, timeCol, x0 + U(386f), U(91f));
@@ -1432,15 +1607,15 @@ namespace Kumo
                 _hitZones.Add(new HitZone { Id = "media_seek", Rect = new RectangleF(progTrack.X - U(4f), U(81f), progTrack.Width + U(8f), U(20f)) });
             }
 
-            FillPill(g, progTrack, Color.FromArgb(52, 255, 255, 255));
+            FillPill(g, progTrack, Nw(52));
             if (pct > 0.005f)
             {
                 RectangleF progFill = new RectangleF(progTrack.X, progTrack.Y, Math.Max(barH, progTrack.Width * pct), progTrack.Height);
-                FillPill(g, progFill, Color.White);
+                FillPill(g, progFill, InkPri);
                 if (seekHov)
                 {
                     float kx = progTrack.X + progTrack.Width * pct;
-                    using (SolidBrush kb = new SolidBrush(Color.White))
+                    using (SolidBrush kb = new SolidBrush(InkPri))
                     {
                         g.FillEllipse(kb, kx - U(5.5f), U(91f) - U(5.5f), U(11f), U(11f));
                     }
@@ -1486,15 +1661,15 @@ namespace Kumo
                 ? _media.CurrentArtist
                 : _state.T("YouTube · Spotify", "YouTube · Spotify");
 
-            DrawLeftVCenteredText(g, Truncate(title, 18), _fMusicTitle, Color.White, x0 + U(106f), U(42f));
-            DrawLeftVCenteredText(g, Truncate(artist, 22), _fMusicSub, Color.FromArgb(150, 255, 255, 255), x0 + U(106f), U(60f));
+            DrawLeftVCenteredText(g, Truncate(title, 18), _fMusicTitle, InkPri, x0 + U(106f), U(42f));
+            DrawLeftVCenteredText(g, Truncate(artist, 22), _fMusicSub, Nw(150), x0 + U(106f), U(60f));
 
             double pos = hasMedia ? _media.GetLivePositionSec() : 0.0;
             double dur = hasMedia ? _media.DurationSec : 0.0;
             double rem = Math.Max(0.0, dur - pos);
             float pct = (hasMedia && dur > 0.5) ? (float)Math.Max(0.0, Math.Min(1.0, pos / dur)) : 0.0f;
 
-            DrawLeftVCenteredText(g, FormatMMSS((int)pos), _fTimeSmall, Color.White, x0 + U(38f), U(90f));
+            DrawLeftVCenteredText(g, FormatMMSS((int)pos), _fTimeSmall, InkPri, x0 + U(38f), U(90f));
             bool seekHov = (_hoveredId == "media_seek") || _isScrubbingSeek;
             float barH = seekHov ? U(5.6f) : U(4.0f);
             RectangleF progTrack = new RectangleF(x0 + U(80f), U(90f) - barH * 0.5f, U(114f), barH);
@@ -1503,19 +1678,19 @@ namespace Kumo
             {
                 _hitZones.Add(new HitZone { Id = "media_seek", Rect = new RectangleF(progTrack.X - U(3f), U(80f), progTrack.Width + U(6f), U(20f)) });
             }
-            FillPill(g, progTrack, Color.FromArgb(60, 255, 255, 255));
+            FillPill(g, progTrack, Nw(60));
             if (pct > 0.005f)
             {
-                FillPill(g, new RectangleF(progTrack.X, progTrack.Y, Math.Max(barH, progTrack.Width * pct), progTrack.Height), Color.White);
+                FillPill(g, new RectangleF(progTrack.X, progTrack.Y, Math.Max(barH, progTrack.Width * pct), progTrack.Height), InkPri);
             }
-            DrawRightVCenteredText(g, (!hasMedia) ? "00:00" : (dur > 0.5 ? ("-" + FormatMMSS((int)rem)) : "LIVE"), _fTimeSmall, Color.White, x0 + U(240f), U(90f));
+            DrawRightVCenteredText(g, (!hasMedia) ? "00:00" : (dur > 0.5 ? ("-" + FormatMMSS((int)rem)) : "LIVE"), _fTimeSmall, InkPri, x0 + U(240f), U(90f));
 
             DrawLyricsBubbleIcon(g, "media_lyrics", x0 + U(58f), U(115f), true);
             DrawMediaPrevIcon(g, "media_prev", x0 + U(104f), U(115f));
             DrawMediaPlayPauseIcon(g, "media_play", x0 + U(146f), U(115f), _media.IsPlaying);
             DrawMediaNextIcon(g, "media_next", x0 + U(188f), U(115f));
 
-            using (SolidBrush div = new SolidBrush(Color.FromArgb(38, 255, 255, 255)))
+            using (SolidBrush div = new SolidBrush(Nw(38)))
             {
                 g.FillRectangle(div, x0 + U(252f), U(20f), Math.Max(1f, U(1f)), U(98f));
             }
@@ -1523,8 +1698,8 @@ namespace Kumo
             if (!hasMedia)
             {
                 _lastDisplayedLyrics = new LyricLine[0];
-                DrawLeftVCenteredText(g, _state.T("♪ Phát một bài hát để xem", "♪ Play a song to see"), _fLyricOff, Color.FromArgb(135, 255, 255, 255), x0 + U(264f), U(60f));
-                DrawLeftVCenteredText(g, _state.T("lời bài hát đồng bộ LRCLIB.", "synced lyrics from LRCLIB."), _fLyricOff, Color.FromArgb(100, 255, 255, 255), x0 + U(264f), U(83f));
+                DrawLeftVCenteredText(g, _state.T("♪ Phát một bài hát để xem", "♪ Play a song to see"), _fLyricOff, Nw(135), x0 + U(264f), U(60f));
+                DrawLeftVCenteredText(g, _state.T("lời bài hát đồng bộ LRCLIB.", "synced lyrics from LRCLIB."), _fLyricOff, Nw(100), x0 + U(264f), U(83f));
                 return;
             }
 
@@ -1535,7 +1710,7 @@ namespace Kumo
             if (win.Length == 0)
             {
                 string stMsg = !string.IsNullOrEmpty(_media.CurrentLyricLine) ? _media.CurrentLyricLine : "Loading lyrics...";
-                DrawLeftVCenteredText(g, Truncate(stMsg, 26), _fLyricOff, Color.FromArgb(165, 255, 255, 255), x0 + U(264f), U(68f));
+                DrawLeftVCenteredText(g, Truncate(stMsg, 26), _fLyricOff, Nw(165), x0 + U(264f), U(68f));
             }
             else
             {
@@ -1548,13 +1723,13 @@ namespace Kumo
                     _hitZones.Add(new HitZone { Id = lid, Rect = lRect });
                     bool lHov = (_hoveredId == lid);
 
-                    if (lHov) FillRoundRect(g, lRect, U(6f), Color.FromArgb(28, 255, 255, 255));
+                    if (lHov) FillRoundRect(g, lRect, U(6f), Nw(28));
 
                     DrawLeftVCenteredText(
                         g,
                         Truncate(win[i].Text, 26),
                         active ? _fLyricOn : _fLyricOff,
-                        active ? Color.White : (lHov ? Color.FromArgb(200, 255, 255, 255) : Color.FromArgb(92, 255, 255, 255)),
+                        active ? InkPri : (lHov ? Nw(200) : Nw(92)),
                         x0 + U(264f),
                         lyY);
                     lyY += U(23f);
@@ -1565,7 +1740,7 @@ namespace Kumo
         // ==================== PAGE 1: INTERACTIVE POMODORO ====================
         private void DrawPomodoroPage(Graphics g, float x0, float w, float h)
         {
-            DrawLeftVCenteredText(g, "Pomodoro", _fTitle, Color.White, x0 + U(15f), U(19f));
+            DrawLeftVCenteredText(g, "Pomodoro", _fTitle, InkPri, x0 + U(15f), U(19f));
 
             float cx = x0 + U(80f);
             float cy = U(74f);
@@ -1599,7 +1774,7 @@ namespace Kumo
                 g.DrawArc(fgPen, arcRect, -90f, 360f * pct);
             }
 
-            using (Pen wp = new Pen(Color.White, U(1.8f)))
+            using (Pen wp = new Pen(InkPri, U(1.8f)))
             {
                 wp.StartCap = LineCap.Round; wp.EndCap = LineCap.Round;
                 float sr = U(9.5f);
@@ -1616,7 +1791,7 @@ namespace Kumo
             int secs = _state.PomodoroSecondsLeft % 60;
             string timeText = string.Format("{0:00}:{1:00}", mins, secs);
             _hitZones.Add(new HitZone { Id = "pomo_toggle", Rect = new RectangleF(x0 + U(210f), U(33f), U(92f), U(34f)) });
-            DrawCenteredText(g, timeText, _fHeroBig, Color.White, x0 + U(256f), U(50f));
+            DrawCenteredText(g, timeText, _fHeroBig, InkPri, x0 + U(256f), U(50f));
 
             DrawMiniCircleBtn(g, "pomo_plus", x0 + U(320f), U(50f), "+");
             DrawMiniCircleBtn(g, "pomo_reset", x0 + U(350f), U(50f), "↺");
@@ -1624,15 +1799,15 @@ namespace Kumo
             string modeSub = (_state.PomodoroMode == 0)
                 ? _state.T("Phiên tập trung (Focus)", "Focus time")
                 : (_state.PomodoroMode == 1 ? _state.T("Nghỉ ngắn (Short break)", "Short break") : _state.T("Nghỉ dài (Long break)", "Long break"));
-            DrawCenteredText(g, modeSub, _fMusicSub, Color.FromArgb(145, 255, 255, 255), x0 + U(256f), U(76f));
+            DrawCenteredText(g, modeSub, _fMusicSub, Nw(145), x0 + U(256f), U(76f));
 
             DrawNusaPillButton(g, "pomo_focus", new RectangleF(x0 + U(138f), U(92f), U(64f), U(28f)), "Focus",
-                _state.PomodoroMode == 0 ? Color.FromArgb(110, 255, 75, 85) : Color.FromArgb(32, 255, 255, 255));
+                _state.PomodoroMode == 0 ? Color.FromArgb(110, 255, 75, 85) : Nw(32));
             DrawPomoPlayButton(g, "pomo_toggle", new RectangleF(x0 + U(208f), U(92f), U(52f), U(28f)), _state.PomodoroRunning);
             DrawNusaPillButton(g, "pomo_short", new RectangleF(x0 + U(266f), U(92f), U(60f), U(28f)), "Short",
-                _state.PomodoroMode == 1 ? Color.FromArgb(110, 255, 75, 85) : Color.FromArgb(32, 255, 255, 255));
+                _state.PomodoroMode == 1 ? Color.FromArgb(110, 255, 75, 85) : Nw(32));
             DrawNusaPillButton(g, "pomo_long", new RectangleF(x0 + U(332f), U(92f), U(56f), U(28f)), "Long",
-                _state.PomodoroMode == 2 ? Color.FromArgb(110, 255, 75, 85) : Color.FromArgb(32, 255, 255, 255));
+                _state.PomodoroMode == 2 ? Color.FromArgb(110, 255, 75, 85) : Nw(32));
         }
 
         private void DrawMiniCircleBtn(Graphics g, string id, float cx, float cy, string sym)
@@ -1640,11 +1815,11 @@ namespace Kumo
             RectangleF r = new RectangleF(cx - U(11.5f), cy - U(11.5f), U(23f), U(23f));
             _hitZones.Add(new HitZone { Id = id, Rect = r });
             bool hov = (_hoveredId == id);
-            using (SolidBrush sb = new SolidBrush(Color.FromArgb(hov ? 82 : 34, 255, 255, 255)))
+            using (SolidBrush sb = new SolidBrush(Nw(hov ? 82 : 34)))
             {
                 g.FillEllipse(sb, r);
             }
-            DrawCenteredText(g, sym, _fPill, Color.White, cx, cy);
+            DrawCenteredText(g, sym, _fPill, InkPri, cx, cy);
         }
 
         // ==================== PAGE 2: FULLY INTERACTIVE WATER REMINDER ====================
@@ -1664,8 +1839,8 @@ namespace Kumo
             // Clicking the goal readout also toggles inline Plan editor!
             _hitZones.Add(new HitZone { Id = "water_plan_toggle", Rect = new RectangleF(x0 + U(38f), U(31f), U(118f), U(32f)) });
 
-            using (SolidBrush wBr = new SolidBrush(Color.White))
-            using (SolidBrush dBr = new SolidBrush(Color.FromArgb(145, 255, 255, 255)))
+            using (SolidBrush wBr = new SolidBrush(InkPri))
+            using (SolidBrush dBr = new SolidBrush(Nw(145)))
             {
                 g.DrawString(bigL, _fHeroBig, wBr, x0 + U(40f), baseY);
                 g.DrawString(goalStr, _fHeroUnit, dBr, x0 + U(40f) + bigSz.Width - U(4f), U(49f) - _fHeroUnit.Height * 0.5f);
@@ -1675,9 +1850,9 @@ namespace Kumo
             RectangleF swRect = new RectangleF(x0 + U(162f), U(37f), U(36f), U(20f));
             _hitZones.Add(new HitZone { Id = "water_toggle", Rect = new RectangleF(swRect.X - U(4f), swRect.Y - U(4f), swRect.Width + U(8f), swRect.Height + U(8f)) });
             bool remOn = _state.WaterRemindersEnabled;
-            FillPill(g, swRect, remOn ? Color.FromArgb(38, 153, 255) : Color.FromArgb(62, 68, 86));
+            FillPill(g, swRect, remOn ? Color.FromArgb(38, 153, 255) : (IsLight ? Color.FromArgb(203, 213, 225) : Color.FromArgb(62, 68, 86)));
             float kx = remOn ? (swRect.Right - U(18f)) : (swRect.X + U(2f));
-            using (SolidBrush wb = new SolidBrush(Color.White))
+            using (SolidBrush wb = new SolidBrush(Color.FromArgb(255, 255, 255)))
             {
                 g.FillEllipse(wb, kx, swRect.Y + U(2f), U(16f), U(16f));
             }
@@ -1687,10 +1862,10 @@ namespace Kumo
                 : (pct >= 100
                     ? string.Format("Today · {0}% · Goal reached!", pct)
                     : string.Format("Today · {0}% · +{1}ml/drink", pct, _state.WaterCupSizeMl));
-            DrawLeftVCenteredText(g, statusLine, _fMusicSub, Color.FromArgb(155, 255, 255, 255), x0 + U(44f), U(71f));
+            DrawLeftVCenteredText(g, statusLine, _fMusicSub, Nw(155), x0 + U(44f), U(71f));
 
             RectangleF wbarTrack = new RectangleF(x0 + U(44f), U(82.5f), U(152f), U(5f));
-            FillPill(g, wbarTrack, Color.FromArgb(38, 255, 255, 255));
+            FillPill(g, wbarTrack, Nw(38));
             if (pct > 0)
             {
                 float fillW = Math.Max(U(6f), wbarTrack.Width * (pct / 100.0f));
@@ -1703,11 +1878,11 @@ namespace Kumo
 
             // Bottom buttons: [+ Drink], [-], [⚙ Plan]
             DrawNusaPillButton(g, "water_drink", new RectangleF(x0 + U(42f), U(98f), U(64f), U(26f)), "+ Drink", Color.FromArgb(255, 14, 74, 134));
-            DrawNusaPillButton(g, "water_undo", new RectangleF(x0 + U(110f), U(98f), U(28f), U(26f)), "−", Color.FromArgb(38, 255, 255, 255));
+            DrawNusaPillButton(g, "water_undo", new RectangleF(x0 + U(110f), U(98f), U(28f), U(26f)), "−", Nw(38));
             DrawNusaPillButton(g, "water_plan_toggle", new RectangleF(x0 + U(142f), U(98f), U(56f), U(26f)),
-                _waterEditMode ? "✓ Done" : "Plan", _waterEditMode ? Color.FromArgb(180, 38, 153, 255) : Color.FromArgb(38, 255, 255, 255));
+                _waterEditMode ? "✓ Done" : "Plan", _waterEditMode ? Color.FromArgb(180, 38, 153, 255) : Nw(38));
 
-            using (SolidBrush div = new SolidBrush(Color.FromArgb(32, 255, 255, 255)))
+            using (SolidBrush div = new SolidBrush(Nw(32)))
             {
                 g.FillRectangle(div, x0 + U(208f), U(34f), Math.Max(1f, U(1f)), U(90f));
             }
@@ -1715,23 +1890,23 @@ namespace Kumo
             if (_waterEditMode)
             {
                 // Inline Nusa Water Plan Editor right inside the Notch!
-                DrawLeftVCenteredText(g, "Daily Goal:", _fAxis, Color.FromArgb(165, 255, 255, 255), x0 + U(216f), U(36f));
+                DrawLeftVCenteredText(g, "Daily Goal:", _fAxis, Nw(165), x0 + U(216f), U(36f));
                 int[] goals = new int[] { 1500, 2000, 2500, 3000 };
                 string[] gLabels = new string[] { "1.5L", "2.0L", "2.5L", "3.0L" };
                 for (int i = 0; i < 4; i++)
                 {
                     bool sel = (_state.WaterGoalMl == goals[i]);
                     DrawNusaPillButton(g, "wgoal_set_" + i, new RectangleF(x0 + U(216f + i * 42f), U(45f), U(39f), U(22f)),
-                        gLabels[i], sel ? Color.FromArgb(220, 37, 99, 235) : Color.FromArgb(34, 255, 255, 255));
+                        gLabels[i], sel ? Color.FromArgb(220, 37, 99, 235) : Nw(34));
                 }
 
-                DrawLeftVCenteredText(g, "Cup Size:", _fAxis, Color.FromArgb(165, 255, 255, 255), x0 + U(216f), U(76f));
+                DrawLeftVCenteredText(g, "Cup Size:", _fAxis, Nw(165), x0 + U(216f), U(76f));
                 int[] cups = new int[] { 200, 250, 350, 500 };
                 for (int i = 0; i < 4; i++)
                 {
                     bool sel = (_state.WaterCupSizeMl == cups[i]);
                     DrawNusaPillButton(g, "wcup_set_" + i, new RectangleF(x0 + U(216f + i * 42f), U(85f), U(39f), U(22f)),
-                        cups[i].ToString(), sel ? Color.FromArgb(220, 14, 165, 233) : Color.FromArgb(34, 255, 255, 255));
+                        cups[i].ToString(), sel ? Color.FromArgb(220, 14, 165, 233) : Nw(34));
                 }
 
                 DrawNusaPillButton(g, "water_reset_zero", new RectangleF(x0 + U(216f), U(111f), U(165f), U(18f)),
@@ -1740,7 +1915,7 @@ namespace Kumo
             else
             {
                 // Real Hourly Hydration Chart (08h..20h)
-                using (Pen dotPen = new Pen(Color.FromArgb(50, 255, 255, 255), 1f))
+                using (Pen dotPen = new Pen(Nw(50), 1f))
                 {
                     dotPen.DashStyle = DashStyle.Dot;
                     g.DrawLine(dotPen, x0 + U(220f), U(56f), x0 + U(336f), U(56f));
@@ -1766,18 +1941,18 @@ namespace Kumo
                     }
                     else
                     {
-                        FillPill(g, bRect, Color.FromArgb(35, 255, 255, 255));
+                        FillPill(g, bRect, Nw(35));
                     }
                 }
 
                 using (SolidBrush axBlue = new SolidBrush(Color.FromArgb(115, 80, 180, 255)))
-                using (SolidBrush axVert = new SolidBrush(Color.FromArgb(46, 255, 255, 255)))
+                using (SolidBrush axVert = new SolidBrush(Nw(46)))
                 {
                     g.FillRectangle(axBlue, x0 + U(216f), U(106f), U(122f), Math.Max(1f, U(1f)));
                     g.FillRectangle(axVert, x0 + U(338f), U(50f), Math.Max(1f, U(1f)), U(56f));
                 }
 
-                Color dimAx = Color.FromArgb(130, 255, 255, 255);
+                Color dimAx = Nw(130);
                 DrawLeftVCenteredText(g, "500", _fAxis, dimAx, x0 + U(344f), U(56f));
                 DrawLeftVCenteredText(g, "250", _fAxis, dimAx, x0 + U(344f), U(81f));
                 DrawLeftVCenteredText(g, "0 ml", _fAxis, dimAx, x0 + U(344f), U(106f));
@@ -1790,19 +1965,19 @@ namespace Kumo
         // ==================== PAGE 3: INTERACTIVE FILE SHELF (OPEN / DRAG-OUT / BROWSE / REMOVE) ====================
         private void DrawShelfPage(Graphics g, float x0, float w, float h)
         {
-            DrawLeftVCenteredText(g, "Shelf", _fTitle, Color.White, x0 + U(15f), U(19f));
+            DrawLeftVCenteredText(g, "Shelf", _fTitle, InkPri, x0 + U(15f), U(19f));
 
             DrawNusaPillButton(g, "shelf_browse", new RectangleF(x0 + U(58f), U(10f), U(46f), U(18f)), "+ Add", Color.FromArgb(165, 14, 116, 204));
             if (_state.ShelfFiles.Count > 0)
             {
-                DrawNusaPillButton(g, "shelf_clear", new RectangleF(x0 + U(108f), U(10f), U(46f), U(18f)), "Clear", Color.FromArgb(38, 255, 255, 255));
+                DrawNusaPillButton(g, "shelf_clear", new RectangleF(x0 + U(108f), U(10f), U(46f), U(18f)), "Clear", Nw(38));
             }
 
             RectangleF zone = new RectangleF(x0 + U(42f), U(33f), U(338f), U(90f));
             bool zoneHov = (_hoveredId == "shelf_browse_zone");
             using (GraphicsPath zp = CreateRoundRect(zone, U(16f)))
-            using (SolidBrush zb = new SolidBrush((_isDragHover || zoneHov) ? Color.FromArgb(24, 255, 255, 255) : Color.FromArgb(8, 255, 255, 255)))
-            using (Pen zPen = new Pen(Color.FromArgb(_isDragHover ? 210 : (zoneHov ? 130 : 76), 255, 255, 255), U(1.4f)))
+            using (SolidBrush zb = new SolidBrush((_isDragHover || zoneHov) ? Nw(24) : Nw(8)))
+            using (Pen zPen = new Pen(Nw(_isDragHover ? 210 : (zoneHov ? 130 : 76)), U(1.4f)))
             {
                 zPen.DashStyle = DashStyle.Dash;
                 g.FillPath(zb, zp);
@@ -1815,7 +1990,7 @@ namespace Kumo
 
                 float icx = zone.X + U(169f);
                 float icy = zone.Y + U(28f);
-                using (Pen tp = new Pen(Color.FromArgb(190, 255, 255, 255), U(1.8f)))
+                using (Pen tp = new Pen(Nw(190), U(1.8f)))
                 {
                     g.DrawRectangle(tp, icx - U(12f), icy - U(2f), U(24f), U(10f));
                     g.DrawLine(tp, icx, icy - U(14f), icx, icy - U(4f));
@@ -1823,8 +1998,8 @@ namespace Kumo
                     g.DrawLine(tp, icx + U(4f), icy - U(8f), icx, icy - U(4f));
                 }
 
-                DrawCenteredText(g, _state.T("Kéo thả tệp vào đây hoặc nhấp để chọn", "Drop files here or click to browse"), _fShelfMain, Color.White, zone.X + U(169f), zone.Y + U(56f));
-                DrawCenteredText(g, _state.T("Nhấp để mở · Giữ kéo để lôi ra ngoài", "Click to open · Drag out anytime"), _fShelfSub, Color.FromArgb(135, 255, 255, 255), zone.X + U(169f), zone.Y + U(73f));
+                DrawCenteredText(g, _state.T("Kéo thả tệp vào đây hoặc nhấp để chọn", "Drop files here or click to browse"), _fShelfMain, InkPri, zone.X + U(169f), zone.Y + U(56f));
+                DrawCenteredText(g, _state.T("Nhấp để mở · Giữ kéo để lôi ra ngoài", "Click to open · Drag out anytime"), _fShelfSub, Nw(135), zone.X + U(169f), zone.Y + U(73f));
             }
             else
             {
@@ -1841,13 +2016,13 @@ namespace Kumo
                     bool cardHov = (_hoveredId == itemId || _hoveredId == delId);
                     if (cardHov)
                     {
-                        FillRoundRect(g, cardRect, U(10f), Color.FromArgb(30, 255, 255, 255));
+                        FillRoundRect(g, cardRect, U(10f), Nw(30));
                     }
 
                     _hitZones.Add(new HitZone { Id = itemId, Rect = cardRect });
 
                     RectangleF thumb = new RectangleF(cx + U(11.5f), U(40f), U(40f), U(40f));
-                    FillRoundRect(g, thumb, U(9f), Color.FromArgb(38, 44, 62));
+                    FillRoundRect(g, thumb, U(9f), IsLight ? Color.FromArgb(228, 235, 247) : Color.FromArgb(38, 44, 62));
 
                     bool drewSysIcon = false;
                     try
@@ -1867,11 +2042,11 @@ namespace Kumo
                     catch { }
                     if (!drewSysIcon)
                     {
-                        DrawCenteredText(g, Path.GetExtension(fp).ToUpperInvariant(), _fAxis, Color.White, thumb.X + thumb.Width * 0.5f, thumb.Y + thumb.Height * 0.5f);
+                        DrawCenteredText(g, Path.GetExtension(fp).ToUpperInvariant(), _fAxis, InkPri, thumb.X + thumb.Width * 0.5f, thumb.Y + thumb.Height * 0.5f);
                     }
 
-                    DrawCenteredText(g, Truncate(name, 9), _fShelfSub, Color.White, cx + U(31.5f), U(93f));
-                    DrawCenteredText(g, _state.T("Mở / Kéo", "Open/Drag"), _fAxis, Color.FromArgb(130, 255, 255, 255), cx + U(31.5f), U(108f));
+                    DrawCenteredText(g, Truncate(name, 9), _fShelfSub, InkPri, cx + U(31.5f), U(93f));
+                    DrawCenteredText(g, _state.T("Mở / Kéo", "Open/Drag"), _fAxis, Nw(130), cx + U(31.5f), U(108f));
 
                     // Mini 'X' remove button on top-right of each file card
                     RectangleF delRect = new RectangleF(cardRect.Right - U(16f), cardRect.Y + U(2f), U(14f), U(14f));
@@ -1882,7 +2057,7 @@ namespace Kumo
                         {
                             g.FillEllipse(rb, delRect);
                         }
-                        using (Pen xp = new Pen(Color.White, U(1.3f)))
+                        using (Pen xp = new Pen(Color.FromArgb(255, 255, 255), U(1.3f)))
                         {
                             float xcx = delRect.X + delRect.Width * 0.5f, xcy = delRect.Y + delRect.Height * 0.5f;
                             g.DrawLine(xp, xcx - U(2.5f), xcy - U(2.5f), xcx + U(2.5f), xcy + U(2.5f));
@@ -1905,13 +2080,13 @@ namespace Kumo
             }
 
             string ratio = string.Format("{0}/{1}", doneCount, _state.Todos.Count);
-            DrawLeftVCenteredText(g, ratio, _fHeroBig, Color.White, x0 + U(44f), U(48f));
-            DrawLeftVCenteredText(g, _state.T("Hoàn thành hôm nay", "Tasks Done Today"), _fMusicSub, Color.FromArgb(145, 255, 255, 255), x0 + U(44f), U(76f));
+            DrawLeftVCenteredText(g, ratio, _fHeroBig, InkPri, x0 + U(44f), U(48f));
+            DrawLeftVCenteredText(g, _state.T("Hoàn thành hôm nay", "Tasks Done Today"), _fMusicSub, Nw(145), x0 + U(44f), U(76f));
 
             DrawNusaPillButton(g, "todo_add", new RectangleF(x0 + U(44f), U(96f), U(64f), U(26f)), "+ Add", Color.FromArgb(255, 22, 102, 54));
-            DrawNusaPillButton(g, "todo_clear", new RectangleF(x0 + U(114f), U(96f), U(64f), U(26f)), "Clean", Color.FromArgb(36, 255, 255, 255));
+            DrawNusaPillButton(g, "todo_clear", new RectangleF(x0 + U(114f), U(96f), U(64f), U(26f)), "Clean", Nw(36));
 
-            using (SolidBrush div = new SolidBrush(Color.FromArgb(32, 255, 255, 255)))
+            using (SolidBrush div = new SolidBrush(Nw(32)))
             {
                 g.FillRectangle(div, x0 + U(192f), U(34f), Math.Max(1f, U(1f)), U(90f));
             }
@@ -1920,7 +2095,7 @@ namespace Kumo
             if (total == 0)
             {
                 _hitZones.Add(new HitZone { Id = "todo_add", Rect = new RectangleF(x0 + U(200f), U(34f), U(182f), U(86f)) });
-                DrawCenteredText(g, _state.T("Chưa có công việc (+ Add)", "No tasks yet (+ Add)"), _fPill, Color.FromArgb(145, 255, 255, 255), x0 + U(290f), U(74f));
+                DrawCenteredText(g, _state.T("Chưa có công việc (+ Add)", "No tasks yet (+ Add)"), _fPill, Nw(145), x0 + U(290f), U(74f));
                 return;
             }
 
@@ -1940,15 +2115,15 @@ namespace Kumo
                 string delId = "todo_del_" + i;
                 bool hov = (_hoveredId == togId || _hoveredId == delId);
 
-                FillRoundRect(g, rowRect, U(9f), item.Done ? Color.FromArgb(52, 56, 211, 111) : (hov ? Color.FromArgb(44, 255, 255, 255) : Color.FromArgb(24, 255, 255, 255)));
+                FillRoundRect(g, rowRect, U(9f), item.Done ? Color.FromArgb(52, 56, 211, 111) : (hov ? Nw(44) : Nw(24)));
 
                 _hitZones.Add(new HitZone { Id = togId, Rect = new RectangleF(rowRect.X, rowRect.Y, rowRect.Width - U(24f), rowRect.Height) });
 
                 RectangleF chk = new RectangleF(rowRect.X + U(8f), rowRect.Y + U(6f), U(16f), U(16f));
                 if (item.Done)
                 {
-                    using (SolidBrush gb = new SolidBrush(Color.FromArgb(56, 211, 111))) g.FillEllipse(gb, chk);
-                    using (Pen cp = new Pen(Color.White, U(1.8f)))
+                    using (SolidBrush gb = new SolidBrush(Color.FromArgb(16, 185, 129))) g.FillEllipse(gb, chk);
+                    using (Pen cp = new Pen(Color.FromArgb(255, 255, 255), U(1.8f)))
                     {
                         g.DrawLine(cp, chk.X + U(4f), chk.Y + U(8f), chk.X + U(7f), chk.Y + U(11f));
                         g.DrawLine(cp, chk.X + U(7f), chk.Y + U(11f), chk.X + U(12f), chk.Y + U(5f));
@@ -1956,11 +2131,11 @@ namespace Kumo
                 }
                 else
                 {
-                    using (Pen cp = new Pen(Color.FromArgb(135, 255, 255, 255), U(1.5f))) g.DrawEllipse(cp, chk);
+                    using (Pen cp = new Pen(Nw(135), U(1.5f))) g.DrawEllipse(cp, chk);
                 }
 
                 Font tf = item.Done ? new Font(_fPill, FontStyle.Strikeout) : _fPill;
-                DrawLeftVCenteredText(g, Truncate(item.Text, 19), tf, item.Done ? Color.FromArgb(185, 255, 255, 255) : Color.White, rowRect.X + U(29f), rowRect.Y + U(14f));
+                DrawLeftVCenteredText(g, Truncate(item.Text, 19), tf, item.Done ? Nw(185) : InkPri, rowRect.X + U(29f), rowRect.Y + U(14f));
                 if (item.Done) tf.Dispose();
 
                 // Per-row 'X' delete button
@@ -1968,7 +2143,7 @@ namespace Kumo
                 _hitZones.Add(new HitZone { Id = delId, Rect = delRect });
                 if (hov)
                 {
-                    using (Pen xp = new Pen(_hoveredId == delId ? Color.FromArgb(255, 110, 110) : Color.FromArgb(165, 255, 255, 255), U(1.4f)))
+                    using (Pen xp = new Pen(_hoveredId == delId ? Color.FromArgb(255, 110, 110) : Nw(165), U(1.4f)))
                     {
                         float dcx = delRect.X + delRect.Width * 0.5f, dcy = delRect.Y + delRect.Height * 0.5f;
                         g.DrawLine(xp, dcx - U(3f), dcy - U(3f), dcx + U(3f), dcy + U(3f));
@@ -1982,7 +2157,7 @@ namespace Kumo
                 float trackH = U(86f);
                 float thumbH = Math.Max(U(20f), trackH * (3.0f / total));
                 float thumbY = U(35f) + (_todoScroll / (float)maxScroll) * (trackH - thumbH);
-                FillPill(g, new RectangleF(x0 + U(384f), thumbY, U(3f), thumbH), Color.FromArgb(125, 255, 255, 255));
+                FillPill(g, new RectangleF(x0 + U(384f), thumbY, U(3f), thumbH), Nw(125));
             }
         }
 
@@ -2031,17 +2206,17 @@ namespace Kumo
 
             SizeF bigSz = g.MeasureString(heroBig, _fHeroBig);
             float baseY = U(47f) - bigSz.Height * 0.5f;
-            using (SolidBrush wBr = new SolidBrush(Color.White))
-            using (SolidBrush dBr = new SolidBrush(Color.FromArgb(145, 255, 255, 255)))
+            using (SolidBrush wBr = new SolidBrush(InkPri))
+            using (SolidBrush dBr = new SolidBrush(Nw(145)))
             {
                 g.DrawString(heroBig, _fHeroBig, wBr, x0 + U(40f), baseY);
                 g.DrawString(heroSub, _fHeroUnit, dBr, x0 + U(40f) + bigSz.Width - U(4f), U(49f) - _fHeroUnit.Height * 0.5f);
             }
 
-            DrawLeftVCenteredText(g, detailLine, _fMusicSub, Color.FromArgb(165, 255, 255, 255), x0 + U(44f), U(71f));
+            DrawLeftVCenteredText(g, detailLine, _fMusicSub, Nw(165), x0 + U(44f), U(71f));
 
             RectangleF barTrack = new RectangleF(x0 + U(44f), U(82.5f), U(152f), U(5f));
-            FillPill(g, barTrack, Color.FromArgb(38, 255, 255, 255));
+            FillPill(g, barTrack, Nw(38));
             float fillW = Math.Max(U(6f), barTrack.Width * Math.Max(0.03f, Math.Min(1.0f, barPct / 100.0f)));
             RectangleF barFill = new RectangleF(barTrack.X, barTrack.Y, fillW, barTrack.Height);
             using (LinearGradientBrush lgb = new LinearGradientBrush(barTrack, Color.FromArgb(25, 184, 255), Color.FromArgb(123, 75, 255), LinearGradientMode.Horizontal))
@@ -2050,9 +2225,9 @@ namespace Kumo
             }
 
             DrawNusaPillButton(g, "sys_taskmgr", new RectangleF(x0 + U(44f), U(98f), U(76f), U(26f)), "⚡ Task Mgr", Color.FromArgb(255, 14, 74, 134));
-            DrawNusaPillButton(g, "sys_pet", new RectangleF(x0 + U(125f), U(98f), U(72f), U(26f)), _showRestingMascot ? "^ ^ Mascot" : "• Clock", Color.FromArgb(36, 255, 255, 255));
+            DrawNusaPillButton(g, "sys_pet", new RectangleF(x0 + U(125f), U(98f), U(72f), U(26f)), _showRestingMascot ? "^ ^ Mascot" : "• Clock", Nw(36));
 
-            using (SolidBrush div = new SolidBrush(Color.FromArgb(32, 255, 255, 255)))
+            using (SolidBrush div = new SolidBrush(Nw(32)))
             {
                 g.FillRectangle(div, x0 + U(208f), U(34f), Math.Max(1f, U(1f)), U(90f));
             }
@@ -2089,8 +2264,8 @@ namespace Kumo
             RectangleF dot = new RectangleF(x + U(7f), y + U(7f), U(14f), U(14f));
             using (SolidBrush db = new SolidBrush(dotCol)) g.FillEllipse(db, dot);
 
-            DrawLeftVCenteredText(g, label, _fPill, Color.White, x + U(26f), y + U(14f));
-            DrawRightVCenteredText(g, val, _fAxis, Color.FromArgb(220, 255, 255, 255), x + w - U(7f), y + U(14f));
+            DrawLeftVCenteredText(g, label, _fPill, InkPri, x + U(26f), y + U(14f));
+            DrawRightVCenteredText(g, val, _fAxis, Nw(220), x + w - U(7f), y + U(14f));
         }
 
         // ==================== SHARED NUSA VECTOR WIDGETS ====================
@@ -2118,7 +2293,7 @@ namespace Kumo
             float startX = cx - totalW * 0.5f;
             float maxH = U(13f);
 
-            Color eqCol = active ? _media.DominantColor : Color.FromArgb(145, 255, 255, 255);
+            Color eqCol = active ? _media.DominantColor : Nw(145);
             if (active)
             {
                 // Boost brightness slightly so bars pop crisply against #000000
@@ -2158,13 +2333,13 @@ namespace Kumo
             bool hov = (_hoveredId == id);
             if (hov)
             {
-                using (SolidBrush hb = new SolidBrush(Color.FromArgb(72, 255, 255, 255)))
+                using (SolidBrush hb = new SolidBrush(Nw(72)))
                 {
                     g.FillEllipse(hb, hit);
                 }
             }
 
-            Color col = hov ? Color.White : Color.FromArgb(190, 255, 255, 255);
+            Color col = hov ? InkPri : Nw(190);
             using (Pen p = new Pen(col, U(1.45f)))
             {
                 p.StartCap = LineCap.Round; p.EndCap = LineCap.Round;
@@ -2186,12 +2361,12 @@ namespace Kumo
             _hitZones.Add(new HitZone { Id = id, Rect = rect });
 
             bool hov = (_hoveredId == id);
-            using (SolidBrush bg = new SolidBrush(Color.FromArgb(hov ? 135 : 72, 255, 255, 255)))
+            using (SolidBrush bg = new SolidBrush(Nw(hov ? 135 : 72)))
             {
                 g.FillEllipse(bg, rect);
             }
 
-            using (Pen p = new Pen(Color.White, U(2.0f)))
+            using (Pen p = new Pen(InkPri, U(2.0f)))
             {
                 p.StartCap = LineCap.Round; p.EndCap = LineCap.Round; p.LineJoin = LineJoin.Round;
                 float dx = U(2.2f), dy = U(3.5f);
@@ -2216,12 +2391,12 @@ namespace Kumo
                 bool hov = (_hoveredId == dotId);
                 float w = (i == _pageIndex) ? actW : (hov ? U(8f) : dotD);
                 RectangleF r = new RectangleF(curX, cy - dotD * 0.5f, w, dotD);
-                FillPill(g, r, (i == _pageIndex || hov) ? Color.White : Color.FromArgb(115, 255, 255, 255));
+                FillPill(g, r, (i == _pageIndex || hov) ? InkPri : Nw(115));
                 _hitZones.Add(new HitZone { Id = dotId, Rect = new RectangleF(curX - U(3f), cy - U(9f), w + U(6f), U(16f)) });
 
                 if (hov && _state.ShowPageLabels)
                 {
-                    DrawCenteredText(g, PageNames[i], _fAxis, Color.FromArgb(225, 255, 255, 255), cx, cy - U(11f));
+                    DrawCenteredText(g, PageNames[i], _fAxis, Nw(225), cx, cy - U(11f));
                 }
                 curX += w + gap;
             }
@@ -2234,12 +2409,12 @@ namespace Kumo
                 if (!_media.DrawAlbumArt(g, rect, path))
                 {
                     // Sleek dark glass empty-media placeholder with subtle vector music note (NOT fake blue circle!)
-                    FillRoundRect(g, rect, radius, Color.FromArgb(26, 30, 42));
+                    FillRoundRect(g, rect, radius, IsLight ? Color.FromArgb(228, 235, 247) : Color.FromArgb(26, 30, 42));
                     float cx = rect.X + rect.Width * 0.5f;
                     float cy = rect.Y + rect.Height * 0.5f;
                     float s = rect.Width / 58.0f;
-                    using (Pen np = new Pen(Color.FromArgb(135, 255, 255, 255), Math.Max(1.2f, 2.0f * s)))
-                    using (SolidBrush nb = new SolidBrush(Color.FromArgb(135, 255, 255, 255)))
+                    using (Pen np = new Pen(Nw(135), Math.Max(1.2f, 2.0f * s)))
+                    using (SolidBrush nb = new SolidBrush(Nw(135)))
                     {
                         np.StartCap = LineCap.Round; np.EndCap = LineCap.Round;
                         g.DrawLine(np, cx - 3f * s, cy + 6f * s, cx - 3f * s, cy - 8f * s);
@@ -2249,7 +2424,7 @@ namespace Kumo
                         g.FillEllipse(nb, cx + 1f * s, cy + 1f * s, 7f * s, 5.5f * s);
                     }
                 }
-                using (Pen rim = new Pen(Color.FromArgb(42, 255, 255, 255), 1f))
+                using (Pen rim = new Pen(Nw(42), 1f))
                 {
                     g.DrawPath(rim, path);
                 }
@@ -2260,13 +2435,13 @@ namespace Kumo
         {
             RectangleF hit = new RectangleF(cx - U(15f), cy - U(12f), U(30f), U(24f));
             _hitZones.Add(new HitZone { Id = id, Rect = hit });
-            if (_hoveredId == id) FillRoundRect(g, hit, U(8f), Color.FromArgb(40, 255, 255, 255));
+            if (_hoveredId == id) FillRoundRect(g, hit, U(8f), Nw(40));
 
             RectangleF b = new RectangleF(cx - U(8f), cy - U(6f), U(16f), U(12f));
             if (filled)
             {
-                FillRoundRect(g, b, U(3.2f), Color.White);
-                using (SolidBrush blk = new SolidBrush(Color.Black))
+                FillRoundRect(g, b, U(3.2f), IsLight ? Color.FromArgb(37, 99, 235) : Color.FromArgb(255, 255, 255));
+                using (SolidBrush blk = new SolidBrush(IsLight ? Color.FromArgb(255, 255, 255) : Color.Black))
                 {
                     g.FillEllipse(blk, cx - U(3.5f), cy - U(1.2f), U(2.4f), U(2.4f));
                     g.FillEllipse(blk, cx + U(1.2f), cy - U(1.2f), U(2.4f), U(2.4f));
@@ -2275,11 +2450,11 @@ namespace Kumo
             else
             {
                 using (GraphicsPath p = CreateRoundRect(b, U(3.2f)))
-                using (Pen pen = new Pen(Color.FromArgb(215, 255, 255, 255), U(1.35f)))
+                using (Pen pen = new Pen(Nw(215), U(1.35f)))
                 {
                     g.DrawPath(pen, p);
                 }
-                using (SolidBrush wb = new SolidBrush(Color.FromArgb(215, 255, 255, 255)))
+                using (SolidBrush wb = new SolidBrush(Nw(215)))
                 {
                     g.FillEllipse(wb, cx - U(3.5f), cy - U(1.2f), U(2.4f), U(2.4f));
                     g.FillEllipse(wb, cx + U(1.2f), cy - U(1.2f), U(2.4f), U(2.4f));
@@ -2291,9 +2466,9 @@ namespace Kumo
         {
             RectangleF hit = new RectangleF(cx - U(16f), cy - U(12f), U(32f), U(24f));
             _hitZones.Add(new HitZone { Id = id, Rect = hit });
-            if (_hoveredId == id) FillRoundRect(g, hit, U(8f), Color.FromArgb(45, 255, 255, 255));
+            if (_hoveredId == id) FillRoundRect(g, hit, U(8f), Nw(45));
 
-            using (SolidBrush wb = new SolidBrush(Color.White))
+            using (SolidBrush wb = new SolidBrush(InkPri))
             {
                 float h = U(4.8f), w = U(5.5f);
                 g.FillPolygon(wb, new PointF[] { new PointF(cx, cy - h), new PointF(cx - w, cy), new PointF(cx, cy + h) });
@@ -2305,9 +2480,9 @@ namespace Kumo
         {
             RectangleF hit = new RectangleF(cx - U(16f), cy - U(12f), U(32f), U(24f));
             _hitZones.Add(new HitZone { Id = id, Rect = hit });
-            if (_hoveredId == id) FillRoundRect(g, hit, U(8f), Color.FromArgb(45, 255, 255, 255));
+            if (_hoveredId == id) FillRoundRect(g, hit, U(8f), Nw(45));
 
-            using (SolidBrush wb = new SolidBrush(Color.White))
+            using (SolidBrush wb = new SolidBrush(InkPri))
             {
                 float h = U(4.8f), w = U(5.5f);
                 g.FillPolygon(wb, new PointF[] { new PointF(cx - w, cy - h), new PointF(cx, cy), new PointF(cx - w, cy + h) });
@@ -2319,9 +2494,9 @@ namespace Kumo
         {
             RectangleF hit = new RectangleF(cx - U(18f), cy - U(12f), U(36f), U(24f));
             _hitZones.Add(new HitZone { Id = id, Rect = hit });
-            if (_hoveredId == id) FillRoundRect(g, hit, U(8f), Color.FromArgb(50, 255, 255, 255));
+            if (_hoveredId == id) FillRoundRect(g, hit, U(8f), Nw(50));
 
-            using (SolidBrush wb = new SolidBrush(Color.White))
+            using (SolidBrush wb = new SolidBrush(InkPri))
             {
                 if (isPlaying)
                 {
@@ -2339,19 +2514,37 @@ namespace Kumo
         {
             _hitZones.Add(new HitZone { Id = id, Rect = rect });
             bool hov = (_hoveredId == id);
-            Color fill = hov ? Color.FromArgb(Math.Min(255, bg.A + 45), bg.R, bg.G, bg.B) : bg;
+            bool isNeutral = (bg.R == bg.G && bg.G == bg.B) || (IsLight && bg.R == 15 && bg.G == 23 && bg.B == 42);
+            Color fill;
+            Color txtCol;
+            if (isNeutral)
+            {
+                fill = hov ? Nw(Math.Min(85, bg.A + 32)) : bg;
+                txtCol = InkPri;
+            }
+            else if (bg.A >= 170)
+            {
+                fill = hov ? Color.FromArgb(255, Math.Min(255, bg.R + 18), Math.Min(255, bg.G + 18), Math.Min(255, bg.B + 18)) : bg;
+                txtCol = Color.FromArgb(255, 255, 255);
+            }
+            else
+            {
+                fill = hov ? Color.FromArgb(Math.Min(220, bg.A + 36), bg.R, bg.G, bg.B) : bg;
+                txtCol = InkPri;
+            }
             FillPill(g, rect, fill);
-            DrawCenteredText(g, text, _fPill, Color.White, rect.X + rect.Width * 0.5f, rect.Y + rect.Height * 0.5f);
+            DrawCenteredText(g, text, _fPill, txtCol, rect.X + rect.Width * 0.5f, rect.Y + rect.Height * 0.5f);
         }
 
         private void DrawPomoPlayButton(Graphics g, string id, RectangleF rect, bool running)
         {
+            Color keepWhite = Color.FromArgb(255, 255, 255);
             _hitZones.Add(new HitZone { Id = id, Rect = rect });
             bool hov = (_hoveredId == id);
             FillPill(g, rect, hov ? Color.FromArgb(255, 255, 102, 110) : Color.FromArgb(255, 255, 75, 85));
             float cx = rect.X + rect.Width * 0.5f;
             float cy = rect.Y + rect.Height * 0.5f;
-            using (SolidBrush wb = new SolidBrush(Color.White))
+            using (SolidBrush wb = new SolidBrush(keepWhite))
             {
                 if (running)
                 {
@@ -2369,7 +2562,7 @@ namespace Kumo
         {
             SizeF s1 = g.MeasureString(part1, _fTitle);
             float y = cy - s1.Height * 0.5f;
-            using (SolidBrush b1 = new SolidBrush(Color.White))
+            using (SolidBrush b1 = new SolidBrush(InkPri))
             using (SolidBrush b2 = new SolidBrush(col2))
             {
                 g.DrawString(part1, _fTitle, b1, x, y);
@@ -2894,7 +3087,7 @@ namespace Kumo
 
                 using (QuickTodoPopup pop = new QuickTodoPopup(
                     px, py, pw, ph, _fPill,
-                    _state.T("Nhập việc cần làm rồi nhấn Enter...", "Type a new task and press Enter...")))
+                    _state.T("Nhập việc cần làm rồi nhấn Enter...", "Type a new task and press Enter..."), IsLight))
                 {
                     if (pop.ShowDialog() == DialogResult.OK && !string.IsNullOrEmpty(pop.EnteredText))
                     {
@@ -2959,7 +3152,7 @@ namespace Kumo
         public string EnteredText { get; private set; }
         private readonly TextBox _tb;
 
-        public QuickTodoPopup(int x, int y, int w, int h, Font font, string placeholder)
+        public QuickTodoPopup(int x, int y, int w, int h, Font font, string placeholder, bool isLight)
         {
             EnteredText = "";
             FormBorderStyle = FormBorderStyle.None;
@@ -2967,12 +3160,14 @@ namespace Kumo
             Bounds = new Rectangle(x, y, w, h);
             TopMost = true;
             ShowInTaskbar = false;
-            BackColor = Color.FromArgb(18, 21, 30);
+            Color bg = isLight ? Color.FromArgb(255, 255, 255) : Color.FromArgb(18, 21, 30);
+            Color fg = isLight ? Color.FromArgb(15, 23, 42) : Color.FromArgb(255, 255, 255);
+            BackColor = bg;
 
             _tb = new TextBox();
             _tb.BorderStyle = BorderStyle.None;
-            _tb.BackColor = Color.FromArgb(18, 21, 30);
-            _tb.ForeColor = Color.White;
+            _tb.BackColor = bg;
+            _tb.ForeColor = fg;
             _tb.Font = font;
             _tb.Bounds = new Rectangle(14, (h - font.Height) / 2, w - 78, font.Height + 4);
             _tb.KeyDown += (s, e) =>
@@ -3005,7 +3200,7 @@ namespace Kumo
             {
                 try { if (!IsDisposed) { DialogResult = DialogResult.Cancel; Close(); } } catch { }
             };
-            Shown += (s, e) => { NativeMethods.ApplyModernDarkWindow(Handle); _tb.Focus(); };
+            Shown += (s, e) => { NativeMethods.ApplyModernWindowTheme(Handle, !isLight); _tb.Focus(); };
             Paint += (s, e) =>
             {
                 using (Pen p = new Pen(Color.FromArgb(56, 211, 111), 1.5f))

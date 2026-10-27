@@ -56,7 +56,7 @@ namespace Kumo
             Text = "Kumo Settings";
             FormBorderStyle = FormBorderStyle.None;
             StartPosition = FormStartPosition.CenterScreen;
-            BackColor = Color.FromArgb(21, 24, 33);
+            BackColor = _state.IsSettingsLight ? Color.FromArgb(244, 247, 252) : Color.FromArgb(21, 24, 33);
             DoubleBuffered = true;
             KeyPreview = true;
 
@@ -71,8 +71,8 @@ namespace Kumo
 
             _todoInput = new TextBox();
             _todoInput.BorderStyle = BorderStyle.None;
-            _todoInput.BackColor = Color.FromArgb(20, 23, 32);
-            _todoInput.ForeColor = Color.White;
+            _todoInput.BackColor = _state.IsSettingsLight ? Color.FromArgb(245, 248, 253) : Color.FromArgb(20, 23, 32);
+            _todoInput.ForeColor = _state.IsSettingsLight ? Color.FromArgb(15, 23, 42) : Color.White;
             _todoInput.Font = _fRowTitle;
             _todoInput.Visible = false;
             _todoInput.KeyDown += (sender, e) =>
@@ -109,7 +109,7 @@ namespace Kumo
         protected override void OnHandleCreated(EventArgs e)
         {
             base.OnHandleCreated(e);
-            NativeMethods.ApplyModernDarkWindow(Handle);
+            NativeMethods.ApplyModernWindowTheme(Handle, !_state.IsSettingsLight);
         }
 
         protected override void OnFormClosing(FormClosingEventArgs e)
@@ -213,8 +213,33 @@ namespace Kumo
             SaveAndApply();
         }
 
+        private bool IsLight { get { return _state.IsSettingsLight; } }
+        private Color ColTextPri { get { return IsLight ? Color.FromArgb(15, 23, 42) : Color.White; } }
+        private Color ColTextSec { get { return IsLight ? Color.FromArgb(71, 85, 105) : Color.FromArgb(152, 162, 184); } }
+        private Color ColTextMuted { get { return IsLight ? Color.FromArgb(100, 116, 139) : Color.FromArgb(135, 148, 175); } }
+        private Color ColSecHdr { get { return IsLight ? Color.FromArgb(2, 132, 199) : Color.FromArgb(96, 165, 250); } }
+        private Color ColCardBg { get { return IsLight ? Color.White : Color.FromArgb(29, 33, 46); } }
+        private Color ColCardBgHov { get { return IsLight ? Color.FromArgb(248, 251, 255) : Color.FromArgb(34, 39, 54); } }
+        private Color ColCardBorder { get { return IsLight ? Color.FromArgb(220, 228, 240) : Color.FromArgb(44, 50, 68); } }
+        private Color ColCardBorderHov { get { return IsLight ? Color.FromArgb(165, 192, 230) : Color.FromArgb(62, 72, 98); } }
+
+        private void SyncThemeColors()
+        {
+            BackColor = IsLight ? Color.FromArgb(244, 247, 252) : Color.FromArgb(21, 24, 33);
+            if (_todoInput != null)
+            {
+                _todoInput.BackColor = IsLight ? Color.FromArgb(243, 247, 253) : Color.FromArgb(20, 23, 32);
+                _todoInput.ForeColor = IsLight ? Color.FromArgb(15, 23, 42) : Color.White;
+            }
+            if (IsHandleCreated)
+            {
+                NativeMethods.ApplyModernWindowTheme(Handle, !IsLight);
+            }
+        }
+
         private void SaveAndApply()
         {
+            SyncThemeColors();
             _state.SaveAll();
             if (_notch != null && !_notch.IsDisposed)
             {
@@ -259,13 +284,13 @@ namespace Kumo
             float headerH = U(48f);
             float sideW = U(218f);
 
-            // 1. Backgrounds
-            g.Clear(Color.FromArgb(21, 24, 33));
-            using (SolidBrush sbSide = new SolidBrush(Color.FromArgb(15, 17, 24)))
+            // 1. Backgrounds (Eye-Care Soft Daylight by default!)
+            g.Clear(IsLight ? Color.FromArgb(244, 247, 252) : Color.FromArgb(21, 24, 33));
+            using (SolidBrush sbSide = new SolidBrush(IsLight ? Color.FromArgb(235, 241, 250) : Color.FromArgb(15, 17, 24)))
             {
                 g.FillRectangle(sbSide, 0f, headerH, sideW, winH - headerH);
             }
-            using (SolidBrush sbTop = new SolidBrush(Color.FromArgb(13, 15, 21)))
+            using (SolidBrush sbTop = new SolidBrush(IsLight ? Color.White : Color.FromArgb(13, 15, 21)))
             {
                 g.FillRectangle(sbTop, 0f, 0f, winW, headerH);
             }
@@ -306,13 +331,13 @@ namespace Kumo
                 float viewH = contentViewport.Height;
                 float thumbH = Math.Max(U(36f), viewH * (viewH / totalUsed));
                 float thumbY = headerH + U(6f) + (_scrollY / _maxScrollY) * (viewH - thumbH - U(12f));
-                FillRoundRect(g, new RectangleF(winW - U(9f), thumbY, U(4.5f), thumbH), U(2.2f), Color.FromArgb(90, 255, 255, 255));
+                FillRoundRect(g, new RectangleF(winW - U(9f), thumbY, U(4.5f), thumbH), U(2.2f), IsLight ? Color.FromArgb(95, 100, 116, 139) : Color.FromArgb(90, 255, 255, 255));
             }
 
             g.Restore(clipSt);
 
             // Dividers & subtle outer frame
-            using (Pen divPen = new Pen(Color.FromArgb(36, 41, 56), 1f))
+            using (Pen divPen = new Pen(IsLight ? Color.FromArgb(214, 223, 237) : Color.FromArgb(36, 41, 56), 1f))
             {
                 g.DrawLine(divPen, 0, headerH, winW, headerH);
                 g.DrawLine(divPen, sideW, headerH, sideW, winH);
@@ -349,21 +374,29 @@ namespace Kumo
             }
 
             string title = _state.T("Kumo — Quản Lý Cài Đặt", "Kumo Settings");
-            DrawLeftText(g, title, _fAppTitle, Color.White, U(62f), headerH * 0.5f);
+            DrawLeftText(g, title, _fAppTitle, ColTextPri, U(62f), headerH * 0.5f);
 
             SizeF tSz = g.MeasureString(title, _fAppTitle);
             string badgeTxt = "v" + KumoBuildInfo.Version;
             SizeF bSz = g.MeasureString(badgeTxt, _fBadge);
             RectangleF verBadge = new RectangleF(U(68f) + tSz.Width, U(14.5f), Math.Max(U(64f), bSz.Width + U(22f)), U(19f));
-            FillRoundRect(g, verBadge, U(9.5f), Color.FromArgb(35, 37, 99, 235));
+            FillRoundRect(g, verBadge, U(9.5f), IsLight ? Color.FromArgb(224, 242, 254) : Color.FromArgb(35, 37, 99, 235));
             using (Pen bp = new Pen(Color.FromArgb(90, 59, 130, 246), 1f))
             using (GraphicsPath vp = CreateRoundRect(verBadge, U(9.5f)))
             {
                 g.DrawPath(bp, vp);
             }
-            DrawCenterText(g, badgeTxt, _fBadge, Color.FromArgb(125, 195, 255), verBadge);
+            DrawCenterText(g, badgeTxt, _fBadge, IsLight ? Color.FromArgb(3, 105, 161) : Color.FromArgb(125, 195, 255), verBadge);
 
-            // Language Switcher Pill on Right
+            // Quick Theme Mode Pill + Language Switcher Pill on Right
+            string themeLabel = (_state.UiThemeMode == 0)
+                ? (_state.IsVietnamese ? "☀ Sáng dịu" : "☀ Light")
+                : ((_state.UiThemeMode == 1)
+                    ? (_state.IsVietnamese ? "🌗 Tai thỏ Đen" : "🌗 Dark Notch")
+                    : (_state.IsVietnamese ? "🌙 Tối" : "🌙 Dark"));
+            RectangleF themeRect = new RectangleF(winW - U(304f), U(11f), U(110f), U(26f));
+            DrawActionPill(g, "toggle_theme", themeRect, themeLabel, false);
+
             RectangleF langRect = new RectangleF(winW - U(186f), U(11f), U(92f), U(26f));
             DrawActionPill(g, "toggle_lang", langRect, _state.IsVietnamese ? "Ngôn ngữ: VI" : "Lang: EN", false);
 
@@ -373,13 +406,16 @@ namespace Kumo
             AddZone("win_min", minRect, true);
             AddZone("win_close", clsRect, true);
 
-            if (_hoverId == "win_min") FillRoundRect(g, minRect, U(6f), Color.FromArgb(35, 255, 255, 255));
+            if (_hoverId == "win_min") FillRoundRect(g, minRect, U(6f), IsLight ? Color.FromArgb(226, 232, 240) : Color.FromArgb(35, 255, 255, 255));
             if (_hoverId == "win_close") FillRoundRect(g, clsRect, U(6f), Color.FromArgb(220, 225, 48, 62));
 
-            using (Pen wp = new Pen(Color.FromArgb(220, 255, 255, 255), U(1.6f)))
+            Color minIconCol = IsLight ? Color.FromArgb(51, 65, 85) : Color.FromArgb(220, 255, 255, 255);
+            Color clsIconCol = (_hoverId == "win_close") ? Color.White : minIconCol;
+            using (Pen wpMin = new Pen(minIconCol, U(1.6f)))
+            using (Pen wp = new Pen(clsIconCol, U(1.6f)))
             {
                 float mcx = minRect.X + minRect.Width * 0.5f, mcy = minRect.Y + minRect.Height * 0.5f;
-                g.DrawLine(wp, mcx - U(5f), mcy, mcx + U(5f), mcy);
+                g.DrawLine(wpMin, mcx - U(5f), mcy, mcx + U(5f), mcy);
 
                 float ccx = clsRect.X + clsRect.Width * 0.5f, ccy = clsRect.Y + clsRect.Height * 0.5f;
                 g.DrawLine(wp, ccx - U(4.5f), ccy - U(4.5f), ccx + U(4.5f), ccy + U(4.5f));
@@ -424,26 +460,28 @@ namespace Kumo
                 {
                     using (LinearGradientBrush lgb = new LinearGradientBrush(
                         r,
-                        Color.FromArgb(52, 37, 99, 235),
-                        Color.FromArgb(28, 14, 165, 233),
+                        IsLight ? Color.FromArgb(219, 234, 254) : Color.FromArgb(52, 37, 99, 235),
+                        IsLight ? Color.FromArgb(224, 242, 254) : Color.FromArgb(28, 14, 165, 233),
                         LinearGradientMode.Horizontal))
                     using (GraphicsPath gp = CreateRoundRect(r, U(9f)))
                     {
                         g.FillPath(lgb, gp);
-                        using (Pen p = new Pen(Color.FromArgb(95, 59, 130, 246), 1f))
+                        using (Pen p = new Pen(IsLight ? Color.FromArgb(147, 197, 253) : Color.FromArgb(95, 59, 130, 246), 1f))
                         {
                             g.DrawPath(p, gp);
                         }
                     }
-                    FillRoundRect(g, new RectangleF(r.X + U(4f), r.Y + U(10f), U(3f), U(18f)), U(1.5f), Color.FromArgb(56, 189, 248));
+                    FillRoundRect(g, new RectangleF(r.X + U(4f), r.Y + U(10f), U(3f), U(18f)), U(1.5f), IsLight ? Color.FromArgb(37, 99, 235) : Color.FromArgb(56, 189, 248));
                 }
                 else if (hov)
                 {
-                    FillRoundRect(g, r, U(9f), Color.FromArgb(20, 255, 255, 255));
+                    FillRoundRect(g, r, U(9f), IsLight ? Color.FromArgb(224, 232, 245) : Color.FromArgb(20, 255, 255, 255));
                 }
 
-                Color fg = sel ? Color.White : (hov ? Color.FromArgb(235, 240, 250) : Color.FromArgb(165, 174, 192));
-                DrawSidebarVectorIcon(g, i, r.X + U(21f), r.Y + r.Height * 0.5f, sel ? Color.FromArgb(56, 189, 248) : fg);
+                Color fg = IsLight
+                    ? (sel ? Color.FromArgb(29, 78, 216) : (hov ? Color.FromArgb(15, 23, 42) : Color.FromArgb(71, 85, 105)))
+                    : (sel ? Color.White : (hov ? Color.FromArgb(235, 240, 250) : Color.FromArgb(165, 174, 192)));
+                DrawSidebarVectorIcon(g, i, r.X + U(21f), r.Y + r.Height * 0.5f, sel ? (IsLight ? Color.FromArgb(37, 99, 235) : Color.FromArgb(56, 189, 248)) : fg);
                 DrawLeftText(g, _state.IsVietnamese ? labelsVi[i] : labelsEn[i], _fNav, fg, r.X + U(38f), r.Y + r.Height * 0.5f);
 
                 y += U(43f);
@@ -451,8 +489,8 @@ namespace Kumo
 
             // Bottom Live Mascot Mini-Preview Card inside Sidebar!
             RectangleF petCard = new RectangleF(U(12f), winH - U(138f), sideW - U(24f), U(124f));
-            FillRoundRect(g, petCard, U(12f), Color.FromArgb(22, 25, 36));
-            using (Pen p = new Pen(Color.FromArgb(40, 46, 66), 1f))
+            FillRoundRect(g, petCard, U(12f), ColCardBg);
+            using (Pen p = new Pen(ColCardBorder, 1f))
             using (GraphicsPath gp = CreateRoundRect(petCard, U(12f)))
             {
                 g.DrawPath(p, gp);
@@ -504,7 +542,7 @@ namespace Kumo
                     ? _state.T("Mascot đang bật · Tự chào khi quay lại", "Mascot Active · Auto-greets on return")
                     : _state.T("Mascot đang tắt · Chỉ hiện đồng hồ", "Mascot Off · Clock only"),
                 _fSmall,
-                Color.FromArgb(165, 175, 195),
+                ColTextSec,
                 new RectangleF(petCard.X + U(6f), petCard.Y + U(48f), petCard.Width - U(12f), U(24f)));
 
             RectangleF waveBtn = new RectangleF(petCard.X + U(14f), petCard.Bottom - U(38f), petCard.Width - U(28f), U(28f));
@@ -578,6 +616,18 @@ namespace Kumo
                 _state.T("Cài đặt chung", "General Settings"),
                 _state.T("Quản lý khởi động, kích thước tai thỏ, linh vật Kumo và chế độ thu nhỏ thông minh.", "Configure startup, notch size, Kumo mascot, and smart minimal behavior."));
 
+            y = DrawSectionHeader(g, x, y, _state.T("GIAO DIỆN SÁNG / TỐI (EYE-CARE THEME)", "INTERFACE THEME"));
+            y = DrawSegmentedCard(g, x, y, w, "seg_theme_",
+                _state.T("Chế độ màu giao diện", "Color theme mode"),
+                _state.T("Giao diện Sáng dịu mắt giúp đọc chữ rõ nét, không chói tối.", "Soft daylight theme protects your eyes from dark-screen glare."),
+                new string[] {
+                    _state.T("☀ Sáng toàn bộ", "☀ Full Light"),
+                    _state.T("🌗 Tai thỏ Đen", "🌗 Black Notch"),
+                    _state.T("🌙 Tối", "🌙 Dark")
+                },
+                _state.UiThemeMode);
+            y += U(8f);
+
             y = DrawSectionHeader(g, x, y, _state.T("KHỞI ĐỘNG HỆ THỐNG", "STARTUP"));
             y = DrawToggleCard(g, x, y, w, "tog_startup",
                 _state.T("Khởi động cùng Windows", "Start with Windows"),
@@ -649,8 +699,8 @@ namespace Kumo
 
                 bool sel = (_state.MonitorIndex == i) || (i == 0 && _state.MonitorIndex >= screens.Length);
                 bool hov = (_hoverId == id);
-                FillRoundRect(g, mr, U(10f), sel ? Color.FromArgb(45, 37, 99, 235) : (hov ? Color.FromArgb(26, 255, 255, 255) : Color.FromArgb(18, 20, 28)));
-                using (Pen bp = new Pen(sel ? Color.FromArgb(56, 189, 248) : Color.FromArgb(50, 56, 75), sel ? 1.8f : 1f))
+                FillRoundRect(g, mr, U(10f), sel ? (IsLight ? Color.FromArgb(219, 234, 254) : Color.FromArgb(45, 37, 99, 235)) : (hov ? (IsLight ? Color.FromArgb(238, 244, 252) : Color.FromArgb(26, 255, 255, 255)) : (IsLight ? Color.FromArgb(245, 248, 253) : Color.FromArgb(18, 20, 28))));
+                using (Pen bp = new Pen(sel ? (IsLight ? Color.FromArgb(37, 99, 235) : Color.FromArgb(56, 189, 248)) : ColCardBorder, sel ? 1.8f : 1f))
                 using (GraphicsPath gp = CreateRoundRect(mr, U(10f)))
                 {
                     g.DrawPath(bp, gp);
@@ -662,8 +712,8 @@ namespace Kumo
 
                 string mTitle = string.Format("Display {0}{1}", i + 1, scr.Primary ? " (Main)" : "");
                 string mRes = string.Format("{0} × {1}", scr.Bounds.Width, scr.Bounds.Height);
-                DrawCenterText(g, mTitle, _fRowTitle, Color.White, new RectangleF(mr.X, mr.Y + U(22f), mr.Width, U(22f)));
-                DrawCenterText(g, mRes, _fSmall, Color.FromArgb(155, 165, 185), new RectangleF(mr.X, mr.Y + U(46f), mr.Width, U(20f)));
+                DrawCenterText(g, mTitle, _fRowTitle, ColTextPri, new RectangleF(mr.X, mr.Y + U(22f), mr.Width, U(22f)));
+                DrawCenterText(g, mRes, _fSmall, ColTextSec, new RectangleF(mr.X, mr.Y + U(46f), mr.Width, U(20f)));
 
                 mx += cardW;
             }
@@ -671,7 +721,7 @@ namespace Kumo
             {
                 DrawLeftText(g,
                     _state.T("Kết nối thêm màn hình rời để chọn vị trí đặt tai thỏ.", "Connect another display to choose where the notch appears."),
-                    _fRowDesc, Color.FromArgb(148, 158, 180), mx + U(12f), y + cardH * 0.5f);
+                    _fRowDesc, ColTextSec, mx + U(12f), y + cardH * 0.5f);
             }
             y += cardH + U(16f);
 
@@ -775,10 +825,10 @@ namespace Kumo
 
             float pct = Math.Min(1.0f, (float)_state.WaterDrankMl / Math.Max(1f, (float)_state.WaterGoalMl));
             string progTxt = string.Format("{0} / {1} ml ({2:0}%)", _state.WaterDrankMl, _state.WaterGoalMl, pct * 100f);
-            DrawLeftText(g, progTxt, _fPageHeader, Color.White, x + U(18f), y + U(28f));
+            DrawLeftText(g, progTxt, _fPageHeader, ColTextPri, x + U(18f), y + U(28f));
 
             RectangleF barBg = new RectangleF(x + U(18f), y + U(56f), w - U(280f), U(12f));
-            FillRoundRect(g, barBg, U(6f), Color.FromArgb(35, 255, 255, 255));
+            FillRoundRect(g, barBg, U(6f), IsLight ? Color.FromArgb(226, 232, 240) : Color.FromArgb(35, 255, 255, 255));
             if (pct > 0.01f)
             {
                 RectangleF barFg = new RectangleF(barBg.X, barBg.Y, Math.Max(U(12f), barBg.Width * pct), barBg.Height);
@@ -827,8 +877,8 @@ namespace Kumo
             RectangleF inputCard = new RectangleF(x, y, w, U(48f));
             DrawCardShell(g, inputCard);
             RectangleF inputBoxBg = new RectangleF(x + U(12f), y + U(8f), w - U(132f), U(32f));
-            FillRoundRect(g, inputBoxBg, U(8f), Color.FromArgb(20, 23, 32));
-            using (Pen ip = new Pen(Color.FromArgb(52, 60, 82), 1f))
+            FillRoundRect(g, inputBoxBg, U(8f), IsLight ? Color.FromArgb(243, 247, 253) : Color.FromArgb(20, 23, 32));
+            using (Pen ip = new Pen(IsLight ? Color.FromArgb(203, 213, 225) : Color.FromArgb(52, 60, 82), 1f))
             using (GraphicsPath gp = CreateRoundRect(inputBoxBg, U(8f)))
             {
                 g.DrawPath(ip, gp);
@@ -838,7 +888,7 @@ namespace Kumo
             {
                 DrawLeftText(g,
                     _state.T("Nhập công việc mới rồi nhấn Enter...", "Type a new task and press Enter..."),
-                    _fRowDesc, Color.FromArgb(115, 125, 148), inputBoxBg.X + U(10f), inputBoxBg.Y + inputBoxBg.Height * 0.5f);
+                    _fRowDesc, ColTextMuted, inputBoxBg.X + U(10f), inputBoxBg.Y + inputBoxBg.Height * 0.5f);
             }
 
             DrawActionPill(g, "todo_add_btn", new RectangleF(x + w - U(110f), y + U(8f), U(98f), U(32f)),
@@ -851,7 +901,7 @@ namespace Kumo
             {
                 RectangleF emptyCard = new RectangleF(x, y, w, U(48f));
                 DrawCardShell(g, emptyCard);
-                DrawCenterText(g, _state.T("Chưa có công việc nào. Hãy thêm ở ô phía trên!", "No tasks yet. Add one above!"), _fRowDesc, Color.FromArgb(145, 155, 178), emptyCard);
+                DrawCenterText(g, _state.T("Chưa có công việc nào. Hãy thêm ở ô phía trên!", "No tasks yet. Add one above!"), _fRowDesc, ColTextSec, emptyCard);
                 y += U(56f);
             }
             else
@@ -883,7 +933,7 @@ namespace Kumo
                     }
 
                     Font tf = item.Done ? new Font(_fRowTitle, FontStyle.Strikeout) : _fRowTitle;
-                    DrawLeftText(g, item.Text, tf, item.Done ? Color.FromArgb(135, 145, 165) : Color.White, x + U(42f), y + U(21f));
+                    DrawLeftText(g, item.Text, tf, item.Done ? ColTextMuted : ColTextPri, x + U(42f), y + U(21f));
                     if (item.Done) tf.Dispose();
 
                     // Delete 'X' button
@@ -915,7 +965,7 @@ namespace Kumo
             DrawCardShell(g, shelfInfo);
             DrawLeftText(g,
                 string.Format(_state.T("Hiện đang có {0} tệp trong Kệ lưu trữ.", "Currently holding {0} file(s) in Shelf."), _state.ShelfFiles.Count),
-                _fRowTitle, Color.White, x + U(16f), y + U(27f));
+                _fRowTitle, ColTextPri, x + U(16f), y + U(27f));
             DrawActionPill(g, "shelf_clear_now", new RectangleF(x + w - U(142f), y + U(11f), U(126f), U(32f)),
                 _state.T("Dọn sạch kệ ngay", "Clear Shelf Now"), false);
 
@@ -935,10 +985,10 @@ namespace Kumo
             DrawLeftText(g, "Kumo v" + KumoBuildInfo.Version + " — Official Living Notch", _fPageHeader, Color.White, x + U(20f), y + U(27f));
             DrawLeftText(g,
                 _state.T("Tai thỏ sống động siêu nhẹ cho Windows (Native Win32 · ~0% CPU khi nghỉ).", "Ultra-lightweight native living notch for Windows (Native Win32 · ~0% idle CPU)."),
-                _fRowDesc, Color.FromArgb(165, 175, 198), x + U(20f), y + U(55f));
+                _fRowDesc, ColTextSec, x + U(20f), y + U(55f));
             DrawLeftText(g,
                 _state.T("Hỗ trợ phiên bản động & cài đè trực tiếp không mất dữ liệu từ GitHub Releases.", "Supports dynamic rolling releases & seamless in-place overwrite updates via GitHub."),
-                _fRowDesc, Color.FromArgb(135, 148, 175), x + U(20f), y + U(79f));
+                _fRowDesc, ColTextMuted, x + U(20f), y + U(79f));
 
             y += U(124f);
             y = DrawSectionHeader(g, x, y, _state.T("CẬP NHẬT & CÀI ĐÈ TRỰC TIẾP (OVERWRITE UPDATE)", "CLOUD UPDATE & IN-PLACE OVERWRITE"));
@@ -947,10 +997,10 @@ namespace Kumo
             DrawCardShell(g, updCard);
             DrawLeftText(g,
                 _state.T("Phiên bản đang chạy: v" + KumoBuildInfo.Version, "Installed version: v" + KumoBuildInfo.Version),
-                _fRowTitle, Color.White, x + U(16f), y + U(23f));
+                _fRowTitle, ColTextPri, x + U(16f), y + U(23f));
             DrawLeftText(g,
                 _state.T(_updateInfoVi, _updateInfoEn),
-                _fSmall, (_updateState == 2) ? Color.FromArgb(52, 211, 153) : Color.FromArgb(145, 158, 185), x + U(16f), y + U(47f));
+                _fSmall, (_updateState == 2) ? (IsLight ? Color.FromArgb(5, 150, 105) : Color.FromArgb(52, 211, 153)) : ColTextSec, x + U(16f), y + U(47f));
 
             string updBtnTxt;
             if (_updateState == 1) updBtnTxt = _state.T("Đang kiểm tra...", "Checking...");
@@ -965,16 +1015,16 @@ namespace Kumo
 
             RectangleF actCard = new RectangleF(x, y, w, U(66f));
             DrawCardShell(g, actCard);
-            DrawLeftText(g, _state.T("Thư mục lưu cấu hình & dữ liệu", "Configuration & Data Folder"), _fRowTitle, Color.White, x + U(16f), y + U(22f));
-            DrawLeftText(g, _state.DataDir, _fSmall, Color.FromArgb(135, 148, 175), x + U(16f), y + U(44f));
+            DrawLeftText(g, _state.T("Thư mục lưu cấu hình & dữ liệu", "Configuration & Data Folder"), _fRowTitle, ColTextPri, x + U(16f), y + U(22f));
+            DrawLeftText(g, _state.DataDir, _fSmall, ColTextMuted, x + U(16f), y + U(44f));
             DrawActionPill(g, "open_datadir", new RectangleF(x + w - U(156f), y + U(16f), U(140f), U(34f)),
                 _state.T("Mở thư mục dữ liệu", "Open Data Folder"), false);
             y += U(76f);
 
             RectangleF rstCard = new RectangleF(x, y, w, U(64f));
             DrawCardShell(g, rstCard);
-            DrawLeftText(g, _state.T("Khôi phục cài đặt gốc", "Reset all settings to defaults"), _fRowTitle, Color.White, x + U(16f), y + U(22f));
-            DrawLeftText(g, _state.T("Đưa kích thước, chuyển động, Pomodoro và nhắc nước về mặc định.", "Restore size, motion, Pomodoro, and water settings back to default."), _fRowDesc, Color.FromArgb(150, 160, 182), x + U(16f), y + U(43f));
+            DrawLeftText(g, _state.T("Khôi phục cài đặt gốc", "Reset all settings to defaults"), _fRowTitle, ColTextPri, x + U(16f), y + U(22f));
+            DrawLeftText(g, _state.T("Đưa kích thước, chuyển động, Pomodoro và nhắc nước về mặc định.", "Restore size, motion, Pomodoro, and water settings back to default."), _fRowDesc, ColTextSec, x + U(16f), y + U(43f));
             DrawActionPill(g, "reset_defaults", new RectangleF(x + w - U(176f), y + U(15f), U(160f), U(34f)),
                 _resetConfirmPending
                     ? _state.T("Nhấn lần nữa để đặt lại!", "Click again to reset!")
@@ -987,21 +1037,21 @@ namespace Kumo
         // ==================== REUSABLE UI CARD BUILDERS ====================
         private float DrawPageTitle(Graphics g, float x, float y, string title, string sub)
         {
-            DrawLeftText(g, title, _fPageHeader, Color.White, x, y + U(10f));
-            DrawLeftText(g, sub, _fRowDesc, Color.FromArgb(152, 162, 184), x, y + U(35f));
+            DrawLeftText(g, title, _fPageHeader, ColTextPri, x, y + U(10f));
+            DrawLeftText(g, sub, _fRowDesc, ColTextSec, x, y + U(35f));
             return y + U(60f);
         }
 
         private float DrawSectionHeader(Graphics g, float x, float y, string title)
         {
-            DrawLeftText(g, title, _fSecHeader, Color.FromArgb(96, 165, 250), x + U(2f), y + U(8f));
+            DrawLeftText(g, title, _fSecHeader, ColSecHdr, x + U(2f), y + U(8f));
             return y + U(24f);
         }
 
         private void DrawCardShell(Graphics g, RectangleF r)
         {
-            FillRoundRect(g, r, U(11f), Color.FromArgb(29, 33, 46));
-            using (Pen p = new Pen(Color.FromArgb(44, 50, 68), 1f))
+            FillRoundRect(g, r, U(11f), ColCardBg);
+            using (Pen p = new Pen(ColCardBorder, 1f))
             using (GraphicsPath gp = CreateRoundRect(r, U(11f)))
             {
                 g.DrawPath(p, gp);
@@ -1015,15 +1065,15 @@ namespace Kumo
             AddZone(id, card, false);
 
             bool hov = (_hoverId == id);
-            FillRoundRect(g, card, U(11f), hov ? Color.FromArgb(34, 39, 54) : Color.FromArgb(29, 33, 46));
-            using (Pen p = new Pen(hov ? Color.FromArgb(62, 72, 98) : Color.FromArgb(44, 50, 68), 1f))
+            FillRoundRect(g, card, U(11f), hov ? ColCardBgHov : ColCardBg);
+            using (Pen p = new Pen(hov ? ColCardBorderHov : ColCardBorder, 1f))
             using (GraphicsPath gp = CreateRoundRect(card, U(11f)))
             {
                 g.DrawPath(p, gp);
             }
 
-            DrawLeftText(g, title, _fRowTitle, Color.White, x + U(16f), y + U(22f));
-            DrawLeftText(g, desc, _fRowDesc, Color.FromArgb(152, 162, 184), x + U(16f), y + U(43f));
+            DrawLeftText(g, title, _fRowTitle, ColTextPri, x + U(16f), y + U(22f));
+            DrawLeftText(g, desc, _fRowDesc, ColTextSec, x + U(16f), y + U(43f));
 
             // Smooth iOS/Nusa pill Toggle Switch (46 x 25 dp)
             RectangleF sw = new RectangleF(x + w - U(62f), y + (h - U(25f)) * 0.5f, U(46f), U(25f));
@@ -1037,7 +1087,7 @@ namespace Kumo
             }
             else
             {
-                FillRoundRect(g, sw, sw.Height * 0.5f, Color.FromArgb(56, 62, 82));
+                FillRoundRect(g, sw, sw.Height * 0.5f, IsLight ? Color.FromArgb(203, 213, 225) : Color.FromArgb(56, 62, 82));
             }
 
             float knobD = U(19f);
@@ -1070,11 +1120,11 @@ namespace Kumo
 
             GraphicsState txtClip = g.Save();
             g.SetClip(new RectangleF(x + U(12f), y + U(4f), Math.Max(U(80f), tray.X - x - U(22f)), h - U(8f)), CombineMode.Intersect);
-            DrawLeftText(g, title, _fRowTitle, Color.White, x + U(16f), y + U(23f));
-            DrawLeftText(g, desc, _fRowDesc, Color.FromArgb(152, 162, 184), x + U(16f), y + U(45f));
+            DrawLeftText(g, title, _fRowTitle, ColTextPri, x + U(16f), y + U(23f));
+            DrawLeftText(g, desc, _fRowDesc, ColTextSec, x + U(16f), y + U(45f));
             g.Restore(txtClip);
 
-            FillRoundRect(g, tray, U(8f), Color.FromArgb(18, 21, 30));
+            FillRoundRect(g, tray, U(8f), IsLight ? Color.FromArgb(234, 240, 248) : Color.FromArgb(18, 21, 30));
 
             float curX = tray.X + U(3f);
             for (int i = 0; i < options.Length; i++)
@@ -1095,10 +1145,10 @@ namespace Kumo
                 }
                 else if (hov)
                 {
-                    FillRoundRect(g, segRect, U(6f), Color.FromArgb(30, 255, 255, 255));
+                    FillRoundRect(g, segRect, U(6f), IsLight ? Color.FromArgb(219, 229, 243) : Color.FromArgb(30, 255, 255, 255));
                 }
 
-                DrawCenterText(g, options[i], _fSeg, sel ? Color.White : Color.FromArgb(175, 185, 205), segRect);
+                DrawCenterText(g, options[i], _fSeg, sel ? Color.White : (IsLight ? Color.FromArgb(51, 65, 85) : Color.FromArgb(175, 185, 205)), segRect);
                 curX += itemWidths[i] + U(3f);
             }
 
@@ -1107,7 +1157,7 @@ namespace Kumo
 
         private void DrawActionPill(Graphics g, string id, RectangleF r, string text, bool primaryAccent)
         {
-            AddZone(id, r, id == "toggle_lang");
+            AddZone(id, r, id == "toggle_lang" || id == "toggle_theme");
             bool hov = (_hoverId == id);
             if (primaryAccent)
             {
@@ -1120,17 +1170,20 @@ namespace Kumo
                 {
                     g.FillPath(lgb, gp);
                 }
+                DrawCenterText(g, text, _fSeg, Color.White, r);
             }
             else
             {
-                FillRoundRect(g, r, r.Height * 0.5f, hov ? Color.FromArgb(52, 58, 78) : Color.FromArgb(38, 43, 58));
-                using (Pen p = new Pen(Color.FromArgb(64, 72, 96), 1f))
+                FillRoundRect(g, r, r.Height * 0.5f, IsLight
+                    ? (hov ? Color.FromArgb(226, 235, 248) : Color.FromArgb(241, 245, 251))
+                    : (hov ? Color.FromArgb(52, 58, 78) : Color.FromArgb(38, 43, 58)));
+                using (Pen p = new Pen(IsLight ? Color.FromArgb(203, 213, 225) : Color.FromArgb(64, 72, 96), 1f))
                 using (GraphicsPath gp = CreateRoundRect(r, r.Height * 0.5f))
                 {
                     g.DrawPath(p, gp);
                 }
+                DrawCenterText(g, text, _fSeg, IsLight ? Color.FromArgb(30, 41, 59) : Color.White, r);
             }
-            DrawCenterText(g, text, _fSeg, Color.White, r);
         }
 
         private void AddZone(string id, RectangleF r, bool isFixedChrome)
@@ -1209,6 +1262,17 @@ namespace Kumo
             if (id == "win_close")
             {
                 Hide();
+                return;
+            }
+            if (id == "toggle_theme")
+            {
+                _state.UiThemeMode = (_state.UiThemeMode + 1) % 3;
+                SaveAndApply();
+                return;
+            }
+            if (id.StartsWith("seg_theme_"))
+            {
+                int tm; if (int.TryParse(id.Substring("seg_theme_".Length), out tm) && tm >= 0 && tm <= 2) { _state.UiThemeMode = tm; SaveAndApply(); }
                 return;
             }
             if (id == "toggle_lang")
