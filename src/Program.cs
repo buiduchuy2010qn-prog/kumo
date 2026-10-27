@@ -124,7 +124,7 @@ namespace Kumo
                 using (NotifyIcon tray = new NotifyIcon())
                 {
                     NotchForm form = new NotchForm(state, hw, media, osd);
-                    Thread sigThread = new Thread(delegate {
+                    Thread sigThread = new Thread((ThreadStart)delegate {
                         while (!form.IsDisposed) {
                             try { if (openSignal.WaitOne(500) && !form.IsDisposed && form.IsHandleCreated) form.BeginInvoke(new MethodInvoker(delegate { form.RevealAndOpenSettings(); })); } catch { break; }
                         }

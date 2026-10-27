@@ -7,8 +7,6 @@ $projDir = $PSScriptRoot
 $csc = "C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
 $ico = Join-Path $projDir "Kumo.ico"
 $outExe = Join-Path $projDir "Kumo.exe"
-$setupFileName = "KumoSetup-v$dispVer.exe"
-$outSetup = Join-Path $projDir $setupFileName
 $objDir = Join-Path $projDir "obj"
 
 $rawVer = $Version
@@ -19,6 +17,8 @@ if ($dispVer.StartsWith("v") -or $dispVer.StartsWith("V")) {
     $dispVer = $dispVer.Substring(1).Trim()
 }
 if ([string]::IsNullOrWhiteSpace($dispVer)) { $dispVer = "1.1.0" }
+$setupFileName = "KumoSetup-v$dispVer.exe"
+$outSetup = Join-Path $projDir $setupFileName
 
 $numMatches = [regex]::Matches($dispVer, '\d+')
 $parts = @(0, 0, 0, 0)
