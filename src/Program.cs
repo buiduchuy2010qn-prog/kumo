@@ -29,10 +29,11 @@ namespace Kumo
                     AppState st = new AppState();
                     using (HardwareMonitor hw = new HardwareMonitor())
                     using (MediaLyricsManager media = new MediaLyricsManager())
+                    using (SystemOsdMonitor osd = new SystemOsdMonitor())
                     {
                         hw.IsNotchExpanded = true;
-                        Thread.Sleep(350);
-                        using (NotchForm nf = new NotchForm(st, hw, media))
+                        Thread.Sleep(450);
+                        using (NotchForm nf = new NotchForm(st, hw, media, osd))
                         using (SettingsForm sf = new SettingsForm(st, nf))
                         {
                             nf.SavePreviewBitmap(Path.Combine(outDir, "preview_kumo_music.png"), true, 0);
@@ -79,9 +80,10 @@ namespace Kumo
                 AppState state = new AppState();
                 using (HardwareMonitor hw = new HardwareMonitor())
                 using (MediaLyricsManager media = new MediaLyricsManager())
+                using (SystemOsdMonitor osd = new SystemOsdMonitor())
                 using (NotifyIcon tray = new NotifyIcon())
                 {
-                    NotchForm form = new NotchForm(state, hw, media);
+                    NotchForm form = new NotchForm(state, hw, media, osd);
 
                     try
                     {

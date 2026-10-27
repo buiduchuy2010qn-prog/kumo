@@ -389,11 +389,7 @@ namespace Kumo
             DrawCenterText(g, badgeTxt, _fBadge, IsLight ? Color.FromArgb(3, 105, 161) : Color.FromArgb(125, 195, 255), verBadge);
 
             // Quick Theme Mode Pill + Language Switcher Pill on Right
-            string themeLabel = (_state.UiThemeMode == 0)
-                ? (_state.IsVietnamese ? "☀ Sáng dịu" : "☀ Light")
-                : ((_state.UiThemeMode == 1)
-                    ? (_state.IsVietnamese ? "🌗 Tai thỏ Đen" : "🌗 Dark Notch")
-                    : (_state.IsVietnamese ? "🌙 Tối" : "🌙 Dark"));
+            string themeLabel = (_state.UiThemeMode == 0) ? (_state.IsVietnamese ? "\u2600 S\u00E1ng to\u00E0n b\u1ED9" : "\u2600 Full Light") : ((_state.UiThemeMode == 1) ? (_state.IsVietnamese ? "\u25CF Tai th\u1ECF \u0110en" : "\u25CF Black Notch") : (_state.IsVietnamese ? "\u25D0 T\u1ED1i" : "\u25D0 Dark"));
             RectangleF themeRect = new RectangleF(winW - U(304f), U(11f), U(110f), U(26f));
             DrawActionPill(g, "toggle_theme", themeRect, themeLabel, false);
 
@@ -640,7 +636,7 @@ namespace Kumo
             y = DrawSegmentedCard(g, x, y, w, "seg_size_",
                 _state.T("Kích thước tai thỏ (Notch size)", "Notch size"),
                 _state.T("Đổi tỷ lệ kích thước hiển thị ngay lập tức.", "Applies the new scale immediately."),
-                new string[] { "Auto", "100%", "115%", "130%", "150%" },
+                new string[] { "Auto (Nusa)", "90%", "100%", "110%", "125%" },
                 _state.NotchSizePreset);
 
             y = DrawToggleCard(g, x, y, w, "tog_auto_min",

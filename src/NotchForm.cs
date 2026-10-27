@@ -16,6 +16,7 @@ namespace Kumo
         private readonly AppState _state;
         private readonly HardwareMonitor _hw;
         private readonly MediaLyricsManager _media;
+        private readonly SystemOsdMonitor _osd;
 
         // 3-Stage Smart Auto-Notch states (decompiled 1:1 from nusa_v1.1.0.exe):
         // - mode = 6 (Expanded):   420 x 140 dp (or 520 x 140 dp in Split Lyrics)
@@ -29,7 +30,7 @@ namespace Kumo
         private bool _manualWaveDemo = false;
 
         private bool IsLight { get { return _state.IsNotchLight; } }
-        private Color InkPri { get { return IsLight ? Color.FromArgb(15, 23, 42) : InkPri; } }
+        private Color InkPri { get { return IsLight ? Color.FromArgb(255, 15, 23, 42) : Color.FromArgb(255, 255, 255); } }
         private Color Nw(int a)
         {
             a = Math.Max(0, Math.Min(255, a));
@@ -71,9 +72,20 @@ namespace Kumo
         private bool _isFullscreenHidden = false;
         private SettingsForm _settingsForm = null;
 
-        // Real battery level cache
         private float _batteryFraction = 0.88f;
-        private int _batteryCheckCounter = 0;
+        private int _batteryPercent = 100;
+        private bool _batteryCharging = false;
+        private int _batteryStateKind = 0;
+        private bool _batteryBaselineReady = false;
+        private OsdKind _osdKind = OsdKind.None;
+        private int _osdPercent = 50;
+        private bool _osdMuted = false;
+        private int _osdDelta = 0;
+        private DateTime _osdUntilUtc = DateTime.MinValue;
+        private float _osdFade = 0.0f;
+        private float _osdAnimBar = 0.5f;
+        private bool _wasOsdActive = false;
+        private bool IsOsdActive { get { return DateTime.UtcNow < _osdUntilUtc; } }
 
         // Smooth continuous blend factors ("nổi nhẹ từ từ" like Nusa!)
         private readonly Stopwatch _frameClock = Stopwatch.StartNew();
@@ -139,11 +151,12 @@ namespace Kumo
         private Font _fShelfMain;
         private Font _fShelfSub;
 
-        public NotchForm(AppState state, HardwareMonitor hw, MediaLyricsManager media)
+        public NotchForm(AppState state, HardwareMonitor hw, MediaLyricsManager media, SystemOsdMonitor osd = null)
         {
             _state = state;
             _hw = hw;
             _media = media;
+            _osd = osd;
             _pageIndex = 5;
             _showRestingMascot = _state.MascotEnabled;
             _alwaysMinimal = _state.AlwaysMinimal;
@@ -190,10 +203,38 @@ namespace Kumo
             _animTimer.Tick += OnAnimTick;
             _animTimer.Start();
 
+            if (_osd != null) _osd.OsdChanged += OnSystemOsdChanged;
+            FormClosed += (s, e) => { if (_osd != null) _osd.OsdChanged -= OnSystemOsdChanged; };
             _secondTimer = new System.Windows.Forms.Timer();
             _secondTimer.Interval = 1000;
             _secondTimer.Tick += OnSecondTick;
             _secondTimer.Start();
+        }
+
+        private void OnSystemOsdChanged(OsdKind kind, int percent, bool isMuted, int delta)
+        {
+            if (IsDisposed) return;
+            try
+            {
+                if (IsHandleCreated)
+                    BeginInvoke(new MethodInvoker(delegate { TriggerOsdHud(kind, percent, isMuted, delta, 2.05); }));
+            }
+            catch { }
+        }
+
+        public void TriggerOsdHud(OsdKind kind, int percent, bool isMuted, int delta, double durationSec)
+        {
+            _osdKind = kind;
+            _osdPercent = Math.Max(0, Math.Min(100, percent));
+            _osdMuted = isMuted;
+            _osdDelta = delta;
+            float targetBar = (kind == OsdKind.Volume && isMuted) ? 0f : (_osdPercent / 100.0f);
+            if (_osdFade < 0.08f) _osdAnimBar = targetBar;
+            _osdUntilUtc = DateTime.UtcNow.AddSeconds(durationSec);
+            _wasOsdActive = true;
+            if (!_isExpanded && _isMicroPill) _isMicroPill = false;
+            UpdateTargetDimensions();
+            _needsRedraw = true;
         }
 
         public int CurrentPage
@@ -370,9 +411,32 @@ namespace Kumo
             try
             {
                 NativeMethods.SYSTEM_POWER_STATUS sps;
-                if (NativeMethods.GetSystemPowerStatus(out sps) && sps.BatteryLifePercent <= 100)
+                if (NativeMethods.GetSystemPowerStatus(out sps))
                 {
-                    _batteryFraction = Math.Max(0.08f, sps.BatteryLifePercent / 100.0f);
+                    bool hasPack = ((sps.BatteryFlag & 128) == 0);
+                    int pct = (hasPack && sps.BatteryLifePercent <= 100) ? (int)sps.BatteryLifePercent : 100;
+                    bool charging = (sps.ACLineStatus == 1) || ((sps.BatteryFlag & 8) != 0);
+                    int kind = charging ? 1 : (pct <= 20 ? 2 : 0);
+                    if (!_batteryBaselineReady)
+                    {
+                        _batteryBaselineReady = true;
+                        _batteryPercent = pct; _batteryCharging = charging; _batteryStateKind = kind;
+                        _batteryFraction = Math.Max(0.06f, pct / 100.0f);
+                    }
+                    else
+                    {
+                        bool chgChanged = (charging != _batteryCharging);
+                        bool enteredLow = (!charging && kind == 2 && _batteryStateKind != 2);
+                        bool enteredCrit = (!charging && pct <= 10 && _batteryPercent > 10);
+                        if (pct != _batteryPercent || chgChanged || kind != _batteryStateKind)
+                        {
+                            _batteryPercent = pct; _batteryCharging = charging; _batteryStateKind = kind;
+                            _batteryFraction = Math.Max(0.06f, pct / 100.0f);
+                            _needsRedraw = true;
+                        }
+                        if (chgChanged || enteredLow || enteredCrit)
+                            TriggerOsdHud(OsdKind.Battery, pct, false, charging ? 1 : -1, 2.75);
+                    }
                 }
             }
             catch { }
@@ -408,7 +472,7 @@ namespace Kumo
             catch { }
 
             DisposeCachedFonts();
-            _scale = 1.25f * (dpi / 96.0f) * _state.GetSizeMultiplier();
+            _scale = (dpi / 96.0f) * _state.GetSizeMultiplier();
 
             _fIdleTime   = MakePxFont("Segoe UI", 15.0f, FontStyle.Bold);
             _fHdrDate    = MakePxFont("Segoe UI", 12.2f, FontStyle.Regular);
@@ -452,46 +516,33 @@ namespace Kumo
 
         private void UpdateTargetDimensions()
         {
-            if (_isFullscreenHidden && !_isExpanded)
+            if (_isFullscreenHidden && !_isExpanded && !IsOsdActive)
             {
-                _targetW = U(36f);
-                _targetH = 0f;
-                _targetR = U(2f);
-                _targetE = U(1f);
+                _targetW = U(36f); _targetH = 0f; _targetR = U(2f); _targetE = U(1f);
                 return;
             }
             if (_isExpanded)
             {
                 bool wide = (_pageIndex == 0 && _isLyricsSplit && _state.ShowLyrics);
-                _targetW = U(wide ? 520f : 420f);
-                _targetH = U(140f);
-                _targetR = U(32f);
-                _targetE = U(22f);
+                _targetW = U(wide ? 512f : 416f); _targetH = U(139f); _targetR = U(30f); _targetE = U(20f);
+            }
+            else if (IsOsdActive)
+            {
+                _targetW = U(240f); _targetH = U(36f); _targetR = U(17f); _targetE = U(11f);
             }
             else if (_isMicroPill || _alwaysMinimal)
             {
-                _targetW = U(44f);
-                _targetH = U(4.5f);
-                _targetR = U(3.0f);
-                _targetE = U(2.5f);
+                _targetW = U(44f); _targetH = U(4.5f); _targetR = U(3.0f); _targetE = U(2.5f);
             }
             else
             {
-                _targetW = U(150f);
-                _targetH = U(30f);
-                _targetR = U(14f);
-                _targetE = U(10f);
+                _targetW = U(148f); _targetH = U(29f); _targetR = U(14f); _targetE = U(10f);
             }
         }
 
         private void OnSecondTick(object sender, EventArgs e)
         {
-            _batteryCheckCounter++;
-            if (_batteryCheckCounter >= 15)
-            {
-                _batteryCheckCounter = 0;
-                RefreshBatteryLevel();
-            }
+RefreshBatteryLevel();
 
             if (_state.PomodoroRunning)
             {
@@ -551,7 +602,7 @@ namespace Kumo
 
         private void UpdateAutoMinimalState()
         {
-            if (_isExpanded)
+            if (_isExpanded || IsOsdActive)
             {
                 _isMicroPill = false;
                 _obstructionStreak = 0;
@@ -1038,12 +1089,18 @@ namespace Kumo
             float targetWave   = (_petState == 3) ? 1.0f : 0.0f;
             float targetExpand = _isExpanded ? 1.0f : 0.0f;
 
+            bool osdNow = IsOsdActive;
+            if (_wasOsdActive && !osdNow) { _wasOsdActive = false; UpdateAutoMinimalState(); UpdateTargetDimensions(); _needsRedraw = true; }
+            float targetOsd = osdNow ? 1.0f : 0.0f;
+            float targetBar = (_osdKind == OsdKind.Volume && _osdMuted) ? 0f : (_osdPercent / 100.0f);
             bool fM = MoveTowards(ref _mascotFade, targetMascot, dt * 1.9f * fadeSpd);
             bool fS = MoveTowards(ref _sleepFade,  targetSleep,  dt * 1.0f * fadeSpd);
             bool fW = MoveTowards(ref _waveFade,   targetWave,   dt * 2.6f * fadeSpd);
             bool fE = MoveTowards(ref _expandFade, targetExpand, dt * 4.2f * fadeSpd);
+            bool fO = MoveTowards(ref _osdFade,    targetOsd,    dt * 5.8f * fadeSpd);
+            bool fB = (_osdFade > 0.01f) && MoveTowards(ref _osdAnimBar, targetBar, dt * 6.5f);
 
-            if (mW || mH || mR || mE || fM || fS || fW || fE)
+            if (mW || mH || mR || mE || fM || fS || fW || fE || fO || fB || _osdFade > 0.01f)
             {
                 _needsRedraw = true;
             }
@@ -1215,16 +1272,16 @@ namespace Kumo
 
                     if (bodyH > U(12f))
                     {
-                        float expProg = SmoothStep01((bodyH - U(55f)) / U(75f));
-                        float colProg = 1.0f - SmoothStep01((bodyH - U(32f)) / U(38f));
-                        float minFade = SmoothStep01((bodyH - U(12f)) / U(15f));
+                        float expProg = SmoothStep01((bodyH - U(56f)) / U(74f));
+                        float colProg = 1.0f - SmoothStep01((bodyH - U(40f)) / U(36f));
+                        float minFade = SmoothStep01((bodyH - U(11f)) / U(14f));
                         colProg *= minFade;
 
                         if (colProg > 0.01f && expProg < 0.99f)
                         {
                             GraphicsState stCol = g.Save();
                             g.TranslateTransform(0f, -(1.0f - colProg) * U(4f));
-                            DrawCollapsedNusa(g, x0, bodyW, Math.Min(U(32f), bodyH));
+                            DrawCollapsedNusa(g, x0, bodyW, Math.Min(U(38f), bodyH));
                             g.Restore(stCol);
 
                             int veil = (int)((1.0f - colProg) * 255f);
@@ -1291,31 +1348,35 @@ namespace Kumo
         // ==================== STAGE 2: COLLAPSED GLANCE PILL (150 x 30 dp) ====================
         private void DrawCollapsedNusa(Graphics g, float x0, float w, float h)
         {
+            float oEase = SmoothStep01(_osdFade);
+            if (oEase > 0.98f)
+            {
+                DrawOsdHudRow(g, x0 + U(14f), h * 0.5f, w - U(28f), 1.0f);
+                return;
+            }
             float mEase = SmoothStep01(_previewForceWave ? 1.0f : _mascotFade);
             float wEase = SmoothStep01(_previewForceWave ? 1.0f : _waveFade);
             float sEase = SmoothStep01(_previewForceWave ? 0.0f : _sleepFade);
-            float cEase = 1.0f - mEase;
+            float cEase = (1.0f - mEase) * (1.0f - oEase);
+            float midY = h * 0.5f;
 
             if (cEase > 0.01f)
             {
                 GraphicsState stClock = g.Save();
                 g.TranslateTransform(0f, -(1.0f - cEase) * U(3.5f));
-
-                // When Music is actively playing, show live mini Album Art on the left of the collapsed pill (1:1 Nusa!)
-                if (_media.HasMedia && _media.IsPlaying)
+                if (_media.HasMedia && _media.IsPlaying && _batteryStateKind != 2)
                 {
-                    RectangleF miniArt = new RectangleF(x0 + U(11f), U(6f), U(18f), U(18f));
-                    DrawAlbumArtThumb(g, miniArt, U(5f));
+                    RectangleF miniArt = new RectangleF(x0 + U(10.5f), midY - U(8.5f), U(17f), U(17f));
+                    DrawAlbumArtThumb(g, miniArt, U(4.8f));
                 }
                 else
                 {
-                    DrawBatteryRing(g, x0 + U(20f), U(15f));
+                    DrawBatteryRing(g, x0 + U(19.5f), midY);
                 }
-
-                DrawCenteredText(g, DateTime.Now.ToString("HH:mm"), _fIdleTime, InkPri, x0 + U(75f), U(15f));
+                DrawCenteredText(g, DateTime.Now.ToString("HH:mm"), _fIdleTime, InkPri, x0 + w * 0.5f, midY);
                 if (_state.EqualizerEnabled)
                 {
-                    DrawEqualizerBars(g, x0 + U(131f), U(15f));
+                    DrawEqualizerBars(g, x0 + w - U(18.5f), midY);
                 }
                 g.Restore(stClock);
 
@@ -1415,6 +1476,15 @@ namespace Kumo
                     DrawWavingMascotHand(g, x0 + w * 0.5f + U(25.0f), handY, waveAngle, handAlpha);
                 }
             }
+            if (oEase > 0.01f)
+            {
+                int veil = (int)(oEase * 245f);
+                using (SolidBrush vb = new SolidBrush(VeilCol(veil)))
+                {
+                    g.FillRectangle(vb, x0 - U(14f), 0f, w + U(28f), h + 2f);
+                }
+                DrawOsdHudRow(g, x0 + U(14f), h * 0.5f, w - U(28f), oEase);
+            }
         }
 
         private void DrawMascotEyeHalo(Graphics g, float cx, float cy, float alphaScale)
@@ -1484,30 +1554,45 @@ namespace Kumo
         {
             if (!(_pageIndex == 0 && _isLyricsSplit && _state.ShowLyrics))
             {
-                DrawBatteryRing(g, x0 + U(146f), U(18f));
-                string dateStr = DateTime.Now.ToString("ddd dd MMM yyyy", CultureInfo.InvariantCulture);
+                DrawBatteryRing(g, x0 + U(143f), U(18f));
+                string batTxt; Color batCol;
+                if (_batteryStateKind == 1)
+                {
+                    batTxt = string.Format(CultureInfo.InvariantCulture, "{0}% \u00B7 {1}", _batteryPercent, _state.T("\u0110ang s\u1EA1c", "Charging"));
+                    batCol = IsLight ? Color.FromArgb(5, 150, 105) : Color.FromArgb(74, 222, 128);
+                }
+                else if (_batteryStateKind == 2)
+                {
+                    batTxt = string.Format(CultureInfo.InvariantCulture, "{0}% \u00B7 {1}", _batteryPercent, _state.T("Pin y\u1EBFu", "Low"));
+                    batCol = IsLight ? Color.FromArgb(220, 38, 38) : Color.FromArgb(255, 98, 98);
+                }
+                else
+                {
+                    batTxt = string.Format(CultureInfo.InvariantCulture, "{0}% \u00B7 {1}", _batteryPercent, _state.T("Pin bth", "Normal"));
+                    batCol = Nw(215);
+                }
+                SizeF bSz = g.MeasureString(batTxt, _fAxis);
+                float batX = x0 + U(154f);
+                _hitZones.Add(new HitZone { Id = "hdr_bat", Rect = new RectangleF(x0 + U(134f), U(6f), bSz.Width + U(24f), U(24f)) });
+                DrawLeftVCenteredText(g, batTxt, _fAxis, batCol, batX, U(18f));
+
+                string dateStr = DateTime.Now.ToString("dd MMM ", CultureInfo.InvariantCulture);
                 string timeStr = DateTime.Now.ToString(_showHeaderSeconds ? "HH:mm:ss" : "HH:mm");
-
                 SizeF dSz = g.MeasureString(dateStr, _fHdrDate);
-                float dateX = x0 + U(160f);
+                float dateX = batX + bSz.Width + U(6f);
                 float dateY = U(18f) - dSz.Height * 0.5f;
-
-                RectangleF hdrClockHit = new RectangleF(x0 + U(136f), U(6f), U(205f), U(24f));
-                _hitZones.Add(new HitZone { Id = "hdr_clock", Rect = hdrClockHit });
-
-                using (SolidBrush bDate = new SolidBrush(Nw(_hoveredId == "hdr_clock" ? 255 : 225)))
+                _hitZones.Add(new HitZone { Id = "hdr_clock", Rect = new RectangleF(dateX - U(2f), U(6f), U(108f), U(24f)) });
+                using (SolidBrush bDate = new SolidBrush(Nw(_hoveredId == "hdr_clock" ? 255 : 210)))
                 using (SolidBrush bTime = new SolidBrush(InkPri))
                 {
                     g.DrawString(dateStr, _fHdrDate, bDate, dateX, dateY);
-                    g.DrawString(timeStr, _fHdrTime, bTime, dateX + dSz.Width + U(2f), dateY);
+                    g.DrawString(timeStr, _fHdrTime, bTime, dateX + dSz.Width, dateY);
                 }
-
-                DrawSettingsGearButton(g, "open_settings", x0 + U(371f), U(18f));
-
+                DrawSettingsGearButton(g, "open_settings", x0 + w - U(45f), U(18f));
                 if (_state.EqualizerEnabled)
                 {
-                    _hitZones.Add(new HitZone { Id = "hdr_eq", Rect = new RectangleF(x0 + U(384f), U(6f), U(26f), U(24f)) });
-                    DrawEqualizerBars(g, x0 + U(396f), U(18f));
+                    _hitZones.Add(new HitZone { Id = "hdr_eq", Rect = new RectangleF(x0 + w - U(32f), U(6f), U(26f), U(24f)) });
+                    DrawEqualizerBars(g, x0 + w - U(20f), U(18f));
                 }
             }
             else
@@ -1542,7 +1627,21 @@ namespace Kumo
 
             DrawNavArrow(g, "nav_prev", x0 + U(20f), U(70f), true);
             DrawNavArrow(g, "nav_next", x0 + w - U(20f), U(70f), false);
-            DrawPageDots(g, x0 + w * 0.5f, U(133f));
+            DrawPageDots(g, x0 + w * 0.5f, U(132f));
+            if (_osdFade > 0.02f)
+            {
+                float oEase = SmoothStep01(_osdFade);
+                float bw = U(236f), bh = U(31f);
+                RectangleF banner = new RectangleF(x0 + (w - bw) * 0.5f, U(4f) - (1.0f - oEase) * U(6f), bw, bh);
+                Color capBg = IsLight ? Color.FromArgb((int)(246f * oEase), 255, 255, 255) : Color.FromArgb((int)(242f * oEase), 16, 20, 30);
+                FillPill(g, banner, capBg);
+                using (GraphicsPath bp = CreateRoundRect(banner, bh * 0.5f))
+                using (Pen bPen = new Pen(IsLight ? Color.FromArgb((int)(190f * oEase), 186, 202, 224) : Color.FromArgb((int)(140f * oEase), 75, 95, 130), 1.0f))
+                {
+                    g.DrawPath(bPen, bp);
+                }
+                DrawOsdHudRow(g, banner.X + U(12f), banner.Y + bh * 0.5f, banner.Width - U(24f), oEase);
+            }
         }
 
         // ==================== PAGE 0: REAL WINRT SMTC MUSIC & ALBUM ART ====================
@@ -1626,9 +1725,10 @@ namespace Kumo
             {
                 DrawLyricsBubbleIcon(g, "media_lyrics", x0 + U(56f), U(116f), false);
             }
-            DrawMediaPrevIcon(g, "media_prev", x0 + U(160f), U(116f));
-            DrawMediaPlayPauseIcon(g, "media_play", x0 + U(210f), U(116f), _media.IsPlaying);
-            DrawMediaNextIcon(g, "media_next", x0 + U(260f), U(116f));
+            DrawMediaPrevIcon(g, "media_prev", x0 + U(158f), U(115f));
+            DrawMediaPlayPauseIcon(g, "media_play", x0 + U(208f), U(115f), _media.IsPlaying);
+            DrawMediaNextIcon(g, "media_next", x0 + U(258f), U(115f));
+            DrawMusicSpeakerButton(g, "media_vol", x0 + w - U(56f), U(115f));
         }
 
         // ==================== PAGE 0 SPLIT: REAL SYNCED LYRICS (520 x 140 dp) ====================
@@ -2168,79 +2268,95 @@ namespace Kumo
 
             double rMb = _hw.DiskReadBytesPerSec / (1024.0 * 1024.0);
             double wMb = _hw.DiskWriteBytesPerSec / (1024.0 * 1024.0);
+            double rwKb = (_hw.DiskReadBytesPerSec + _hw.DiskWriteBytesPerSec) / 1024.0;
+            bool netIsMbps = Math.Max(_hw.NetRecvMbps, _hw.NetSendMbps) >= 1.0;
 
             string heroBig, heroSub, detailLine;
             float barPct;
 
             if (_sysSelectedMetric == 1)
             {
-                heroBig = string.Format(CultureInfo.InvariantCulture, "{0:0.0}", rMb + wMb);
-                heroSub = " MB/s · SSD";
-                detailLine = string.Format(CultureInfo.InvariantCulture, "Read {0:0.0} MB/s · Write {1:0.0} MB/s", rMb, wMb);
-                barPct = (float)Math.Min(100.0, (rMb + wMb) * 2.0);
+                heroBig = string.Format(CultureInfo.InvariantCulture, "{0:0}%", _hw.DiskActivePercent);
+                heroSub = " SSD \u00B7 Active";
+                detailLine = string.Format(CultureInfo.InvariantCulture, "R: {0} \u00B7 W: {1}",
+                    HardwareMonitor.FormatRate(_hw.DiskReadBytesPerSec),
+                    HardwareMonitor.FormatRate(_hw.DiskWriteBytesPerSec));
+                barPct = _hw.DiskActivePercent;
             }
             else if (_sysSelectedMetric == 2)
             {
-                heroBig = string.Format(CultureInfo.InvariantCulture, "{0:0.0}", _hw.NetRecvMbps);
-                heroSub = " Mbps · Down";
-                detailLine = string.Format(CultureInfo.InvariantCulture, "↓ {0:0.0} Mbps · ↑ {1:0.0} Mbps", _hw.NetRecvMbps, _hw.NetSendMbps);
-                barPct = (float)Math.Min(100.0, _hw.NetRecvMbps);
+                if (netIsMbps)
+                {
+                    heroBig = string.Format(CultureInfo.InvariantCulture, "{0:0.1}", _hw.NetRecvMbps);
+                    heroSub = " Mbps \u00B7 " + _hw.NetAdapterLabel;
+                    detailLine = string.Format(CultureInfo.InvariantCulture, "\u2193 {0:0.1} Mbps \u00B7 \u2191 {1:0.1} Mbps", _hw.NetRecvMbps, _hw.NetSendMbps);
+                }
+                else
+                {
+                    heroBig = string.Format(CultureInfo.InvariantCulture, "{0:0}", _hw.NetRecvKbps);
+                    heroSub = " Kbps \u00B7 " + _hw.NetAdapterLabel;
+                    detailLine = string.Format(CultureInfo.InvariantCulture, "\u2193 {0:0} Kbps \u00B7 \u2191 {1:0} Kbps", _hw.NetRecvKbps, _hw.NetSendKbps);
+                }
+                barPct = (float)Math.Min(100.0, _hw.NetRecvMbps * 2.0 + (_hw.NetRecvKbps > 1.0 ? 4.0 : 0.0));
             }
             else if (_sysSelectedMetric == 3)
             {
-                heroBig = string.Format("{0:0}%", _hw.GpuUsagePercent);
-                heroSub = " GPU 0 · 3D";
-                detailLine = string.Format(CultureInfo.InvariantCulture, "CPU {0:0}% · RAM {1:0}%", _hw.CpuUsagePercent, _hw.RamUsagePercent);
+                heroBig = string.Format(CultureInfo.InvariantCulture, "{0:0}%", _hw.GpuUsagePercent);
+                heroSub = " GPU 0 \u00B7 " + _hw.GpuEngineLabel;
+                detailLine = Truncate(_hw.GpuName, 26);
                 barPct = _hw.GpuUsagePercent;
             }
             else
             {
-                heroBig = string.Format("{0:0}%", _hw.CpuUsagePercent);
-                heroSub = string.Format(CultureInfo.InvariantCulture, " CPU · {0:0.00} GHz", _hw.CpuSpeedGhz);
-                detailLine = string.Format(CultureInfo.InvariantCulture, "RAM {0:0}% · {1:0.0}/{2:0.0} GB", _hw.RamUsagePercent, _hw.RamUsedGb, _hw.RamTotalGb);
-                barPct = _hw.RamUsagePercent;
+                heroBig = string.Format(CultureInfo.InvariantCulture, "{0:0}%", _hw.CpuUsagePercent);
+                heroSub = string.Format(CultureInfo.InvariantCulture, " CPU \u00B7 {0:0.00} GHz", _hw.CpuSpeedGhz);
+                detailLine = string.Format(CultureInfo.InvariantCulture, "RAM {0:0}% \u00B7 {1:0.1}/{2:0.1} GB", _hw.RamUsagePercent, _hw.RamUsedGb, _hw.RamTotalGb);
+                barPct = _hw.CpuUsagePercent;
             }
 
-            // Clicking the left hero switches back to CPU/RAM!
             _hitZones.Add(new HitZone { Id = "sys_sel_0", Rect = new RectangleF(x0 + U(38f), U(28f), U(164f), U(64f)) });
 
             SizeF bigSz = g.MeasureString(heroBig, _fHeroBig);
             float baseY = U(47f) - bigSz.Height * 0.5f;
             using (SolidBrush wBr = new SolidBrush(InkPri))
-            using (SolidBrush dBr = new SolidBrush(Nw(145)))
+            using (SolidBrush dBr = new SolidBrush(Nw(155)))
             {
-                g.DrawString(heroBig, _fHeroBig, wBr, x0 + U(40f), baseY);
-                g.DrawString(heroSub, _fHeroUnit, dBr, x0 + U(40f) + bigSz.Width - U(4f), U(49f) - _fHeroUnit.Height * 0.5f);
+                g.DrawString(heroBig, _fHeroBig, wBr, x0 + U(38f), baseY);
+                g.DrawString(heroSub, _fHeroUnit, dBr, x0 + U(38f) + bigSz.Width - U(4f), U(49f) - _fHeroUnit.Height * 0.5f);
             }
 
-            DrawLeftVCenteredText(g, detailLine, _fMusicSub, Nw(165), x0 + U(44f), U(71f));
+            DrawLeftVCenteredText(g, detailLine, _fMusicSub, Nw(175), x0 + U(42f), U(71f));
 
-            RectangleF barTrack = new RectangleF(x0 + U(44f), U(82.5f), U(152f), U(5f));
+            RectangleF barTrack = new RectangleF(x0 + U(42f), U(82.5f), U(152f), U(5f));
             FillPill(g, barTrack, Nw(38));
-            float fillW = Math.Max(U(6f), barTrack.Width * Math.Max(0.03f, Math.Min(1.0f, barPct / 100.0f)));
+            float fillW = Math.Max(U(5f), barTrack.Width * Math.Max(0.02f, Math.Min(1.0f, barPct / 100.0f)));
             RectangleF barFill = new RectangleF(barTrack.X, barTrack.Y, fillW, barTrack.Height);
             using (LinearGradientBrush lgb = new LinearGradientBrush(barTrack, Color.FromArgb(25, 184, 255), Color.FromArgb(123, 75, 255), LinearGradientMode.Horizontal))
             {
                 FillPillBrush(g, barFill, lgb);
             }
 
-            DrawNusaPillButton(g, "sys_taskmgr", new RectangleF(x0 + U(44f), U(98f), U(76f), U(26f)), "⚡ Task Mgr", Color.FromArgb(255, 14, 74, 134));
-            DrawNusaPillButton(g, "sys_pet", new RectangleF(x0 + U(125f), U(98f), U(72f), U(26f)), _showRestingMascot ? "^ ^ Mascot" : "• Clock", Nw(36));
+            DrawNusaPillButton(g, "sys_taskmgr", new RectangleF(x0 + U(42f), U(98f), U(76f), U(25f)), "\u25EB Task Mgr", Color.FromArgb(255, 14, 74, 134));
+            DrawNusaPillButton(g, "sys_pet", new RectangleF(x0 + U(123f), U(98f), U(72f), U(25f)), _showRestingMascot ? "^ ^ Mascot" : "\u25CB Clock", Nw(36));
 
             using (SolidBrush div = new SolidBrush(Nw(32)))
             {
-                g.FillRectangle(div, x0 + U(208f), U(34f), Math.Max(1f, U(1f)), U(90f));
+                g.FillRectangle(div, x0 + U(205f), U(34f), Math.Max(1f, U(1f)), U(89f));
             }
 
-            // All 3 right-side rows are clickable!
-            DrawMetricRow(g, "sys_sel_1", _sysSelectedMetric == 1, x0 + U(216f), U(34f), U(166f), Color.FromArgb(42, 25, 184, 255), Color.FromArgb(25, 184, 255),
-                "SSD", string.Format(CultureInfo.InvariantCulture, "R:{0:0.0} W:{1:0.0}M", rMb, wMb));
+            string ssdVal = ((rMb + wMb) >= 0.1)
+                ? string.Format(CultureInfo.InvariantCulture, "{0:0}% \u00B7 {1:0.1} MB/s", _hw.DiskActivePercent, rMb + wMb)
+                : string.Format(CultureInfo.InvariantCulture, "{0:0}% \u00B7 {1:0} KB/s", _hw.DiskActivePercent, rwKb);
 
-            DrawMetricRow(g, "sys_sel_2", _sysSelectedMetric == 2, x0 + U(216f), U(65f), U(166f), Color.FromArgb(42, 45, 91, 255), Color.FromArgb(86, 140, 255),
-                "Wi-Fi", string.Format(CultureInfo.InvariantCulture, "↓{0:0.0} ↑{1:0.0}M", _hw.NetRecvMbps, _hw.NetSendMbps));
+            string netVal = netIsMbps
+                ? string.Format(CultureInfo.InvariantCulture, "\u2193{0:0.1} \u2191{1:0.1} Mbps", _hw.NetRecvMbps, _hw.NetSendMbps)
+                : string.Format(CultureInfo.InvariantCulture, "\u2193{0:0} \u2191{1:0} Kbps", _hw.NetRecvKbps, _hw.NetSendKbps);
 
-            DrawMetricRow(g, "sys_sel_3", _sysSelectedMetric == 3, x0 + U(216f), U(96f), U(166f), Color.FromArgb(42, 123, 75, 255), Color.FromArgb(155, 115, 255),
-                "GPU 0", string.Format(CultureInfo.InvariantCulture, "Load {0:0}% · 3D", _hw.GpuUsagePercent));
+            string gpuVal = string.Format(CultureInfo.InvariantCulture, "{0:0}% \u00B7 {1}", _hw.GpuUsagePercent, _hw.GpuEngineLabel);
+
+            DrawMetricRow(g, "sys_sel_1", _sysSelectedMetric == 1, x0 + U(213f), U(34f), U(166f), Color.FromArgb(42, 25, 184, 255), Color.FromArgb(25, 184, 255), "SSD", ssdVal);
+            DrawMetricRow(g, "sys_sel_2", _sysSelectedMetric == 2, x0 + U(213f), U(64.5f), U(166f), Color.FromArgb(42, 45, 91, 255), Color.FromArgb(86, 140, 255), _hw.NetAdapterLabel, netVal);
+            DrawMetricRow(g, "sys_sel_3", _sysSelectedMetric == 3, x0 + U(213f), U(95f), U(166f), Color.FromArgb(42, 123, 75, 255), Color.FromArgb(155, 115, 255), "GPU 0", gpuVal);
         }
 
         private void DrawMetricRow(Graphics g, string id, bool selected, float x, float y, float w, Color rowBg, Color dotCol, string label, string val)
@@ -2271,14 +2387,169 @@ namespace Kumo
         // ==================== SHARED NUSA VECTOR WIDGETS ====================
         private void DrawBatteryRing(Graphics g, float cx, float cy)
         {
-            float r = U(7.5f);
-            RectangleF arcRect = new RectangleF(cx - r + U(1.5f), cy - r + U(1.5f), (r - U(1.5f)) * 2f, (r - U(1.5f)) * 2f);
-            Color c = (_batteryFraction < 0.20f) ? Color.FromArgb(255, 95, 85) : Color.FromArgb(51, 224, 122);
-            using (Pen bg = new Pen(Color.FromArgb(72, c.R, c.G, c.B), U(2.4f)))
-            using (Pen fg = new Pen(Color.FromArgb(255, c.R, c.G, c.B), U(2.4f)))
+            float r = U(7.8f);
+            RectangleF arcRect = new RectangleF(cx - r + U(1.4f), cy - r + U(1.4f), (r - U(1.4f)) * 2f, (r - U(1.4f)) * 2f);
+            Color c = (_batteryStateKind == 1)
+                ? Color.FromArgb(46, 229, 118)
+                : ((_batteryStateKind == 2)
+                    ? ((_batteryPercent <= 10) ? Color.FromArgb(255, 58, 58) : Color.FromArgb(255, 102, 64))
+                    : Color.FromArgb(52, 211, 153));
+
+            using (Pen bg = new Pen(Color.FromArgb(72, c.R, c.G, c.B), U(2.25f)))
+            using (Pen fg = new Pen(Color.FromArgb(255, c.R, c.G, c.B), U(2.25f)))
             {
+                fg.StartCap = LineCap.Round; fg.EndCap = LineCap.Round;
                 g.DrawEllipse(bg, arcRect);
-                g.DrawArc(fg, arcRect, -90f, 360f * _batteryFraction);
+                g.DrawArc(fg, arcRect, -90f, Math.Max(22f, 360f * _batteryFraction));
+            }
+
+            if (_batteryStateKind == 1)
+            {
+                PointF[] bolt = new PointF[] {
+                    new PointF(cx + U(0.9f), cy - U(4.2f)), new PointF(cx - U(2.6f), cy + U(0.3f)),
+                    new PointF(cx - U(0.2f), cy + U(0.3f)), new PointF(cx - U(1.0f), cy + U(4.2f)),
+                    new PointF(cx + U(2.6f), cy - U(0.4f)), new PointF(cx + U(0.2f), cy - U(0.4f))
+                };
+                using (SolidBrush bb = new SolidBrush(InkPri)) g.FillPolygon(bb, bolt);
+            }
+            else if (_batteryStateKind == 2)
+            {
+                using (SolidBrush lb = new SolidBrush(c))
+                {
+                    g.FillRectangle(lb, cx - U(0.9f), cy - U(3.6f), U(1.8f), U(4.4f));
+                    g.FillEllipse(lb, cx - U(1.0f), cy + U(1.8f), U(2.0f), U(2.0f));
+                }
+            }
+        }
+
+        private void DrawMusicSpeakerButton(Graphics g, string id, float cx, float cy)
+        {
+            RectangleF hit = new RectangleF(cx - U(16f), cy - U(12f), U(32f), U(24f));
+            _hitZones.Add(new HitZone { Id = id, Rect = hit });
+            if (_hoveredId == id) FillRoundRect(g, hit, U(8f), Nw(45));
+            bool muted = (_osd != null) && _osd.IsMuted;
+            int vol = (_osd != null) ? _osd.VolumePercent : 50;
+            DrawSpeakerVector(g, cx, cy, muted, vol, muted ? Color.FromArgb(248, 113, 113) : Nw(215), 255);
+        }
+
+        private void DrawSpeakerVector(Graphics g, float cx, float cy, bool muted, int vol, Color col, int alpha)
+        {
+            Color c = Color.FromArgb(Math.Max(0, Math.Min(255, alpha)), col.R, col.G, col.B);
+            PointF[] cone = new PointF[] {
+                new PointF(cx - U(6.2f), cy - U(2.2f)), new PointF(cx - U(3.3f), cy - U(2.2f)),
+                new PointF(cx + U(0.2f), cy - U(5.2f)), new PointF(cx + U(0.2f), cy + U(5.2f)),
+                new PointF(cx - U(3.3f), cy + U(2.2f)), new PointF(cx - U(6.2f), cy + U(2.2f))
+            };
+            using (SolidBrush sb = new SolidBrush(c)) g.FillPolygon(sb, cone);
+            using (Pen wp = new Pen(c, U(1.45f)))
+            {
+                wp.StartCap = LineCap.Round; wp.EndCap = LineCap.Round;
+                if (muted || vol <= 0)
+                {
+                    g.DrawLine(wp, cx + U(2.4f), cy - U(2.6f), cx + U(6.6f), cy + U(2.6f));
+                    g.DrawLine(wp, cx + U(6.6f), cy - U(2.6f), cx + U(2.4f), cy + U(2.6f));
+                }
+                else
+                {
+                    if (vol >= 1) g.DrawArc(wp, cx - U(1.2f), cy - U(3.2f), U(5.2f), U(6.4f), -48f, 96f);
+                    if (vol >= 45) g.DrawArc(wp, cx - U(2.2f), cy - U(5.4f), U(9.4f), U(10.8f), -48f, 96f);
+                }
+            }
+        }
+
+        private void DrawSunVector(Graphics g, float cx, float cy, int pct, int alpha)
+        {
+            Color gold = IsLight ? Color.FromArgb(alpha, 217, 119, 6) : Color.FromArgb(alpha, 251, 191, 36);
+            float coreR = U(3.3f);
+            using (SolidBrush sb = new SolidBrush(gold)) g.FillEllipse(sb, cx - coreR, cy - coreR, coreR * 2f, coreR * 2f);
+            float rayIn = U(4.8f), rayOut = U(6.4f + 1.2f * (pct / 100.0f));
+            using (Pen rp = new Pen(gold, U(1.4f)))
+            {
+                rp.StartCap = LineCap.Round; rp.EndCap = LineCap.Round;
+                for (int i = 0; i < 8; i++)
+                {
+                    double ang = i * (Math.PI / 4.0);
+                    float cA = (float)Math.Cos(ang), sA = (float)Math.Sin(ang);
+                    g.DrawLine(rp, cx + cA * rayIn, cy + sA * rayIn, cx + cA * rayOut, cy + sA * rayOut);
+                }
+            }
+        }
+
+        private void DrawOsdHudRow(Graphics g, float x, float cy, float w, float alpha01)
+        {
+            int a = Math.Max(0, Math.Min(255, (int)(255f * alpha01)));
+            if (a <= 4) return;
+            float iconCx = x + U(9f);
+            string label, rightTxt;
+            Color barStart, barEnd, labelCol;
+
+            if (_osdKind == OsdKind.Brightness)
+            {
+                DrawSunVector(g, iconCx, cy, _osdPercent, a);
+                string dir = (_osdDelta > 0) ? " \u25B2" : ((_osdDelta < 0) ? " \u25BC" : "");
+                label = _state.T("\u0110\u1ED9 s\u00E1ng", "Brightness") + dir;
+                rightTxt = string.Format(CultureInfo.InvariantCulture, "{0}%", _osdPercent);
+                barStart = Color.FromArgb(a, 245, 158, 11); barEnd = Color.FromArgb(a, 253, 224, 71);
+                labelCol = Nw((int)(225 * alpha01));
+            }
+            else if (_osdKind == OsdKind.Battery)
+            {
+                DrawBatteryRing(g, iconCx, cy);
+                if (_batteryStateKind == 1)
+                {
+                    label = _state.T("\u0110ang s\u1EA1c pin \u26A1", "Charging \u26A1");
+                    barStart = Color.FromArgb(a, 22, 163, 74); barEnd = Color.FromArgb(a, 74, 222, 128);
+                    labelCol = IsLight ? Color.FromArgb(a, 5, 150, 105) : Color.FromArgb(a, 74, 222, 128);
+                }
+                else if (_batteryStateKind == 2)
+                {
+                    label = _state.T("Pin y\u1EBFu \u00B7 C\u1EA7n s\u1EA1c", "Low Battery");
+                    barStart = Color.FromArgb(a, 220, 38, 38); barEnd = Color.FromArgb(a, 251, 146, 60);
+                    labelCol = IsLight ? Color.FromArgb(a, 220, 38, 38) : Color.FromArgb(a, 252, 129, 129);
+                }
+                else
+                {
+                    label = _state.T("Pin b\u00ECnh th\u01B0\u1EDDng", "Battery Normal");
+                    barStart = Color.FromArgb(a, 16, 185, 129); barEnd = Color.FromArgb(a, 52, 211, 153);
+                    labelCol = Nw((int)(225 * alpha01));
+                }
+                rightTxt = string.Format(CultureInfo.InvariantCulture, "{0}%", _osdPercent);
+            }
+            else
+            {
+                Color spkCol = _osdMuted ? Color.FromArgb(248, 113, 113) : (IsLight ? Color.FromArgb(2, 132, 199) : Color.FromArgb(56, 189, 248));
+                DrawSpeakerVector(g, iconCx, cy, _osdMuted, _osdPercent, spkCol, a);
+                if (_osdMuted)
+                {
+                    label = _state.T("\u0110\u00E3 t\u1EAFt ti\u1EBFng", "Muted");
+                    rightTxt = _state.T("T\u1EAFt", "Mute");
+                    barStart = Color.FromArgb(a, 239, 68, 68); barEnd = Color.FromArgb(a, 248, 113, 113);
+                    labelCol = IsLight ? Color.FromArgb(a, 220, 38, 38) : Color.FromArgb(a, 248, 113, 113);
+                }
+                else
+                {
+                    string dir = (_osdDelta > 0) ? " \u25B2" : ((_osdDelta < 0) ? " \u25BC" : "");
+                    label = _state.T("\u00C2m l\u01B0\u1EE3ng", "Volume") + dir;
+                    rightTxt = string.Format(CultureInfo.InvariantCulture, "{0}%", _osdPercent);
+                    barStart = Color.FromArgb(a, 14, 165, 233); barEnd = Color.FromArgb(a, 56, 189, 248);
+                    labelCol = Nw((int)(225 * alpha01));
+                }
+            }
+
+            float barX = x + U(24f), barW = Math.Max(U(60f), w - U(62f));
+            DrawLeftVCenteredText(g, label, _fAxis, labelCol, barX, cy - U(5.8f));
+            DrawRightVCenteredText(g, rightTxt, _fPill, Color.FromArgb(a, InkPri.R, InkPri.G, InkPri.B), x + w, cy);
+
+            RectangleF track = new RectangleF(barX, cy + U(3.2f), barW, U(4.6f));
+            FillPill(g, track, Nw((int)(46 * alpha01)));
+            float frac = Math.Max(0f, Math.Min(1f, _osdAnimBar));
+            if (frac > 0.008f)
+            {
+                RectangleF fillRect = new RectangleF(track.X, track.Y, Math.Max(track.Height, track.Width * frac), track.Height);
+                using (LinearGradientBrush lgb = new LinearGradientBrush(track, barStart, barEnd, LinearGradientMode.Horizontal))
+                {
+                    FillPillBrush(g, fillRect, lgb);
+                }
             }
         }
 
@@ -2635,6 +2906,7 @@ namespace Kumo
         private void OnNotchMouseWheel(object sender, MouseEventArgs e)
         {
             if (!_isExpanded) return;
+            if (_hoveredId == "media_vol" && _osd != null) { _osd.AdjustVolume(e.Delta > 0 ? 4 : -4); return; }
 
             // On TodoList page, scrolling over the right task list scrolls tasks smoothly!
             float x0 = (_canvasW - _curW) * 0.5f;
@@ -2823,6 +3095,14 @@ namespace Kumo
             else if (id == "hdr_clock")
             {
                 _showHeaderSeconds = !_showHeaderSeconds;
+            }
+            else if (id == "hdr_bat")
+            {
+                TriggerOsdHud(OsdKind.Battery, _batteryPercent, false, 0, 2.5);
+            }
+            else if (id == "media_vol")
+            {
+                if (_osd != null) _osd.ToggleMute();
             }
             else if (id == "hdr_eq")
             {
