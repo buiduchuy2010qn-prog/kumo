@@ -1,0 +1,9 @@
+obj/
+bin/
+*.exe
+*.pdb
+*.zip
+logo_256.png
+artifacts_preview/
+SHA256SUMS.txt
+.vs/
