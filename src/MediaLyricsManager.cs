@@ -17,10 +17,20 @@ using Windows.Storage.Streams;
 
 namespace Kumo
 {
+    public struct LyricWordSpan
+    {
+        public int CharStart;
+        public int CharLength;
+        public double StartSec;
+        public double EndSec;
+    }
+
     public class LyricLine
     {
         public double TimeSec;
+        public double EndSec;
         public string Text;
+        public LyricWordSpan[] Words;
     }
 
     public class MediaLyricsManager : IDisposable
@@ -132,7 +142,7 @@ namespace Kumo
                 int curIdx = 0;
                 for (int i = 0; i < _syncedLyrics.Count; i++)
                 {
-                    if (_syncedLyrics[i].TimeSec <= pos + 0.35)
+                    if (_syncedLyrics[i].TimeSec <= pos + 0.14)
                         curIdx = i;
                     else
                         break;
@@ -424,8 +434,13 @@ namespace Kumo
                                 if (age > 0.0 && age < 600.0) posSec += age;
                             }
                             if (_durationSec > 0.5 && posSec > _durationSec) posSec = _durationSec;
-                            _basePositionSec = posSec;
-                            _positionSampledUtc = DateTime.UtcNow;
+                            bool samePlayingTrack = (playingNow && IsPlaying && string.Equals(artist + "|" + title, _lastTrackKey, StringComparison.Ordinal));
+                            double curExtrap = GetLivePositionSec();
+                            if (!samePlayingTrack || Math.Abs(posSec - curExtrap) >= 0.36)
+                            {
+                                _basePositionSec = posSec;
+                                _positionSampledUtc = DateTime.UtcNow;
+                            }
                         }
                     }
                 }
@@ -624,6 +639,7 @@ namespace Kumo
                 _syncedLyrics.Add(new LyricLine { TimeSec = 45, Text = "Giai điệu ngân vang trên tai thỏ" });
                 _syncedLyrics.Add(new LyricLine { TimeSec = 52, Text = "Chạm nhẹ để tua đến từng câu hát" });
                 _syncedLyrics.Add(new LyricLine { TimeSec = 60, Text = "Màu nền hòa quyện theo ảnh bìa" });
+                FinalizeLyricTimings(_syncedLyrics, 180.0);
             }
             CurrentTitle = "Chiều Hoàng Hôn";
             CurrentArtist = "Indie Chill · YouTube Music";
@@ -668,42 +684,47 @@ namespace Kumo
             return Color.FromArgb(44, 110, 215);
         }
 
-        public string GetCollapsedLyricDisplay(out double lineProg01, out bool isSyncedLine)
+        public LyricLine GetActiveCollapsedLyricLine(out double livePosSec, out bool isSyncedLine, out string fallbackText)
         {
-            double pos = GetLivePositionSec();
+            livePosSec = GetLivePositionSec();
             lock (_lock)
             {
-                if (_syncedLyrics.Count > 0)
+                if (_syncedLyrics.Count > 0 && livePosSec + 0.30 >= _syncedLyrics[0].TimeSec)
                 {
-                    if (pos + 0.45 < _syncedLyrics[0].TimeSec)
-                    {
-                        lineProg01 = 0.0;
-                        isSyncedLine = false;
-                        return "\u266A " + (!string.IsNullOrEmpty(CurrentTitle) ? CurrentTitle : "Music");
-                    }
                     int idx = 0;
                     for (int i = 0; i < _syncedLyrics.Count; i++)
                     {
-                        if (_syncedLyrics[i].TimeSec <= pos + 0.35)
+                        if (_syncedLyrics[i].TimeSec <= livePosSec + 0.14)
                             idx = i;
                         else
                             break;
                     }
-                    double t0 = _syncedLyrics[idx].TimeSec;
-                    double t1 = (idx + 1 < _syncedLyrics.Count)
-                        ? _syncedLyrics[idx + 1].TimeSec
-                        : Math.Max(t0 + 4.0, _durationSec);
-                    double span = Math.Max(1.2, t1 - t0);
-                    lineProg01 = Math.Max(0.0, Math.Min(1.0, (pos - t0) / span));
-                    CurrentLyricLine = _syncedLyrics[idx].Text;
+                    LyricLine ln = _syncedLyrics[idx];
+                    CurrentLyricLine = ln.Text;
                     NextLyricLine = (idx + 1 < _syncedLyrics.Count) ? _syncedLyrics[idx + 1].Text : "";
                     isSyncedLine = true;
-                    return _syncedLyrics[idx].Text;
+                    fallbackText = ln.Text;
+                    return ln;
                 }
-                lineProg01 = (pos % 10.0) / 10.0;
                 isSyncedLine = false;
-                return "\u266A " + (!string.IsNullOrEmpty(CurrentTitle) ? CurrentTitle : "Music");
+                fallbackText = "\u266A " + (!string.IsNullOrEmpty(CurrentTitle) ? CurrentTitle : "Music");
+                return null;
             }
+        }
+
+        public string GetCollapsedLyricDisplay(out double lineProg01, out bool isSyncedLine)
+        {
+            double pos;
+            string fb;
+            LyricLine ln = GetActiveCollapsedLyricLine(out pos, out isSyncedLine, out fb);
+            if (isSyncedLine && ln != null)
+            {
+                double span = Math.Max(1.0, ln.EndSec - ln.TimeSec);
+                lineProg01 = Math.Max(0.0, Math.Min(1.0, (pos - ln.TimeSec) / span));
+                return ln.Text;
+            }
+            lineProg01 = (pos % 10.0) / 10.0;
+            return fb;
         }
 
         private bool TryQueryLrclibSingle(string rawQuery)
@@ -747,6 +768,7 @@ namespace Kumo
                             _syncedLyrics.Add(new LyricLine { TimeSec = t, Text = ln.Trim() });
                             t += stepSec;
                         }
+                        FinalizeLyricTimings(_syncedLyrics, dur);
                         LyricsStatus = "Plain";
                     }
                     UpdateActiveLyricLine();
@@ -797,25 +819,180 @@ namespace Kumo
             }
         }
 
+        private static void BuildProsodyWords(LyricLine ln)
+        {
+            string txt = ln.Text ?? "";
+            MatchCollection mc = Regex.Matches(txt, @"\S+");
+            if (mc.Count == 0)
+            {
+                ln.Words = new LyricWordSpan[0];
+                return;
+            }
+
+            double rawSpan = Math.Max(0.65, ln.EndSec - ln.TimeSec);
+            double punctExtra = 0.0;
+            double[] weights = new double[mc.Count];
+            double totalWeight = 0.0;
+
+            for (int i = 0; i < mc.Count; i++)
+            {
+                string tok = mc[i].Value;
+                int coreLen = 0;
+                for (int c = 0; c < tok.Length; c++)
+                {
+                    if (char.IsLetterOrDigit(tok[c])) coreLen++;
+                }
+                double w = 0.68 + 0.10 * Math.Min(7, Math.Max(1, coreLen));
+                char lastCh = tok[tok.Length - 1];
+                if (lastCh == ',' || lastCh == ';' || lastCh == ':' || lastCh == '-' || lastCh == '\u2013' || lastCh == '\u2014')
+                {
+                    w += 0.45;
+                    punctExtra += 0.30;
+                }
+                else if (lastCh == '.' || lastCh == '!' || lastCh == '?' || lastCh == '\u2026')
+                {
+                    w += 0.60;
+                    punctExtra += 0.42;
+                }
+                if (i == mc.Count - 1) w *= 1.26;
+                weights[i] = w;
+                totalWeight += w;
+            }
+
+            double maxNatural = mc.Count * 0.72 + punctExtra + 0.85;
+            double vocalSpan = (rawSpan <= maxNatural)
+                ? (rawSpan * 0.92)
+                : Math.Min(rawSpan * 0.92, mc.Count * 0.54 + punctExtra + 0.55);
+            vocalSpan = Math.Max(0.55, vocalSpan);
+
+            LyricWordSpan[] spans = new LyricWordSpan[mc.Count];
+            double curT = ln.TimeSec;
+            for (int i = 0; i < mc.Count; i++)
+            {
+                double durW = vocalSpan * (weights[i] / Math.Max(0.01, totalWeight));
+                spans[i] = new LyricWordSpan
+                {
+                    CharStart = mc[i].Index,
+                    CharLength = mc[i].Length,
+                    StartSec = curT,
+                    EndSec = curT + durW
+                };
+                curT += durW;
+            }
+            ln.Words = spans;
+        }
+
+        private static void FinalizeLyricTimings(List<LyricLine> list, double songDurSec)
+        {
+            if (list == null || list.Count == 0) return;
+            list.Sort(delegate(LyricLine a, LyricLine b) { return a.TimeSec.CompareTo(b.TimeSec); });
+
+            for (int i = 0; i < list.Count; i++)
+            {
+                double nextT = (i + 1 < list.Count)
+                    ? list[i + 1].TimeSec
+                    : Math.Max(list[i].TimeSec + 4.2, songDurSec > list[i].TimeSec ? songDurSec : list[i].TimeSec + 4.2);
+
+                if (list[i].EndSec <= list[i].TimeSec + 0.15 || list[i].EndSec > nextT)
+                {
+                    list[i].EndSec = nextT;
+                }
+
+                if (list[i].Words != null && list[i].Words.Length > 0)
+                {
+                    int last = list[i].Words.Length - 1;
+                    if (list[i].Words[last].EndSec <= list[i].Words[last].StartSec)
+                    {
+                        list[i].Words[last].EndSec = Math.Min(list[i].EndSec, list[i].Words[last].StartSec + 0.45);
+                    }
+                }
+                else
+                {
+                    BuildProsodyWords(list[i]);
+                }
+            }
+        }
+
         private void ParseLrc(string lrcText)
         {
             List<LyricLine> list = new List<LyricLine>();
             string[] lines = lrcText.Split(new char[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
-            Regex rx = new Regex(@"\[(\d+):(\d+(?:\.\d+)?)\](.*)");
-            foreach (string line in lines)
+            Regex rxLine = new Regex(@"^\[(\d+):(\d+(?:\.\d+)?)\](.*)$");
+            Regex rxWordTag = new Regex(@"<(\d+):(\d+(?:\.\d+)?)>([^<]*)");
+
+            foreach (string rawLine in lines)
             {
-                Match m = rx.Match(line);
-                if (m.Success)
+                Match m = rxLine.Match(rawLine.Trim());
+                if (!m.Success) continue;
+
+                int mins = int.Parse(m.Groups[1].Value, CultureInfo.InvariantCulture);
+                double secs = double.Parse(m.Groups[2].Value, CultureInfo.InvariantCulture);
+                double tSec = mins * 60.0 + secs;
+                string body = m.Groups[3].Value.Trim();
+
+                if (string.IsNullOrEmpty(body) || body == "\u266A" || body == "...")
                 {
-                    int mins = int.Parse(m.Groups[1].Value);
-                    double secs = double.Parse(m.Groups[2].Value, CultureInfo.InvariantCulture);
-                    string txt = m.Groups[3].Value.Trim();
-                    if (!string.IsNullOrEmpty(txt))
+                    // Blank timestamp line marks exact vocal phrase end of previous line!
+                    if (list.Count > 0 && list[list.Count - 1].EndSec <= 0.0 && tSec > list[list.Count - 1].TimeSec + 0.2)
                     {
-                        list.Add(new LyricLine { TimeSec = mins * 60.0 + secs, Text = txt });
+                        list[list.Count - 1].EndSec = tSec;
+                    }
+                    continue;
+                }
+
+                MatchCollection wm = rxWordTag.Matches(body);
+                if (wm.Count >= 2)
+                {
+                    StringBuilder sbClean = new StringBuilder();
+                    List<LyricWordSpan> wList = new List<LyricWordSpan>();
+                    for (int w = 0; w < wm.Count; w++)
+                    {
+                        int wMin = int.Parse(wm[w].Groups[1].Value, CultureInfo.InvariantCulture);
+                        double wSec = double.Parse(wm[w].Groups[2].Value, CultureInfo.InvariantCulture);
+                        double wt = wMin * 60.0 + wSec;
+                        string seg = wm[w].Groups[3].Value;
+                        if (string.IsNullOrEmpty(seg)) continue;
+
+                        int startIdx = sbClean.Length;
+                        sbClean.Append(seg);
+                        string trimmedSeg = seg.TrimEnd();
+                        int coreChars = Math.Max(1, trimmedSeg.Length);
+                        wList.Add(new LyricWordSpan
+                        {
+                            CharStart = startIdx,
+                            CharLength = coreChars,
+                            StartSec = wt,
+                            EndSec = wt + 0.35
+                        });
+                    }
+                    for (int w = 0; w + 1 < wList.Count; w++)
+                    {
+                        LyricWordSpan cur = wList[w];
+                        cur.EndSec = Math.Max(cur.StartSec + 0.04, wList[w + 1].StartSec);
+                        wList[w] = cur;
+                    }
+                    string cleanTxt = sbClean.ToString().Trim();
+                    if (!string.IsNullOrEmpty(cleanTxt))
+                    {
+                        list.Add(new LyricLine
+                        {
+                            TimeSec = tSec,
+                            Text = cleanTxt,
+                            Words = wList.ToArray()
+                        });
+                    }
+                }
+                else
+                {
+                    string cleanBody = Regex.Replace(body, @"<\d+:\d+(?:\.\d+)?>", "").Trim();
+                    if (!string.IsNullOrEmpty(cleanBody))
+                    {
+                        list.Add(new LyricLine { TimeSec = tSec, Text = cleanBody });
                     }
                 }
             }
+
+            FinalizeLyricTimings(list, _durationSec);
             lock (_lock)
             {
                 _syncedLyrics = list;

@@ -1393,35 +1393,15 @@ RefreshBatteryLevel();
 
                 if (showColLyrics)
                 {
-                    double lProg;
+                    double colPosSec;
                     bool isSyn;
-                    string lyrText = _media.GetCollapsedLyricDisplay(out lProg, out isSyn);
+                    string colFallback;
+                    LyricLine colLine = _media.GetActiveCollapsedLyricLine(out colPosSec, out isSyn, out colFallback);
                     float leftPad = U(33f);
                     float rightPad = _state.EqualizerEnabled ? U(32f) : U(13f);
                     float availW = Math.Max(U(40f), w - leftPad - rightPad);
                     RectangleF lyrViewport = new RectangleF(x0 + leftPad, 0f, availW, h);
-                    SizeF lSz = g.MeasureString(lyrText, _fCollapsedLyric);
-
-                    GraphicsState stLyr = g.Save();
-                    g.SetClip(lyrViewport, CombineMode.Intersect);
-                    if (lSz.Width <= availW + U(2f))
-                    {
-                        DrawCenteredText(g, lyrText, _fCollapsedLyric, InkPri, lyrViewport.X + availW * 0.5f, midY);
-                    }
-                    else
-                    {
-                        float maxShift = lSz.Width - availW + U(8f);
-                        float scrollT = isSyn
-                            ? SmoothStep01((float)Math.Max(0.0, Math.Min(1.0, (lProg - 0.06) / 0.60)))
-                            : (float)(0.5 - 0.5 * Math.Cos(_frameClock.Elapsed.TotalSeconds * 0.85));
-                        float lx = (float)Math.Round(lyrViewport.X - maxShift * scrollT);
-                        float ly = (float)Math.Round(midY - lSz.Height * 0.5f);
-                        using (SolidBrush lb = new SolidBrush(InkPri))
-                        {
-                            g.DrawString(lyrText, _fCollapsedLyric, lb, lx, ly);
-                        }
-                    }
-                    g.Restore(stLyr);
+                    DrawKaraokeLyricLine(g, colLine, colFallback, colPosSec, isSyn, _fCollapsedLyric, lyrViewport, true);
                 }
                 else
                 {
@@ -1896,10 +1876,6 @@ RefreshBatteryLevel();
             LyricLine[] win = _media.GetDisplayLyricsWindow(out activeSlot);
             _lastDisplayedLyrics = win;
 
-            double activeLineProg;
-            bool isSynLine;
-            _media.GetCollapsedLyricDisplay(out activeLineProg, out isSynLine);
-
             if (win.Length == 0)
             {
                 string stMsg = !string.IsNullOrEmpty(_media.CurrentLyricLine) ? _media.CurrentLyricLine : "Loading lyrics...";
@@ -1932,37 +1908,168 @@ RefreshBatteryLevel();
                         lSz = g.MeasureString(fullTxt, useFont);
                     }
 
-                    Color lineCol = active ? InkPri : ToCrispInk(lHov ? Nw(215) : Nw(108));
-                    GraphicsState stLine = g.Save();
-                    g.SetClip(new RectangleF(paneX, lyY - U(11f), paneW, U(22f)), CombineMode.Intersect);
-                    if (lSz.Width <= paneW + U(2f))
+                    RectangleF lineViewport = new RectangleF(paneX, lyY - U(11f), paneW, U(22f));
+                    if (active)
                     {
-                        DrawLeftVCenteredText(g, fullTxt, useFont, lineCol, paneX, lyY);
+                        DrawKaraokeLyricLine(g, win[i], fullTxt, pos, true, useFont, lineViewport, false);
                     }
                     else
                     {
-                        float maxShift = lSz.Width - paneW + U(8f);
-                        float panT = 0f;
-                        if (active)
+                        Color lineCol = lHov
+                            ? ToCrispInk(Nw(220))
+                            : ((i < activeSlot) ? ToCrispInk(Nw(142)) : ToCrispInk(Nw(96)));
+                        GraphicsState stLine = g.Save();
+                        g.SetClip(lineViewport, CombineMode.Intersect);
+                        if (lSz.Width <= paneW + U(2f))
                         {
-                            panT = isSynLine
-                                ? SmoothStep01((float)Math.Max(0.0, Math.Min(1.0, (activeLineProg - 0.08) / 0.58)))
-                                : (float)(0.5 - 0.5 * Math.Cos(_frameClock.Elapsed.TotalSeconds * 0.85));
+                            DrawLeftVCenteredText(g, fullTxt, useFont, lineCol, paneX, lyY);
                         }
-                        else if (lHov)
+                        else
                         {
-                            panT = (float)(0.5 - 0.5 * Math.Cos(_frameClock.Elapsed.TotalSeconds * 1.35));
+                            float maxShift = lSz.Width - paneW + U(8f);
+                            float panT = lHov ? (float)(0.5 - 0.5 * Math.Cos(_frameClock.Elapsed.TotalSeconds * 1.35)) : 0f;
+                            float drawX = (float)Math.Round(paneX - maxShift * panT);
+                            float drawY = (float)Math.Round(lyY - lSz.Height * 0.5f);
+                            using (SolidBrush lb = new SolidBrush(lineCol))
+                            {
+                                g.DrawString(fullTxt, useFont, lb, drawX, drawY);
+                            }
                         }
-                        float drawX = (float)Math.Round(paneX - maxShift * panT);
-                        float drawY = (float)Math.Round(lyY - lSz.Height * 0.5f);
-                        using (SolidBrush lb = new SolidBrush(lineCol))
-                        {
-                            g.DrawString(fullTxt, useFont, lb, drawX, drawY);
-                        }
+                        g.Restore(stLine);
                     }
-                    g.Restore(stLine);
                     lyY += U(23f);
                 }
+            }
+        }
+
+        private void DrawKaraokeLyricLine(Graphics g, LyricLine line, string fallbackTxt, double posSec, bool isSynced, Font font, RectangleF viewport, bool centerWhenFits)
+        {
+            string txt = (line != null && !string.IsNullOrEmpty(line.Text)) ? line.Text : (fallbackTxt ?? "");
+            if (string.IsNullOrEmpty(txt)) return;
+
+            using (StringFormat sf = (StringFormat)StringFormat.GenericTypographic.Clone())
+            {
+                sf.FormatFlags |= StringFormatFlags.NoWrap | StringFormatFlags.MeasureTrailingSpaces;
+                SizeF fullSz = g.MeasureString(txt, font, 10000, sf);
+                float totalW = fullSz.Width;
+                float sweepPx = totalW + U(4f);
+
+                if (isSynced && line != null && line.Words != null && line.Words.Length > 0)
+                {
+                    LyricWordSpan[] words = line.Words;
+                    if (posSec <= words[0].StartSec)
+                    {
+                        sweepPx = 0f;
+                    }
+                    else if (posSec >= words[words.Length - 1].EndSec)
+                    {
+                        sweepPx = totalW + U(4f);
+                    }
+                    else
+                    {
+                        int wIdx = 0;
+                        for (int k = 0; k < words.Length; k++)
+                        {
+                            wIdx = k;
+                            if (posSec < words[k].EndSec) break;
+                        }
+                        LyricWordSpan ws = words[wIdx];
+                        float u = (posSec <= ws.StartSec)
+                            ? 0f
+                            : (float)Math.Max(0.0, Math.Min(1.0, (posSec - ws.StartSec) / Math.Max(0.03, ws.EndSec - ws.StartSec)));
+
+                        float wLeft = 0f;
+                        float wRight = totalW;
+                        int cStart = Math.Max(0, Math.Min(txt.Length - 1, ws.CharStart));
+                        int cLen = Math.Max(1, Math.Min(txt.Length - cStart, ws.CharLength));
+                        try
+                        {
+                            sf.SetMeasurableCharacterRanges(new CharacterRange[] { new CharacterRange(cStart, cLen) });
+                            Region[] regs = g.MeasureCharacterRanges(txt, font, new RectangleF(0f, 0f, 10000f, fullSz.Height + 24f), sf);
+                            if (regs != null && regs.Length > 0 && regs[0] != null)
+                            {
+                                RectangleF wb = regs[0].GetBounds(g);
+                                wLeft = wb.X;
+                                wRight = wb.Right;
+                                regs[0].Dispose();
+                            }
+                        }
+                        catch { }
+
+                        sweepPx = wLeft + (wRight - wLeft) * u;
+                    }
+                }
+
+                float midY = viewport.Y + viewport.Height * 0.5f;
+                float drawY = (float)Math.Round(midY - fullSz.Height * 0.5f);
+                float drawX;
+                if (totalW <= viewport.Width + U(1.5f))
+                {
+                    drawX = centerWhenFits
+                        ? (float)Math.Round(viewport.X + (viewport.Width - totalW) * 0.5f)
+                        : (float)Math.Round(viewport.X);
+                }
+                else
+                {
+                    float maxShift = totalW - viewport.Width + U(8f);
+                    float shift;
+                    if (isSynced)
+                    {
+                        shift = Math.Max(0f, Math.Min(maxShift, sweepPx - viewport.Width * 0.44f));
+                    }
+                    else
+                    {
+                        float pan = (float)(0.5 - 0.5 * Math.Cos(_frameClock.Elapsed.TotalSeconds * 0.85));
+                        shift = maxShift * pan;
+                    }
+                    drawX = (float)Math.Round(viewport.X - shift);
+                }
+
+                Color unsungCol = IsLight ? Color.FromArgb(255, 138, 150, 170) : Color.FromArgb(255, 118, 128, 146);
+                Color edgeCol   = IsLight ? Color.FromArgb(255, 62, 78, 104)   : Color.FromArgb(255, 194, 205, 224);
+                Color sungCol   = InkPri;
+
+                GraphicsState stVp = g.Save();
+                g.SetClip(viewport, CombineMode.Intersect);
+
+                if (sweepPx < totalW + U(1f))
+                {
+                    using (SolidBrush bBase = new SolidBrush(unsungCol))
+                    {
+                        g.DrawString(txt, font, bBase, new PointF(drawX, drawY), sf);
+                    }
+                }
+
+                float splitX = drawX + sweepPx;
+                float featherW = U(4.5f);
+
+                if (sweepPx > 0.5f && sweepPx < totalW)
+                {
+                    GraphicsState stEdge = g.Save();
+                    g.SetClip(new RectangleF(splitX - U(1f), viewport.Y - 4f, featherW, viewport.Height + 8f), CombineMode.Intersect);
+                    using (SolidBrush bEdge = new SolidBrush(edgeCol))
+                    {
+                        g.DrawString(txt, font, bEdge, new PointF(drawX, drawY), sf);
+                    }
+                    g.Restore(stEdge);
+                }
+
+                if (sweepPx > 0.4f)
+                {
+                    GraphicsState stSung = g.Save();
+                    float sungW = Math.Max(0f, splitX - (viewport.X - 4f));
+                    if (sungW > 0.4f)
+                    {
+                        g.SetClip(new RectangleF(viewport.X - 4f, viewport.Y - 4f, sungW, viewport.Height + 8f), CombineMode.Intersect);
+                        using (SolidBrush bSung = new SolidBrush(sungCol))
+                        {
+                            g.DrawString(txt, font, bSung, new PointF(drawX, drawY), sf);
+                        }
+                    }
+                    g.Restore(stSung);
+                }
+
+                g.Restore(stVp);
             }
         }
 
