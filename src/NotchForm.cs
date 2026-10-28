@@ -2004,9 +2004,7 @@ RefreshBatteryLevel();
                     {
                         Color lineCol = lHov
                             ? ToCrispInk(Nw(232))
-                            : ((activeSlot < 0 && i == 0)
-                                ? ToCrispInk(Nw(158))
-                                : ((activeSlot >= 0 && i < activeSlot) ? ToCrispInk(Nw(142)) : ToCrispInk(Nw(98))));
+                            : ((activeSlot >= 0 && i < activeSlot) ? ToCrispInk(Nw(142)) : ToCrispInk(Nw(100)));
                         DrawClippedMarqueeText(g, fullTxt, useFont, lineCol, lineViewport, lHov);
                     }
                     lyY += U(24.5f);

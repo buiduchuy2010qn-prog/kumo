@@ -737,7 +737,7 @@ namespace Kumo
             y = DrawSegmentedCard(g, x, y, w, "seg_size_",
                 _state.T("Kích thước tai thỏ (Notch size)", "Notch size"),
                 _state.T("Đổi tỷ lệ kích thước hiển thị ngay lập tức.", "Applies the new scale immediately."),
-                new string[] { "Auto (Nusa)", "90%", "100%", "110%", "125%" },
+                new string[] { _state.T("Tự động", "Auto"), "90%", "100%", "110%", "125%" },
                 _state.NotchSizePreset);
 
             y = DrawToggleCard(g, x, y, w, "tog_auto_min",
@@ -837,7 +837,7 @@ namespace Kumo
 
             y = DrawSegmentedCard(g, x, y, w, "seg_anim_",
                 _state.T("Tốc độ chuyển động (Animation speed)", "Animation speed"),
-                _state.T("'Mượt tự nhiên' nổi nhẹ từ từ chuẩn Nusa; 'Nhanh' phản hồi tức thì.", "'Normal' glides gently like Nusa; 'Fast' snaps open quicker."),
+                _state.T("'Mượt tự nhiên' bung mở êm ái; 'Nhanh' phản hồi tức thì.", "'Normal' glides smoothly; 'Fast' snaps open instantly."),
                 new string[] { _state.T("Mượt tự nhiên", "Normal"), _state.T("Nhanh nhạy", "Fast") },
                 _state.FastAnimation ? 1 : 0);
 

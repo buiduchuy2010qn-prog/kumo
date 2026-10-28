@@ -85,10 +85,12 @@ namespace Kumo
 
         private List<LyricLine> _syncedLyrics = new List<LyricLine>();
         private string _lastTrackKey = "";
-        private string _lastThumbTrackKey = "";
         private string _lastLyricsQuery = "";
+        private DateTime _trackChangedUtc = DateTime.MinValue;
+        private ulong _lastThumbStreamSize = 0;
+        private volatile bool _hasRealSmtcThumb = false;
 
-        // MV vs Audio-Single auto offset + Live WASAPI peak gate + User per-song fine offset
+        // MV vs Audio-Single auto offset + SponsorBlock exact intro + Live WASAPI peak gate
         private IMediaAudioMeterInformation _audioMeter = null;
         private DateTime _meterRetryAfterUtc = DateTime.MinValue;
         private double _lrcAudioMasterDurSec = 0.0;
@@ -97,6 +99,10 @@ namespace Kumo
         private bool _lrcAlreadyMvShifted = false;
         private bool _lrcIsStreamingMaster = false;
         private bool _isLikelyMvTrack = false;
+        private double _sbIntroOffsetSec = -1.0;
+        private bool _sbZeroIntroConfirmed = false;
+        private List<LyricLine> _ytCaptionCues = null;
+        private bool _ytCaptionIsManual = false;
         private double _autoMvOffsetSec = 0.0;
         private bool _sawNearZeroStart = false;
         private int _sustainedMusicTicks = 0;
@@ -455,12 +461,169 @@ namespace Kumo
             }
         }
 
+        private bool TryComputeYtCaptionOffsetLocked(out double alignedOffset)
+        {
+            alignedOffset = 0.0;
+            if (_syncedLyrics.Count < 4 || _ytCaptionCues == null || _ytCaptionCues.Count < 4)
+            {
+                return false;
+            }
+
+            Dictionary<string, int> freq = new Dictionary<string, int>(StringComparer.Ordinal);
+            string[] lrcFolds = new string[_syncedLyrics.Count];
+            for (int i = 0; i < _syncedLyrics.Count; i++)
+            {
+                string f = NormalizeFold(_syncedLyrics[i].Text);
+                lrcFolds[i] = f;
+                if (!string.IsNullOrEmpty(f))
+                {
+                    int cur;
+                    freq[f] = freq.TryGetValue(f, out cur) ? (cur + 1) : 1;
+                }
+            }
+
+            string[] cueFolds = new string[_ytCaptionCues.Count];
+            for (int j = 0; j < _ytCaptionCues.Count; j++)
+            {
+                cueFolds[j] = NormalizeFold(_ytCaptionCues[j].Text);
+            }
+
+            List<double> deltas = new List<double>();
+            for (int i = 0; i < _syncedLyrics.Count; i++)
+            {
+                string fL = lrcFolds[i];
+                if (string.IsNullOrEmpty(fL) || fL.Length < 10) continue;
+                int countL;
+                if (freq.TryGetValue(fL, out countL) && countL > 2) continue;
+
+                string[] wL = fL.Split(new char[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+                if (wL.Length < 3) continue;
+
+                double bestRatio = 0.0;
+                double bestDelta = 0.0;
+                int tieCount = 0;
+
+                for (int j = 0; j < _ytCaptionCues.Count; j++)
+                {
+                    double dt = _ytCaptionCues[j].TimeSec - _syncedLyrics[i].TimeSec;
+                    if (dt < -12.0 || dt > 180.0) continue;
+
+                    string fC = cueFolds[j];
+                    if (string.IsNullOrEmpty(fC) || fC.Length < 6) continue;
+
+                    int hit = 0;
+                    for (int w = 0; w < wL.Length; w++)
+                    {
+                        if (wL[w].Length >= 2 && (" " + fC + " ").IndexOf(" " + wL[w] + " ", StringComparison.Ordinal) >= 0)
+                        {
+                            hit++;
+                        }
+                    }
+
+                    double ratio = (double)hit / (double)wL.Length;
+                    if (hit >= 3 && ratio >= 0.65)
+                    {
+                        if (ratio > bestRatio + 0.01)
+                        {
+                            bestRatio = ratio;
+                            bestDelta = dt;
+                            tieCount = 1;
+                        }
+                        else if (Math.Abs(ratio - bestRatio) <= 0.01 && Math.Abs(dt - bestDelta) > 4.0)
+                        {
+                            tieCount++;
+                        }
+                    }
+                }
+
+                if (bestRatio >= 0.65 && tieCount == 1)
+                {
+                    deltas.Add(bestDelta);
+                }
+            }
+
+            if (deltas.Count < 3) return false;
+            deltas.Sort();
+
+            int bestClusterStart = -1;
+            int bestClusterLen = 0;
+            for (int a = 0; a < deltas.Count; a++)
+            {
+                int b = a;
+                while (b + 1 < deltas.Count && (deltas[b + 1] - deltas[a]) <= 3.6)
+                {
+                    b++;
+                }
+                int len = b - a + 1;
+                if (len > bestClusterLen)
+                {
+                    bestClusterLen = len;
+                    bestClusterStart = a;
+                }
+            }
+
+            if (bestClusterLen < 3 || bestClusterStart < 0) return false;
+            double med = deltas[bestClusterStart + (bestClusterLen / 2)];
+            alignedOffset = (Math.Abs(med) <= 0.85) ? 0.0 : Math.Round(med, 2);
+            return true;
+        }
+
+        private bool TryApplyManualYtFallbackLyricsLocked()
+        {
+            if (_syncedLyrics.Count > 0 || !_ytCaptionIsManual || _ytCaptionCues == null || _ytCaptionCues.Count < 6)
+            {
+                return false;
+            }
+            for (int i = 0; i < _ytCaptionCues.Count; i++)
+            {
+                string txt = SanitizeLyricText(_ytCaptionCues[i].Text);
+                if (!string.IsNullOrEmpty(txt))
+                {
+                    _syncedLyrics.Add(new LyricLine
+                    {
+                        TimeSec = _ytCaptionCues[i].TimeSec,
+                        Text = txt
+                    });
+                }
+            }
+            if (_syncedLyrics.Count < 4)
+            {
+                _syncedLyrics.Clear();
+                return false;
+            }
+            FinalizeLyricTimings(_syncedLyrics, _durationSec);
+            LyricsStatus = "Synced";
+            _autoMvOffsetSec = 0.0;
+            CurrentLyricLine = _syncedLyrics[0].Text;
+            NextLyricLine = (_syncedLyrics.Count > 1) ? _syncedLyrics[1].Text : "";
+            return true;
+        }
+
         private void RecalculateAutoMvOffsetLocked()
         {
             if (_syncedLyrics.Count == 0 ||
-                !string.Equals(LyricsStatus, "Synced", StringComparison.Ordinal) ||
-                _lrcAlreadyMvShifted ||
-                _lrcIsStreamingMaster)
+                !string.Equals(LyricsStatus, "Synced", StringComparison.Ordinal))
+            {
+                _autoMvOffsetSec = 0.0;
+                return;
+            }
+            double ytAligned;
+            if (TryComputeYtCaptionOffsetLocked(out ytAligned))
+            {
+                _autoMvOffsetSec = ytAligned;
+                return;
+            }
+            if (_lrcAlreadyMvShifted || _lrcIsStreamingMaster)
+            {
+                _autoMvOffsetSec = 0.0;
+                return;
+            }
+            if (_sbIntroOffsetSec > 2.5)
+            {
+                _autoMvOffsetSec = _sbIntroOffsetSec;
+                return;
+            }
+            if (_sbZeroIntroConfirmed)
             {
                 _autoMvOffsetSec = 0.0;
                 return;
@@ -470,11 +633,11 @@ namespace Kumo
                 double excess = _durationSec - _lrcAudioMasterDurSec;
                 bool allowMvShift = _isLikelyMvTrack ||
                     (_lrcFirstTagSec < 18.0 && (_durationSec - _lrcLastTagSec) > Math.Max(18.0, excess * 0.65));
-                if (allowMvShift && excess >= 5.0 && excess <= 95.0 && _lrcLastTagSec <= _lrcAudioMasterDurSec + 3.0)
+                if (allowMvShift && excess >= 5.0 && excess <= 120.0 && _lrcLastTagSec <= _lrcAudioMasterDurSec + 3.0)
                 {
                     _autoMvOffsetSec = (excess <= 14.5)
-                        ? Math.Round(excess * 0.88, 1)
-                        : Math.Round(excess * 0.76, 1);
+                        ? Math.Round(excess * 0.85, 1)
+                        : Math.Round(excess * 0.75, 1);
                     return;
                 }
             }
@@ -631,19 +794,36 @@ namespace Kumo
                 _lastTrackKey = trackKey;
                 if (trackChanged)
                 {
+                    _trackChangedUtc = DateTime.UtcNow;
+                    _lastThumbStreamSize = 0;
+                    _hasRealSmtcThumb = false;
                     lock (_lock)
                     {
+                        if (_albumArt != null) { try { _albumArt.Dispose(); } catch { } _albumArt = null; }
+                        _dominantColor = Color.FromArgb(44, 110, 215);
                         _lrcAudioMasterDurSec = 0.0;
                         _lrcFirstTagSec = 0.0;
                         _lrcLastTagSec = 0.0;
                         _lrcAlreadyMvShifted = false;
                         _lrcIsStreamingMaster = false;
                         _isLikelyMvTrack = false;
+                        _sbIntroOffsetSec = -1.0;
+                        _sbZeroIntroConfirmed = false;
+                        _ytCaptionCues = null;
+                        _ytCaptionIsManual = false;
                         _autoMvOffsetSec = 0.0;
                         _sawNearZeroStart = (GetLivePositionSec() <= 3.0);
                         _sustainedMusicTicks = 0;
                         _silentIntroHold = false;
                     }
+
+                    string capKey = trackKey;
+                    string capTitle = title;
+                    string capArtist = artist;
+                    ThreadPool.QueueUserWorkItem(delegate
+                    {
+                        ResolveYoutubeEnrichment(capKey, capTitle, capArtist);
+                    });
                 }
                 else
                 {
@@ -653,11 +833,15 @@ namespace Kumo
                     }
                 }
 
-                // Load Album Art Thumbnail (when track changes OR if we haven't decoded art for this track yet — YouTube sometimes attaches thumbnail 0.5s after title!)
-                bool needThumb = trackChanged || !string.Equals(trackKey, _lastThumbTrackKey, StringComparison.Ordinal);
-                if (needThumb && props.Thumbnail != null)
+                // Load / Refresh Album Art Thumbnail:
+                // - Rejects transparent-corner browser fallback icons (Chrome/Edge/Brave wheel!)
+                // - Re-polls ras.Size during the first 18s after track change so delayed YouTube artwork always replaces early placeholders!
+                bool shouldCheckThumb = (props.Thumbnail != null) &&
+                                        (!_hasRealSmtcThumb || (DateTime.UtcNow - _trackChangedUtc).TotalSeconds <= 18.0);
+                if (shouldCheckThumb)
                 {
-                    Bitmap decoded = ReadSquareThumbnail(props.Thumbnail);
+                    ulong seenSize;
+                    Bitmap decoded = ReadSquareThumbnail(props.Thumbnail, SourceAppId, _lastThumbStreamSize, _hasRealSmtcThumb, out seenSize);
                     if (decoded != null)
                     {
                         Color dom = ExtractVibrantColor(decoded);
@@ -667,15 +851,8 @@ namespace Kumo
                             _albumArt = decoded;
                             _dominantColor = dom;
                         }
-                        _lastThumbTrackKey = trackKey;
-                    }
-                }
-                else if (trackChanged && props.Thumbnail == null)
-                {
-                    lock (_lock)
-                    {
-                        if (_albumArt != null) { try { _albumArt.Dispose(); } catch { } _albumArt = null; }
-                        _dominantColor = Color.FromArgb(44, 110, 215);
+                        _lastThumbStreamSize = seenSize;
+                        _hasRealSmtcThumb = true;
                     }
                 }
 
@@ -684,9 +861,12 @@ namespace Kumo
                 if (!string.IsNullOrEmpty(queryKey) && !string.Equals(queryKey, _lastLyricsQuery, StringComparison.OrdinalIgnoreCase))
                 {
                     _lastLyricsQuery = queryKey;
+                    string capTk = trackKey;
+                    string capTi = title;
+                    string capAr = artist;
                     ThreadPool.QueueUserWorkItem(delegate
                     {
-                        FetchLyricsFromLrclib(title, artist);
+                        FetchLyricsFromLrclib(capTk, capTi, capAr);
                     });
                 }
             }
@@ -707,7 +887,8 @@ namespace Kumo
             _basePositionSec = 0.0;
             _durationSec = 0.0;
             _lastTrackKey = "";
-            _lastThumbTrackKey = "";
+            _lastThumbStreamSize = 0;
+            _hasRealSmtcThumb = false;
             lock (_lock)
             {
                 if (_albumArt != null)
@@ -718,13 +899,80 @@ namespace Kumo
             }
         }
 
-        private static Bitmap ReadSquareThumbnail(IRandomAccessStreamReference thumbRef)
+        private static bool IsLikelyBrowserApp(string appId)
         {
+            if (string.IsNullOrEmpty(appId)) return true;
+            return appId.IndexOf("chrome", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   appId.IndexOf("msedge", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   appId.IndexOf("brave", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   appId.IndexOf("coccoc", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   appId.IndexOf("firefox", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   appId.IndexOf("opera", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   appId.IndexOf("vivaldi", StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+
+        private static bool IsTransparentCornerAppIcon(Bitmap raw, string sourceAppId)
+        {
+            int w = raw.Width;
+            int h = raw.Height;
+            if (w < 16 || h < 16) return true;
+            if (!IsLikelyBrowserApp(sourceAppId) && w > 256) return false;
+
+            int transparentCorners = 0;
+            int m = Math.Max(1, Math.Min(4, w / 32));
+            if (raw.GetPixel(m, m).A < 215) transparentCorners++;
+            if (raw.GetPixel(w - 1 - m, m).A < 215) transparentCorners++;
+            if (raw.GetPixel(m, h - 1 - m).A < 215) transparentCorners++;
+            if (raw.GetPixel(w - 1 - m, h - 1 - m).A < 215) transparentCorners++;
+            return transparentCorners >= 3;
+        }
+
+        private static Bitmap CropBitmapToSquareCover(Bitmap raw)
+        {
+            int w = raw.Width;
+            int h = raw.Height;
+            if (w <= 0 || h <= 0) return null;
+
+            int side = Math.Min(w, h);
+            if (w > h && h >= 160)
+            {
+                Color topPx = raw.GetPixel(w / 2, Math.Max(1, h / 14));
+                Color botPx = raw.GetPixel(w / 2, Math.Min(h - 2, h - h / 14));
+                if (topPx.R < 20 && topPx.G < 20 && topPx.B < 20 && botPx.R < 20 && botPx.G < 20 && botPx.B < 20)
+                {
+                    side = (int)(h * 0.74f);
+                }
+            }
+
+            int sx = (w - side) / 2;
+            int sy = (h - side) / 2;
+
+            Bitmap sq = new Bitmap(160, 160, PixelFormat.Format32bppArgb);
+            using (Graphics g = Graphics.FromImage(sq))
+            {
+                g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+                g.SmoothingMode = SmoothingMode.AntiAlias;
+                g.PixelOffsetMode = PixelOffsetMode.HighQuality;
+                g.DrawImage(raw, new Rectangle(0, 0, 160, 160), new Rectangle(sx, sy, side, side), GraphicsUnit.Pixel);
+            }
+            return sq;
+        }
+
+        private static Bitmap ReadSquareThumbnail(
+            IRandomAccessStreamReference thumbRef,
+            string sourceAppId,
+            ulong prevSize,
+            bool alreadyHasRealThumb,
+            out ulong streamSize)
+        {
+            streamSize = 0;
             IRandomAccessStreamWithContentType ras = null;
             try
             {
                 ras = WaitWinRT(thumbRef.OpenReadAsync(), 2000);
                 if (ras == null || ras.Size == 0) return null;
+                streamSize = ras.Size;
+                if (alreadyHasRealThumb && streamSize == prevSize) return null;
 
                 uint targetSz = (uint)Math.Min(ras.Size, 6 * 1024 * 1024);
                 using (MemoryStream ms = new MemoryStream((int)targetSz))
@@ -748,39 +996,16 @@ namespace Kumo
                         }
                     }
 
-                    if (ms.Length < 32) return null;
+                    if (ms.Length < 64) return null;
                     ms.Position = 0;
 
                     using (Bitmap raw = new Bitmap(ms))
                     {
-                        int w = raw.Width;
-                        int h = raw.Height;
-                        if (w <= 0 || h <= 0) return null;
-
-                        // Center-crop 16:9 or letterboxed 4:3 YouTube thumbnails cleanly into a crisp 160x160 square cover!
-                        int side = Math.Min(w, h);
-                        if (w > h && h >= 180)
+                        if (IsTransparentCornerAppIcon(raw, sourceAppId))
                         {
-                            Color topPx = raw.GetPixel(w / 2, Math.Max(1, h / 14));
-                            Color botPx = raw.GetPixel(w / 2, Math.Min(h - 2, h - h / 14));
-                            if (topPx.R < 16 && topPx.G < 16 && topPx.B < 16 && botPx.R < 16 && botPx.G < 16 && botPx.B < 16)
-                            {
-                                side = (int)(h * 0.74f);
-                            }
+                            return null;
                         }
-
-                        int sx = (w - side) / 2;
-                        int sy = (h - side) / 2;
-
-                        Bitmap sq = new Bitmap(160, 160, PixelFormat.Format32bppArgb);
-                        using (Graphics g = Graphics.FromImage(sq))
-                        {
-                            g.InterpolationMode = InterpolationMode.HighQualityBicubic;
-                            g.SmoothingMode = SmoothingMode.AntiAlias;
-                            g.PixelOffsetMode = PixelOffsetMode.HighQuality;
-                            g.DrawImage(raw, new Rectangle(0, 0, 160, 160), new Rectangle(sx, sy, side, side), GraphicsUnit.Pixel);
-                        }
-                        return sq;
+                        return CropBitmapToSquareCover(raw);
                     }
                 }
             }
@@ -794,6 +1019,321 @@ namespace Kumo
                 {
                     try { ras.Dispose(); } catch { }
                 }
+            }
+        }
+
+        private void ResolveYoutubeEnrichment(string trackKey, string rawTitle, string rawArtist)
+        {
+            try
+            {
+                // Brief pause so _durationSec from SMTC timeline is populated if it arrived slightly after title
+                Thread.Sleep(250);
+                if (!string.Equals(_lastTrackKey, trackKey, StringComparison.Ordinal)) return;
+
+                bool browserPlay = IsLikelyBrowserApp(SourceAppId);
+                if (!browserPlay && _hasRealSmtcThumb) return;
+
+                string searchQ = ((rawTitle ?? "") + " " + (rawArtist ?? "")).Trim();
+                if (string.IsNullOrEmpty(searchQ)) return;
+
+                string ytUrl = "https://www.youtube.com/results?search_query=" + Uri.EscapeDataString(searchQ) + "&hl=en";
+                HttpWebRequest req = (HttpWebRequest)WebRequest.Create(ytUrl);
+                req.UserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36";
+                req.Timeout = 4800;
+
+                string html;
+                using (HttpWebResponse resp = (HttpWebResponse)req.GetResponse())
+                using (StreamReader sr = new StreamReader(resp.GetResponseStream(), Encoding.UTF8))
+                {
+                    html = sr.ReadToEnd();
+                }
+
+                if (string.IsNullOrEmpty(html) || !string.Equals(_lastTrackKey, trackKey, StringComparison.Ordinal)) return;
+
+                MatchCollection matches = Regex.Matches(html, "\"videoRenderer\":\\{\"videoId\":\"([A-Za-z0-9_-]{11})\".*?\"lengthText\":\\{.*?\"simpleText\":\"([0-9:]+)\"");
+                string chosenId = null;
+                double curDur = _durationSec;
+
+                for (int i = 0; i < Math.Min(8, matches.Count); i++)
+                {
+                    string vid = matches[i].Groups[1].Value;
+                    string[] tParts = matches[i].Groups[2].Value.Split(':');
+                    int sec = 0;
+                    for (int p = 0; p < tParts.Length; p++)
+                    {
+                        int v;
+                        if (int.TryParse(tParts[p], out v)) sec = sec * 60 + v;
+                    }
+                    if (curDur > 20.0 && Math.Abs(sec - curDur) <= 5.5)
+                    {
+                        chosenId = vid;
+                        break;
+                    }
+                    if (chosenId == null) chosenId = vid;
+                }
+
+                if (chosenId == null)
+                {
+                    Match mFallback = Regex.Match(html, "\"videoRenderer\":\\{\"videoId\":\"([A-Za-z0-9_-]{11})\"");
+                    if (mFallback.Success) chosenId = mFallback.Groups[1].Value;
+                }
+                if (string.IsNullOrEmpty(chosenId)) return;
+
+                // 0. Query YouTube Android Player TimedText cues for exact ~0.1s vocal alignment + manual lyrics fallback!
+                try
+                {
+                    List<LyricLine> ytCues;
+                    bool ytManual;
+                    if (FetchYoutubePlayerCaptions(chosenId, rawTitle, out ytCues, out ytManual) &&
+                        string.Equals(_lastTrackKey, trackKey, StringComparison.Ordinal))
+                    {
+                        lock (_lock)
+                        {
+                            _ytCaptionCues = ytCues;
+                            _ytCaptionIsManual = ytManual;
+                            if (_syncedLyrics.Count == 0 && (LyricsStatus == "None" || LyricsStatus == "Offline"))
+                            {
+                                TryApplyManualYtFallbackLyricsLocked();
+                            }
+                            else
+                            {
+                                RecalculateAutoMvOffsetLocked();
+                            }
+                        }
+                        UpdateActiveLyricLine();
+                    }
+                }
+                catch { }
+
+                // 1. Query SponsorBlock exact crowd-verified non-music MV skit segments!
+                try
+                {
+                    string sbUrl = "https://sponsor.ajay.app/api/skipSegments?videoID=" + chosenId + "&categories=[%22music_offtopic%22,%22intro%22,%22outro%22]";
+                    HttpWebRequest sbReq = (HttpWebRequest)WebRequest.Create(sbUrl);
+                    sbReq.UserAgent = "Kumo/1.1 (+https://github.com/buiduchuy2010qn-prog/kumo)";
+                    sbReq.Timeout = 3500;
+                    using (HttpWebResponse sbResp = (HttpWebResponse)sbReq.GetResponse())
+                    using (StreamReader sbSr = new StreamReader(sbResp.GetResponseStream(), Encoding.UTF8))
+                    {
+                        string sbJson = sbSr.ReadToEnd();
+                        MatchCollection segs = Regex.Matches(sbJson, "\"category\"\\s*:\\s*\"([^\"]+)\"[\\s\\S]*?\"segment\"\\s*:\\s*\\[\\s*([0-9.]+)\\s*,\\s*([0-9.]+)\\s*\\]");
+                        double introEnd = 0.0;
+                        double tailTrim = 0.0;
+                        for (int s = 0; s < segs.Count; s++)
+                        {
+                            string cat = segs[s].Groups[1].Value;
+                            double s0, s1;
+                            if (double.TryParse(segs[s].Groups[2].Value, NumberStyles.Float, CultureInfo.InvariantCulture, out s0) &&
+                                double.TryParse(segs[s].Groups[3].Value, NumberStyles.Float, CultureInfo.InvariantCulture, out s1))
+                            {
+                                if ((cat == "music_offtopic" || cat == "intro") && s0 <= 5.0 && s1 > introEnd && s1 < 240.0)
+                                {
+                                    introEnd = s1;
+                                }
+                                else if (s0 > 45.0 && s1 > s0)
+                                {
+                                    tailTrim += (s1 - s0);
+                                }
+                            }
+                        }
+
+                        if (string.Equals(_lastTrackKey, trackKey, StringComparison.Ordinal))
+                        {
+                            lock (_lock)
+                            {
+                                if (introEnd > 2.5)
+                                {
+                                    _sbIntroOffsetSec = Math.Round(introEnd, 2);
+                                }
+                                else if (tailTrim >= 4.0)
+                                {
+                                    _sbZeroIntroConfirmed = true;
+                                }
+                                RecalculateAutoMvOffsetLocked();
+                            }
+                            UpdateActiveLyricLine();
+                        }
+                    }
+                }
+                catch { }
+
+                // 2. Fallback Artwork from i.ytimg.com if Chrome/Browser only sent a generic browser icon or null!
+                if (!_hasRealSmtcThumb && string.Equals(_lastTrackKey, trackKey, StringComparison.Ordinal))
+                {
+                    try
+                    {
+                        string imgUrl = "https://i.ytimg.com/vi/" + chosenId + "/hqdefault.jpg";
+                        HttpWebRequest iReq = (HttpWebRequest)WebRequest.Create(imgUrl);
+                        iReq.UserAgent = "Mozilla/5.0";
+                        iReq.Timeout = 4000;
+                        using (HttpWebResponse iResp = (HttpWebResponse)iReq.GetResponse())
+                        using (Stream rStream = iResp.GetResponseStream())
+                        using (MemoryStream ms = new MemoryStream())
+                        {
+                            byte[] buf = new byte[16384];
+                            int rd;
+                            while ((rd = rStream.Read(buf, 0, buf.Length)) > 0)
+                            {
+                                ms.Write(buf, 0, rd);
+                            }
+                            if (ms.Length > 256)
+                            {
+                                ms.Position = 0;
+                                using (Bitmap rawYt = new Bitmap(ms))
+                                {
+                                    Bitmap sqYt = CropBitmapToSquareCover(rawYt);
+                                    if (sqYt != null)
+                                    {
+                                        Color domYt = ExtractVibrantColor(sqYt);
+                                        lock (_lock)
+                                        {
+                                            if (!_hasRealSmtcThumb && string.Equals(_lastTrackKey, trackKey, StringComparison.Ordinal))
+                                            {
+                                                if (_albumArt != null) { try { _albumArt.Dispose(); } catch { } }
+                                                _albumArt = sqYt;
+                                                _dominantColor = domYt;
+                                                sqYt = null;
+                                            }
+                                        }
+                                        if (sqYt != null) sqYt.Dispose();
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    catch { }
+                }
+            }
+            catch { }
+        }
+
+        private static string DecodeXmlText(string raw)
+        {
+            if (string.IsNullOrEmpty(raw)) return "";
+            string s = Regex.Replace(raw, @"<[^>]+>", "");
+            s = s.Replace("&amp;", "&")
+                 .Replace("&#39;", "'")
+                 .Replace("&apos;", "'")
+                 .Replace("&quot;", "\"")
+                 .Replace("&lt;", "<")
+                 .Replace("&gt;", ">");
+            s = Regex.Replace(s, @"&#(\d+);", delegate(Match m)
+            {
+                int code;
+                if (int.TryParse(m.Groups[1].Value, out code) && code >= 32 && code <= 65535)
+                {
+                    return ((char)code).ToString();
+                }
+                return "";
+            });
+            s = Regex.Replace(s, @"\s+", " ").Trim();
+            return s;
+        }
+
+        private static bool FetchYoutubePlayerCaptions(string videoId, string rawTitle, out List<LyricLine> cues, out bool isManual)
+        {
+            cues = null;
+            isManual = false;
+            try
+            {
+                string bodyJson = "{\"context\":{\"client\":{\"clientName\":\"ANDROID\",\"clientVersion\":\"20.10.38\",\"hl\":\"vi\"}},\"videoId\":\"" + videoId + "\"}";
+                byte[] postBytes = Encoding.UTF8.GetBytes(bodyJson);
+
+                HttpWebRequest pReq = (HttpWebRequest)WebRequest.Create("https://www.youtube.com/youtubei/v1/player?prettyPrint=false");
+                pReq.Method = "POST";
+                pReq.ContentType = "application/json";
+                pReq.UserAgent = "com.google.android.youtube/20.10.38 (Linux; U; Android 14)";
+                pReq.Timeout = 3800;
+                pReq.ContentLength = postBytes.Length;
+                using (Stream reqStream = pReq.GetRequestStream())
+                {
+                    reqStream.Write(postBytes, 0, postBytes.Length);
+                }
+
+                string playerJson;
+                using (HttpWebResponse pResp = (HttpWebResponse)pReq.GetResponse())
+                using (StreamReader pSr = new StreamReader(pResp.GetResponseStream(), Encoding.UTF8))
+                {
+                    playerJson = pSr.ReadToEnd();
+                }
+
+                int capIdx = playerJson.IndexOf("\"captionTracks\":[", StringComparison.Ordinal);
+                if (capIdx < 0) return false;
+                int capEnd = playerJson.IndexOf("],\"audioTracks\"", capIdx, StringComparison.Ordinal);
+                if (capEnd < 0) capEnd = Math.Min(playerJson.Length, capIdx + 8192);
+                string capSlice = playerJson.Substring(capIdx, capEnd - capIdx);
+
+                MatchCollection tMatches = Regex.Matches(capSlice, "\"baseUrl\":\"([^\"]+)\".*?\"vssId\":\"([^\"]+)\",\"languageCode\":\"([^\"]+)\"");
+                if (tMatches.Count == 0) return false;
+
+                bool preferVi = HasNonAscii(rawTitle ?? "");
+                string bestUrl = null;
+                bool bestManual = false;
+                int bestScore = -9999;
+
+                for (int i = 0; i < tMatches.Count; i++)
+                {
+                    string u = Regex.Unescape(tMatches[i].Groups[1].Value);
+                    string vss = tMatches[i].Groups[2].Value;
+                    string lang = tMatches[i].Groups[3].Value;
+                    bool manual = !vss.StartsWith("a.", StringComparison.OrdinalIgnoreCase);
+
+                    int sc = (manual ? 100 : 0) - i * 2;
+                    if (preferVi && string.Equals(lang, "vi", StringComparison.OrdinalIgnoreCase)) sc += 60;
+                    else if (!preferVi && string.Equals(lang, "en", StringComparison.OrdinalIgnoreCase)) sc += 25;
+
+                    if (sc > bestScore)
+                    {
+                        bestScore = sc;
+                        bestUrl = u;
+                        bestManual = manual;
+                    }
+                }
+
+                if (string.IsNullOrEmpty(bestUrl)) return false;
+
+                HttpWebRequest cReq = (HttpWebRequest)WebRequest.Create(bestUrl);
+                cReq.UserAgent = "com.google.android.youtube/20.10.38 (Linux; U; Android 14)";
+                cReq.Timeout = 3500;
+                string xml;
+                using (HttpWebResponse cResp = (HttpWebResponse)cReq.GetResponse())
+                using (StreamReader cSr = new StreamReader(cResp.GetResponseStream(), Encoding.UTF8))
+                {
+                    xml = cSr.ReadToEnd();
+                }
+
+                MatchCollection pMatches = Regex.Matches(xml, @"<p\s+t=""(\d+)""[^>]*>(.*?)</p>", RegexOptions.Singleline);
+                if (pMatches.Count < 4) return false;
+
+                List<LyricLine> list = new List<LyricLine>();
+                for (int i = 0; i < pMatches.Count; i++)
+                {
+                    long ms;
+                    if (!long.TryParse(pMatches[i].Groups[1].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out ms)) continue;
+                    string txt = DecodeXmlText(pMatches[i].Groups[2].Value);
+                    if (string.IsNullOrEmpty(txt) || txt.Length < 2) continue;
+                    if (txt.StartsWith("[", StringComparison.Ordinal) && txt.EndsWith("]", StringComparison.Ordinal)) continue;
+                    if (txt == "\u266A" || txt == "\u266B") continue;
+
+                    double sec = ms / 1000.0;
+                    if (list.Count > 0 && Math.Abs(list[list.Count - 1].TimeSec - sec) < 0.08)
+                    {
+                        list[list.Count - 1].Text = (list[list.Count - 1].Text + " " + txt).Trim();
+                    }
+                    else
+                    {
+                        list.Add(new LyricLine { TimeSec = sec, Text = txt });
+                    }
+                }
+
+                if (list.Count < 4) return false;
+                cues = list;
+                isManual = bestManual;
+                return true;
+            }
+            catch
+            {
+                return false;
             }
         }
 
@@ -1011,12 +1551,46 @@ namespace Kumo
                     cleanT = p0;
                     if (string.IsNullOrEmpty(cleanA) || (HasNonAscii(p1) && !HasNonAscii(cleanA))) cleanA = p1;
                 }
+                else if (p1.IndexOf(',') >= 0 && p0.Length >= 4)
+                {
+                    // Strip trailing multi-singer credits like "- JENA, ANH RỒNG, THƯƠNG VÕ, MÂY BAE"
+                    cleanT = p0;
+                }
             }
 
             cleanT = Regex.Replace(cleanT, @"(\bft\.?\b.*$|\bfeat\.?\b.*$|\bprod\.?\b.*$)", "", RegexOptions.IgnoreCase).Trim();
             cleanT = Regex.Replace(cleanT, @"\s{2,}", " ").Trim(' ', '-', '\u2013', '\u2014');
             songCore = cleanT;
             artistCore = cleanA;
+        }
+
+        private static string FirstNWords(string s, int maxWords)
+        {
+            if (string.IsNullOrEmpty(s)) return "";
+            string[] w = s.Split(new char[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+            if (w.Length <= maxWords) return s.Trim();
+            return string.Join(" ", w, 0, maxWords);
+        }
+
+        private static string GetLyricsCacheFilePath(string songFold, string artistFold)
+        {
+            try
+            {
+                string key = (songFold ?? "") + "|" + (artistFold ?? "");
+                ulong h = 14695981039346656037UL;
+                for (int i = 0; i < key.Length; i++)
+                {
+                    h ^= (uint)key[i];
+                    h *= 1099511628211UL;
+                }
+                string dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), @"Kumo\LyricsCache");
+                if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
+                return Path.Combine(dir, h.ToString("x16", CultureInfo.InvariantCulture) + ".json");
+            }
+            catch
+            {
+                return null;
+            }
         }
 
         private static double ScoreCandidateTitle(string targetSongFold, string candTrackFold, out bool isSameSong)
@@ -1116,18 +1690,21 @@ namespace Kumo
             public string RawSynced;
         }
 
-        private static string FetchUrlStringWithRetry(string url)
+        private static string FetchUrlStringWithRetry(string url, out bool wasServerOverloaded)
         {
-            for (int attempt = 0; attempt < 3; attempt++)
+            wasServerOverloaded = false;
+            int[] delays = new int[] { 340, 560, 820, 1150 };
+            for (int attempt = 0; attempt < 5; attempt++)
             {
                 try
                 {
                     HttpWebRequest req = (HttpWebRequest)WebRequest.Create(url);
                     req.UserAgent = "Kumo/1.1 (+https://github.com/buiduchuy2010qn-prog/kumo)";
-                    req.Timeout = 5500;
+                    req.Timeout = 5200;
                     using (HttpWebResponse resp = (HttpWebResponse)req.GetResponse())
                     using (StreamReader sr = new StreamReader(resp.GetResponseStream(), Encoding.UTF8))
                     {
+                        wasServerOverloaded = false;
                         return sr.ReadToEnd();
                     }
                 }
@@ -1136,13 +1713,16 @@ namespace Kumo
                     HttpWebResponse hr = wex.Response as HttpWebResponse;
                     if (hr != null && hr.StatusCode == HttpStatusCode.NotFound)
                     {
+                        wasServerOverloaded = false;
                         return null;
                     }
-                    if (attempt < 2) Thread.Sleep(550 * (attempt + 1));
+                    wasServerOverloaded = true;
+                    if (attempt < 4) Thread.Sleep(delays[attempt]);
                 }
                 catch
                 {
-                    if (attempt < 2) Thread.Sleep(550 * (attempt + 1));
+                    wasServerOverloaded = true;
+                    if (attempt < 4) Thread.Sleep(delays[attempt]);
                 }
             }
             return null;
@@ -1346,15 +1926,25 @@ namespace Kumo
             return false;
         }
 
-        private bool TryQueryLrclibSingle(string rawQuery, string targetSongFold, string targetArtistFold)
+        private bool TryQueryLrclibSingle(string rawQuery, string targetSongFold, string targetArtistFold, string cachePath, ref bool anyServerBusy)
         {
             if (string.IsNullOrEmpty(rawQuery)) return false;
             string url = "https://lrclib.net/api/search?q=" + Uri.EscapeDataString(rawQuery.Trim());
-            string json = FetchUrlStringWithRetry(url);
-            return TryProcessLrclibJson(json, targetSongFold, targetArtistFold);
+            bool busy;
+            string json = FetchUrlStringWithRetry(url, out busy);
+            if (busy) anyServerBusy = true;
+            if (!string.IsNullOrEmpty(json) && TryProcessLrclibJson(json, targetSongFold, targetArtistFold))
+            {
+                if (!string.IsNullOrEmpty(cachePath))
+                {
+                    try { File.WriteAllText(cachePath, json, Encoding.UTF8); } catch { }
+                }
+                return true;
+            }
+            return false;
         }
 
-        private void FetchLyricsFromLrclib(string track, string artist)
+        private void FetchLyricsFromLrclib(string expectedTrackKey, string track, string artist)
         {
             lock (_lock)
             {
@@ -1377,41 +1967,117 @@ namespace Kumo
 
                 string songFold = NormalizeFold(songCore);
                 string artistFold = NormalizeFold(artistCore);
+                string cachePath = GetLyricsCacheFilePath(songFold, artistFold);
 
-                string q1 = (songCore + " " + artistCore).Trim();
-                if (!string.IsNullOrEmpty(q1) && TryQueryLrclibSingle(q1, songFold, artistFold)) return;
-
-                if (!string.IsNullOrEmpty(songCore) && !string.Equals(q1, songCore, StringComparison.OrdinalIgnoreCase))
+                // 0. Instant local disk cache hit (0.3ms, works even if LRCLIB is 503 overloaded!)
+                if (!string.IsNullOrEmpty(cachePath) && File.Exists(cachePath))
                 {
-                    if (TryQueryLrclibSingle(songCore, songFold, artistFold)) return;
-                }
-
-                if (!string.IsNullOrEmpty(songCore) && !string.IsNullOrEmpty(artistCore))
-                {
-                    string getUrl = "https://lrclib.net/api/get?track_name=" + Uri.EscapeDataString(songCore) +
-                                    "&artist_name=" + Uri.EscapeDataString(artistCore);
-                    string getJson = FetchUrlStringWithRetry(getUrl);
-                    if (!string.IsNullOrEmpty(getJson) && TryProcessLrclibJson("[" + getJson + "]", songFold, artistFold))
+                    try
                     {
-                        return;
+                        string cachedJson = File.ReadAllText(cachePath, Encoding.UTF8);
+                        if (TryProcessLrclibJson(cachedJson, songFold, artistFold))
+                        {
+                            return;
+                        }
                     }
+                    catch { }
                 }
 
+                string shortSong = FirstNWords(songCore, 6);
+                string shortArtist = FirstNWords(artistCore, 3);
+
+                for (int round = 0; round < 3; round++)
+                {
+                    if (!string.Equals(_lastTrackKey, expectedTrackKey, StringComparison.Ordinal)) return;
+
+                    bool anyBusy = false;
+
+                    // 1. Short query if title is a long mashup (>6 words) — avoids LRCLIB FTS5 503 timeout!
+                    if (!string.Equals(shortSong, songCore, StringComparison.Ordinal))
+                    {
+                        if (TryQueryLrclibSingle(shortSong, songFold, artistFold, cachePath, ref anyBusy)) return;
+                    }
+
+                    // 2. Song + Artist
+                    string q1 = (FirstNWords(songCore, 8) + " " + shortArtist).Trim();
+                    if (!string.IsNullOrEmpty(q1) && TryQueryLrclibSingle(q1, songFold, artistFold, cachePath, ref anyBusy)) return;
+
+                    // 3. Pure Song Core
+                    if (!string.IsNullOrEmpty(songCore) && !string.Equals(q1, songCore, StringComparison.OrdinalIgnoreCase))
+                    {
+                        if (TryQueryLrclibSingle(songCore, songFold, artistFold, cachePath, ref anyBusy)) return;
+                    }
+
+                    // 4. Exact /api/get fallback
+                    if (!string.IsNullOrEmpty(songCore) && !string.IsNullOrEmpty(artistCore))
+                    {
+                        string getUrl = "https://lrclib.net/api/get?track_name=" + Uri.EscapeDataString(songCore) +
+                                        "&artist_name=" + Uri.EscapeDataString(artistCore);
+                        bool gBusy;
+                        string getJson = FetchUrlStringWithRetry(getUrl, out gBusy);
+                        if (gBusy) anyBusy = true;
+                        if (!string.IsNullOrEmpty(getJson))
+                        {
+                            string wrapped = "[" + getJson + "]";
+                            if (TryProcessLrclibJson(wrapped, songFold, artistFold))
+                            {
+                                if (!string.IsNullOrEmpty(cachePath))
+                                {
+                                    try { File.WriteAllText(cachePath, wrapped, Encoding.UTF8); } catch { }
+                                }
+                                return;
+                            }
+                        }
+                    }
+
+                    if (!anyBusy) break;
+
+                    // LRCLIB was 503 ServerOverloaded: wait 3.5s and auto-retry while song is still playing!
+                    lock (_lock)
+                    {
+                        if (string.Equals(_lastTrackKey, expectedTrackKey, StringComparison.Ordinal))
+                        {
+                            CurrentLyricLine = "Loading lyrics...";
+                        }
+                    }
+                    Thread.Sleep(3500);
+                }
+
+                if (!string.Equals(_lastTrackKey, expectedTrackKey, StringComparison.Ordinal)) return;
+                bool usedYtFallback = false;
                 lock (_lock)
                 {
-                    CurrentLyricLine = "Lyrics not available";
-                    NextLyricLine = "";
-                    LyricsStatus = "None";
+                    if (TryApplyManualYtFallbackLyricsLocked())
+                    {
+                        usedYtFallback = true;
+                    }
+                    else
+                    {
+                        CurrentLyricLine = "Lyrics not available";
+                        NextLyricLine = "";
+                        LyricsStatus = "None";
+                    }
                 }
+                if (usedYtFallback) UpdateActiveLyricLine();
             }
             catch
             {
+                if (!string.Equals(_lastTrackKey, expectedTrackKey, StringComparison.Ordinal)) return;
+                bool usedYtFallback = false;
                 lock (_lock)
                 {
-                    CurrentLyricLine = "Lyrics not available";
-                    NextLyricLine = "";
-                    LyricsStatus = "Offline";
+                    if (TryApplyManualYtFallbackLyricsLocked())
+                    {
+                        usedYtFallback = true;
+                    }
+                    else
+                    {
+                        CurrentLyricLine = "Lyrics not available";
+                        NextLyricLine = "";
+                        LyricsStatus = "Offline";
+                    }
                 }
+                if (usedYtFallback) UpdateActiveLyricLine();
             }
         }
 
