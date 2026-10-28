@@ -235,7 +235,7 @@
 
     // Notch shell classes & dynamic width (ZERO cut-off!)
     const inOsd = notch.classList.contains("state-osd");
-    notch.classList.remove("state-micro", "state-expanded", "wide-lyrics");
+    notch.classList.remove("state-micro", "state-expanded", "wide-lyrics", "collapsed-lyrics");
     notch.style.width = "";
 
     const showColLyrics = !state.expanded && !state.autoMinimal && state.lyricsSplit && state.playing;
@@ -246,7 +246,7 @@
       notch.classList.add("state-micro");
     } else if (!inOsd && showColLyrics) {
       const ltxt = curLyric().text;
-      const dynW = Math.min(480, Math.max(255, Math.round(92 + ltxt.length * 7.6)));
+      notch.classList.add("collapsed-lyrics"); const dynW = Math.min(500, Math.max(296, Math.round(138 + ltxt.length * 7.6)));
       notch.style.width = dynW + "px";
     }
 
@@ -259,6 +259,14 @@
     $("#musCoverImg").src = tr.thumb;
 
     const eqCol = tr.eqCol;
+    const auras = [
+      ["rgba(251,146,60,0.46)", "rgba(244,63,94,0.42)", "rgba(56,189,248,0.34)"],
+      ["rgba(236,72,153,0.46)", "rgba(139,92,246,0.44)", "rgba(251,191,36,0.30)"],
+      ["rgba(6,182,212,0.46)", "rgba(16,185,129,0.42)", "rgba(99,102,241,0.36)"]
+    ][state.trackIdx] || ["rgba(56,189,248,0.42)", "rgba(244,63,94,0.36)", "rgba(251,191,36,0.28)"];
+    document.documentElement.style.setProperty("--aura-1", auras[0]);
+    document.documentElement.style.setProperty("--aura-2", auras[1]);
+    document.documentElement.style.setProperty("--aura-3", auras[2]);
     $$(".kn-eq").forEach(eq => {
       eq.style.setProperty("--eq-col", eqCol);
       eq.classList.toggle("idle", !state.playing && !showColLyrics);
@@ -446,7 +454,7 @@
 
     $("#trigWall").addEventListener("click", () => {
       const sc = $("#win11Screen");
-      sc.dataset.wall = sc.dataset.wall === "dark" ? "light" : "dark";
+      const walls = ["aurora", "sunset", "emerald", "light"]; sc.dataset.wall = walls[(walls.indexOf(sc.dataset.wall) + 1) % walls.length];
     });
 
     // Notch hover / click
