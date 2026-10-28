@@ -58,7 +58,7 @@ namespace Kumo
         }
         private bool IsCollapsedLyricsActive
         {
-            get { return _isLyricsSplit && _state.ShowLyrics && _media != null && _media.HasMedia; }
+            get { return _isLyricsSplit && _state.ShowLyrics && _media != null && _media.HasCollapsedLyricNow(); }
         }
         private string _lastCollapsedLyricKey = "";
         private Color VeilCol(int a)
@@ -625,7 +625,7 @@ namespace Kumo
                 double lp; bool syn;
                 string lt = _media.GetCollapsedLyricDisplay(out lp, out syn);
                 int len = string.IsNullOrEmpty(lt) ? 16 : lt.Length;
-                float lyrDp = Math.Max(232f, Math.Min(436f, 88f + len * 7.5f));
+                float lyrDp = Math.Max(276f, Math.Min(476f, 136f + len * 7.5f));
                 _targetW = U(lyrDp); _targetH = U(29f); _targetR = U(14f); _targetE = U(10f);
             }
             else
@@ -1381,7 +1381,7 @@ RefreshBatteryLevel();
                 GraphicsState stClock = g.Save();
                 g.TranslateTransform(0f, -(1.0f - cEase) * U(3.5f));
                 bool showColLyrics = IsCollapsedLyricsActive;
-                if ((_media.HasMedia && (_media.IsPlaying || showColLyrics)) && _batteryStateKind != 2)
+                if ((_media.HasMedia && _media.IsPlaying) && _batteryStateKind != 2)
                 {
                     RectangleF miniArt = new RectangleF(x0 + U(10.5f), midY - U(8.5f), U(17f), U(17f));
                     DrawAlbumArtThumb(g, miniArt, U(4.8f));
@@ -1391,21 +1391,33 @@ RefreshBatteryLevel();
                     DrawBatteryRing(g, x0 + U(19.5f), midY);
                 }
 
+                string nowClock = DateTime.Now.ToString("HH:mm");
                 if (showColLyrics)
                 {
                     double colPosSec;
                     bool isSyn;
                     string colFallback;
                     LyricLine colLine = _media.GetActiveCollapsedLyricLine(out colPosSec, out isSyn, out colFallback);
+
+                    SizeF clkSz = g.MeasureString(nowClock, _fIdleTime);
+                    float clkRight = _state.EqualizerEnabled ? (x0 + w - U(30f)) : (x0 + w - U(11f));
+                    float clkCx = clkRight - clkSz.Width * 0.5f;
+                    float divX = (float)Math.Round(clkRight - clkSz.Width - U(5.5f));
+                    using (SolidBrush divB = new SolidBrush(IsLight ? Color.FromArgb(70, 30, 41, 59) : Color.FromArgb(68, 255, 255, 255)))
+                    {
+                        g.FillRectangle(divB, divX, (float)Math.Round(midY - U(5.5f)), Math.Max(1f, U(1f)), (float)Math.Round(U(11f)));
+                    }
+                    DrawCenteredText(g, nowClock, _fIdleTime, InkPri, clkCx, midY);
+
                     float leftPad = U(33f);
-                    float rightPad = _state.EqualizerEnabled ? U(32f) : U(13f);
+                    float rightPad = (x0 + w) - (divX - U(6.5f));
                     float availW = Math.Max(U(40f), w - leftPad - rightPad);
                     RectangleF lyrViewport = new RectangleF(x0 + leftPad, 0f, availW, h);
                     DrawKaraokeLyricLine(g, colLine, colFallback, colPosSec, isSyn, _fCollapsedLyric, lyrViewport, true);
                 }
                 else
                 {
-                    DrawCenteredText(g, DateTime.Now.ToString("HH:mm"), _fIdleTime, InkPri, x0 + w * 0.5f, midY);
+                    DrawCenteredText(g, nowClock, _fIdleTime, InkPri, x0 + w * 0.5f, midY);
                 }
 
                 if (_state.EqualizerEnabled)
@@ -1644,6 +1656,12 @@ RefreshBatteryLevel();
             }
             else
             {
+                DrawBatteryRing(g, x0 + U(104f), U(21f));
+                string splitClock = string.Format(CultureInfo.InvariantCulture, "{0}% \u00B7 {1}",
+                    _batteryPercent, DateTime.Now.ToString(_showHeaderSeconds ? "HH:mm:ss" : "HH:mm"));
+                _hitZones.Add(new HitZone { Id = "hdr_clock", Rect = new RectangleF(x0 + U(96f), U(11f), U(128f), U(19f)) });
+                DrawLeftVCenteredText(g, splitClock, _fHdrTime, InkPri, x0 + U(115f), U(21f));
+
                 if (IsDownloadActive)
                 {
                     DrawDownloadHeaderBadge(g, "hdr_dl", x0 + w - U(48f), U(18f));
@@ -1817,7 +1835,7 @@ RefreshBatteryLevel();
             DrawAlbumArtThumb(g, artRect, U(10f));
             if (hasMedia)
             {
-                _hitZones.Add(new HitZone { Id = "media_focus", Rect = new RectangleF(x0 + U(36f), U(14f), U(192f), U(54f)) });
+                _hitZones.Add(new HitZone { Id = "media_focus", Rect = new RectangleF(x0 + U(36f), U(31f), U(192f), U(38f)) });
             }
 
             string title = hasMedia && !string.IsNullOrEmpty(_media.CurrentTitle)

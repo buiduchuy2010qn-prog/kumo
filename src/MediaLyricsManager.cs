@@ -684,6 +684,18 @@ namespace Kumo
             return Color.FromArgb(44, 110, 215);
         }
 
+        public bool HasCollapsedLyricNow()
+        {
+            if (!HasMedia || !IsPlaying) return false;
+            double livePosSec = GetLivePositionSec();
+            lock (_lock)
+            {
+                if (_syncedLyrics.Count == 0) return false;
+                if (livePosSec + 0.30 < _syncedLyrics[0].TimeSec) return false;
+                return true;
+            }
+        }
+
         public LyricLine GetActiveCollapsedLyricLine(out double livePosSec, out bool isSyncedLine, out string fallbackText)
         {
             livePosSec = GetLivePositionSec();
