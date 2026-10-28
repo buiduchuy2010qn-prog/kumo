@@ -3,6 +3,9 @@ name: Build & Release Kumo Setup
 on:
   push:
     branches: [ "main" ]
+    paths-ignore:
+      - 'docs/**'
+      - 'README.md'
     tags: [ "v*" ]
   pull_request:
     branches: [ "main" ]
