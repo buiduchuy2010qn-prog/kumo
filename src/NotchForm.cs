@@ -136,6 +136,8 @@ namespace Kumo
         private readonly Stopwatch _frameClock = Stopwatch.StartNew();
         private double _lastFrameSec = 0.0;
         private float _glanceFade = 1.0f;
+        private int _activeColMode = 0; // 0=Glance, 1=Mascot, 2=Download, 3=OSD
+        private float _colContentFade = 1.0f;
         private float _mascotFade = 0.0f;
         private float _sleepFade = 0.0f;
         private float _waveFade = 0.0f;
@@ -144,6 +146,8 @@ namespace Kumo
         private float _leaveDwellSec = 0.0f;
         private DateTime _gestureHoldCollapsedUntilUtc = DateTime.MinValue;
         private Point _prevScreenCursor = Point.Empty;
+        private Point _stationarySuppressOrigin = Point.Empty;
+        private bool _suppressStationaryExpand = false;
         private bool _wasInsidePill = false;
 
         // Pages: 0=Music, 1=Pomodoro, 2=Water, 3=Shelf, 4=TodoList, 5=SystemMonitor
@@ -309,12 +313,9 @@ namespace Kumo
             if (_osdFade < 0.08f) _osdAnimBar = targetBar;
             _osdUntilUtc = DateTime.UtcNow.AddSeconds(durationSec);
             _wasOsdActive = true;
-            if (!_isExpanded)
+            if (!_isExpanded && _isMicroPill)
             {
-                _hoverDwellSec = 0f;
-                if (_gestureHoldCollapsedUntilUtc < DateTime.UtcNow.AddSeconds(0.95))
-                    _gestureHoldCollapsedUntilUtc = DateTime.UtcNow.AddSeconds(0.95);
-                if (_isMicroPill) _isMicroPill = false;
+                _isMicroPill = false;
             }
             UpdateTargetDimensions();
             _needsRedraw = true;
@@ -654,12 +655,12 @@ namespace Kumo
             }
             else if (IsOsdActive)
             {
-                bool wideOsd = (_osdKind == OsdKind.AudioDevice || _osdKind == OsdKind.Screenshot || _osdKind == OsdKind.PrivacyAlert);
-                _targetW = U(wideOsd ? 282f : 240f); _targetH = U(36f); _targetR = U(17f); _targetE = U(11f);
+                bool compactBar = ((_osdKind == OsdKind.Volume && !_osdMuted) || _osdKind == OsdKind.Brightness);
+                _targetW = U(compactBar ? 228f : 292f); _targetH = U(32f); _targetR = U(15.5f); _targetE = U(10.5f);
             }
             else if (IsDownloadActive && !_alwaysMinimal)
             {
-                _targetW = U(296f); _targetH = U(36f); _targetR = U(17f); _targetE = U(11f);
+                _targetW = U(302f); _targetH = U(32f); _targetR = U(15.5f); _targetE = U(10.5f);
             }
             else if (_isMicroPill || _alwaysMinimal)
             {
@@ -671,14 +672,14 @@ namespace Kumo
                 string lt = _media.GetCollapsedLyricDisplay(out lp, out syn);
                 int len = string.IsNullOrEmpty(lt) ? 16 : lt.Length;
                 float eqAdd = _state.EqualizerEnabled ? 22f : 0f;
-                float privAdd = IsPrivacyActive ? ((_osd != null && _osd.IsCameraActive && _osd.IsMicActive) ? 22f : 13f) : 0f;
+                float privAdd = IsPrivacyActive ? ((_osd != null && _osd.IsCameraActive && _osd.IsMicActive) ? 24f : 14f) : 0f;
                 float lyrDp = Math.Max(284f, Math.Min(504f, 126f + eqAdd + privAdd + len * 7.4f));
                 _targetW = U(lyrDp); _targetH = U(29f); _targetR = U(14f); _targetE = U(10f);
             }
             else
             {
-                float privAdd = IsPrivacyActive ? ((_osd != null && _osd.IsCameraActive && _osd.IsMicActive) ? 26f : 16f) : 0f;
-                _targetW = U(148f + privAdd); _targetH = U(29f); _targetR = U(14f); _targetE = U(10f);
+                float privAdd = IsPrivacyActive ? ((_osd != null && _osd.IsCameraActive && _osd.IsMicActive) ? 34f : 20f) : 0f;
+                _targetW = U(150f + privAdd); _targetH = U(29f); _targetR = U(14f); _targetE = U(10f);
             }
         }
 
@@ -1043,7 +1044,7 @@ RefreshBatteryLevel();
 
             // ==================== 2. HOVER TO OPEN / MOVE AWAY TO CLOSE ====================
             bool wantExpand = _isExpanded;
-            bool cursorMoved = (Math.Abs(cursor.X - _prevScreenCursor.X) + Math.Abs(cursor.Y - _prevScreenCursor.Y)) >= 2;
+            bool zeroMove = (_prevScreenCursor != Point.Empty && cursor.X == _prevScreenCursor.X && cursor.Y == _prevScreenCursor.Y);
             _prevScreenCursor = cursor;
 
             if (_isDragHover || _isModalDialogOpen || _isScrubbingSeek)
@@ -1074,29 +1075,40 @@ RefreshBatteryLevel();
             else
             {
                 bool insidePill = !_isFullscreenHidden && (_isMicroPill
-                    ? (absDx <= (int)U(50f) && relY >= 0 && relY <= (int)U(9.0f))
+                    ? (absDx <= (int)U(50f) && relY >= 0 && relY <= (int)U(9.5f))
                     : (absDx <= (int)(_curW * 0.5f + U(4f)) && relY >= 0 && relY <= (int)Math.Max(U(31f), _curH + U(2f))));
 
-                // Never swallow a stationary cursor when the pill widens itself for OSD/Download/Lyrics!
-                if (insidePill && !_wasInsidePill && !cursorMoved)
+                // Only suppress if the pill widened itself over a literally untouched cursor (0 px movement),
+                // and immediately release the moment the user nudges the mouse >= 4 px!
+                if (insidePill && !_wasInsidePill && zeroMove)
                 {
-                    _suppressHoverUntilLeave = true;
+                    _suppressStationaryExpand = true;
+                    _stationarySuppressOrigin = cursor;
+                }
+                if (_suppressStationaryExpand && (Math.Abs(cursor.X - _stationarySuppressOrigin.X) + Math.Abs(cursor.Y - _stationarySuppressOrigin.Y) >= 4))
+                {
+                    _suppressStationaryExpand = false;
+                }
+                if (nowUtc < _gestureHoldCollapsedUntilUtc && (Math.Abs(cursor.X - _stationarySuppressOrigin.X) + Math.Abs(cursor.Y - _stationarySuppressOrigin.Y) >= 8))
+                {
+                    _gestureHoldCollapsedUntilUtc = DateTime.MinValue;
                 }
                 _wasInsidePill = insidePill;
 
                 if (!insidePill)
                 {
                     _suppressHoverUntilLeave = false;
+                    _suppressStationaryExpand = false;
                     _hoverDwellSec = 0f;
                 }
                 else if (nowUtc < _gestureHoldCollapsedUntilUtc)
                 {
                     _hoverDwellSec = 0f;
                 }
-                else if (!_state.OpenByClick && !_suppressHoverUntilLeave)
+                else if (!_state.OpenByClick && !_suppressHoverUntilLeave && !_suppressStationaryExpand)
                 {
                     _hoverDwellSec += dt;
-                    if (_hoverDwellSec >= 0.20f)
+                    if (_hoverDwellSec >= 0.08f)
                     {
                         wantExpand = true;
                         _hoverDwellSec = 0f;
@@ -1143,8 +1155,6 @@ RefreshBatteryLevel();
             if (_wasOsdActive && !osdNow) { _wasOsdActive = false; UpdateAutoMinimalState(); UpdateTargetDimensions(); _needsRedraw = true; }
             float targetBar = (_osdKind == OsdKind.Volume && _osdMuted) ? 0f : (_osdPercent / 100.0f);
             bool dlNow = IsDownloadActive && !osdNow;
-            bool wantExpDl = _isExpanded && dlNow && (_dlSnap.IsCompleted || (nowUtc - _dlSnap.SessionStartedUtc).TotalSeconds < 4.2 || _hoveredId == "hdr_dl" || _hoveredId == "dl_open");
-            float targetDlExp = wantExpDl ? 1.0f : 0.0f;
             float targetDlBar = _dlSnap.IsCompleted ? 1.0f : (_dlSnap.HasExactPercent ? Math.Max(0.03f, Math.Min(1.0f, _dlSnap.Progress01)) : 0.35f);
 
             int curPrivMask = 0;
@@ -1161,62 +1171,44 @@ RefreshBatteryLevel();
             }
             float targetPriv = (curPrivMask != 0) ? 1.0f : 0.0f;
 
-            bool fO = false, fD = false, fM = false, fG = false;
+            bool fO = MoveTowards(ref _osdFade, osdNow ? 1.0f : 0.0f, dt * 8.5f * fadeSpd);
+            bool fD = MoveTowards(ref _dlFade, dlNow ? 1.0f : 0.0f, dt * 8.0f * fadeSpd);
+            bool fM = false;
+            bool fG = false;
+            int desiredColMode = osdNow ? 3 : ((dlNow && !_alwaysMinimal) ? 2 : ((_petState != 0) ? 1 : 0));
             if (_isExpanded)
             {
-                fO = MoveTowards(ref _osdFade, osdNow ? 1.0f : 0.0f, dt * 6.8f * fadeSpd);
-                if (osdNow || _osdFade > 0.02f)
+                if (_activeColMode != 0 || _colContentFade < 1.0f)
                 {
-                    if (_dlExpBannerFade > 0f) { _dlExpBannerFade = 0f; _needsRedraw = true; }
+                    _activeColMode = 0;
+                    _colContentFade = 1.0f;
                 }
-                fD = MoveTowards(ref _dlFade, 0.0f, dt * 8.0f * fadeSpd);
-                fM = MoveTowards(ref _mascotFade, 0.0f, dt * 6.0f * fadeSpd);
-                fG = MoveTowards(ref _glanceFade, 1.0f, dt * 6.0f * fadeSpd);
             }
             else
             {
-                // Strict single-winner collapsed state machine: at most ONE activity has fade > 0 at any instant!
-                int colMode = osdNow ? 3 : ((dlNow && !_alwaysMinimal) ? 2 : ((_petState != 0) ? 1 : 0));
-                if (colMode == 3)
+                if (_activeColMode != desiredColMode)
                 {
-                    fD = MoveTowards(ref _dlFade,     0.0f, dt * 11.0f * fadeSpd);
-                    fM = MoveTowards(ref _mascotFade, 0.0f, dt * 11.0f * fadeSpd);
-                    fG = MoveTowards(ref _glanceFade, 0.0f, dt * 11.0f * fadeSpd);
-                    if (_dlFade <= 0.01f && _mascotFade <= 0.01f && _glanceFade <= 0.01f && _curW >= U(182f))
-                        fO = MoveTowards(ref _osdFade, 1.0f, dt * 8.5f * fadeSpd);
-                }
-                else if (colMode == 2)
-                {
-                    fO = MoveTowards(ref _osdFade,    0.0f, dt * 10.0f * fadeSpd);
-                    fM = MoveTowards(ref _mascotFade, 0.0f, dt * 10.0f * fadeSpd);
-                    fG = MoveTowards(ref _glanceFade, 0.0f, dt * 10.0f * fadeSpd);
-                    if (_osdFade <= 0.01f && _mascotFade <= 0.01f && _glanceFade <= 0.01f && _curW >= U(190f))
-                        fD = MoveTowards(ref _dlFade, 1.0f, dt * 7.8f * fadeSpd);
-                }
-                else if (colMode == 1)
-                {
-                    fO = MoveTowards(ref _osdFade,    0.0f, dt * 9.0f * fadeSpd);
-                    fD = MoveTowards(ref _dlFade,     0.0f, dt * 9.0f * fadeSpd);
-                    fG = MoveTowards(ref _glanceFade, 0.0f, dt * 6.8f * fadeSpd);
-                    if (_osdFade <= 0.01f && _dlFade <= 0.01f && _glanceFade <= 0.01f)
-                        fM = MoveTowards(ref _mascotFade, 1.0f, dt * 2.2f * fadeSpd);
+                    fG = MoveTowards(ref _colContentFade, 0.0f, dt * 15.0f * fadeSpd);
+                    if (_colContentFade <= 0.02f)
+                    {
+                        _activeColMode = desiredColMode;
+                        _colContentFade = 0.02f;
+                        fG = true;
+                    }
                 }
                 else
                 {
-                    fO = MoveTowards(ref _osdFade,    0.0f, dt * 8.8f * fadeSpd);
-                    fD = MoveTowards(ref _dlFade,     0.0f, dt * 8.2f * fadeSpd);
-                    fM = MoveTowards(ref _mascotFade, 0.0f, dt * 3.0f * fadeSpd);
-                    if (_osdFade <= 0.01f && _dlFade <= 0.01f && _mascotFade <= 0.01f)
-                        fG = MoveTowards(ref _glanceFade, 1.0f, dt * 7.5f * fadeSpd);
+                    float inSpd = (_activeColMode == 1) ? 2.6f : 12.0f;
+                    fG = MoveTowards(ref _colContentFade, 1.0f, dt * inSpd * fadeSpd);
                 }
             }
 
             bool fS  = MoveTowards(ref _sleepFade,       targetSleep,  dt * 1.0f * fadeSpd);
             bool fW  = MoveTowards(ref _waveFade,        targetWave,   dt * 2.6f * fadeSpd);
             bool fE  = MoveTowards(ref _expandFade,      targetExpand, dt * 4.2f * fadeSpd);
-            bool fB  = (_osdFade > 0.01f) && MoveTowards(ref _osdAnimBar, targetBar, dt * 6.5f);
-            bool fDE = MoveTowards(ref _dlExpBannerFade, (_osdFade > 0.02f ? 0.0f : targetDlExp), dt * 6.2f * fadeSpd);
-            bool fDB = (_dlFade > 0.01f || _dlExpBannerFade > 0.01f) && MoveTowards(ref _dlAnimBar, targetDlBar, dt * 5.2f);
+            bool fB  = (osdNow || _osdFade > 0.01f) && MoveTowards(ref _osdAnimBar, targetBar, dt * 7.5f);
+            bool fDE = MoveTowards(ref _dlExpBannerFade, 0.0f, dt * 8.0f * fadeSpd);
+            bool fDB = (dlNow || _dlFade > 0.01f) && MoveTowards(ref _dlAnimBar, targetDlBar, dt * 5.5f);
             bool fP  = MoveTowards(ref _privacyFade,     targetPriv,   dt * 4.5f * fadeSpd);
 
             if (mW || mH || mR || mE || fG || fM || fS || fW || fE || fO || fB || fD || fDE || fDB || fP || _osdFade > 0.01f || _dlFade > 0.01f || _dlExpBannerFade > 0.01f)
@@ -1310,6 +1302,8 @@ RefreshBatteryLevel();
             float oldOsdFade = _osdFade;
             float oldDlFade = _dlFade;
             float oldDlExp = _dlExpBannerFade;
+            int oldColMode = _activeColMode;
+            float oldColFade = _colContentFade;
             float oldPrivFade = _privacyFade;
 
             _isExpanded = expanded;
@@ -1321,30 +1315,31 @@ RefreshBatteryLevel();
             if (_previewForceWave)
             {
                 _showRestingMascot = true;
-                _glanceFade = 0.0f;
-                _mascotFade = 1.0f;
+                _activeColMode = 1;
+                _colContentFade = 1.0f;
                 _waveFade = 1.0f;
                 _sleepFade = 0.0f;
                 _osdFade = 0.0f;
-                _dlFade = 0.0f;
             }
             else if (!expanded && IsOsdActive)
             {
-                _glanceFade = 0.0f;
-                _mascotFade = 0.0f;
-                _waveFade = 0.0f;
-                _sleepFade = 0.0f;
+                _activeColMode = 3;
+                _colContentFade = 1.0f;
                 _osdFade = 1.0f;
-                _dlFade = 0.0f;
+            }
+            else if (!expanded && IsDownloadActive && !_alwaysMinimal)
+            {
+                _activeColMode = 2;
+                _colContentFade = 1.0f;
+                _dlFade = 1.0f;
             }
             else
             {
-                _glanceFade = 1.0f;
-                _mascotFade = 0.0f;
+                _activeColMode = 0;
+                _colContentFade = 1.0f;
                 _waveFade = 0.0f;
                 _sleepFade = 0.0f;
                 _osdFade = (expanded && IsOsdActive) ? 1.0f : 0.0f;
-                _dlFade = 0.0f;
             }
             _privacyFade = IsPrivacyActive ? 1.0f : 0.0f;
             _expandFade = expanded ? 1.0f : 0.0f;
@@ -1384,6 +1379,8 @@ RefreshBatteryLevel();
             _osdFade = oldOsdFade;
             _dlFade = oldDlFade;
             _dlExpBannerFade = oldDlExp;
+            _activeColMode = oldColMode;
+            _colContentFade = oldColFade;
             _privacyFade = oldPrivFade;
             UpdateTargetDimensions();
         }
@@ -1436,41 +1433,51 @@ RefreshBatteryLevel();
 
                     if (bodyH > U(12f))
                     {
-                        // Strictly disjoint height bands: Collapsed (<= 54 dp) and Expanded (>= 56 dp) never draw on the same frame!
-                        float colProg = 1.0f - SmoothStep01((bodyH - U(36f)) / U(18f));
-                        float minFade = SmoothStep01((bodyH - U(11f)) / U(14f));
-                        colProg *= minFade;
-                        float expProg = SmoothStep01((bodyH - U(56f)) / U(72f));
-
-                        if (colProg > 0.01f && expProg <= 0.0f)
+                        float splitH = U(48f);
+                        if (bodyH < splitH)
                         {
-                            GraphicsState stCol = g.Save();
-                            g.TranslateTransform(0f, -(1.0f - colProg) * U(4f));
-                            DrawCollapsedNusa(g, x0, bodyW, Math.Min(U(38f), bodyH));
-                            g.Restore(stCol);
-
-                            int veil = (int)((1.0f - colProg) * 255f);
-                            if (veil > 2)
+                            float colProg = (1.0f - SmoothStep01((bodyH - U(33f)) / U(15f))) * SmoothStep01((bodyH - U(11f)) / U(14f));
+                            if (colProg > 0.01f)
                             {
-                                using (SolidBrush vb = new SolidBrush(VeilCol(veil)))
+                                GraphicsState stCol = g.Save();
+                                g.TranslateTransform(0f, -(1.0f - colProg) * U(4f));
+                                DrawCollapsedNusa(g, x0, bodyW, Math.Min(U(36f), bodyH));
+                                g.Restore(stCol);
+
+                                int veil = (int)((1.0f - colProg) * 255f);
+                                if (veil > 2)
                                 {
-                                    g.FillRectangle(vb, x0 - ear, 0f, bodyW + ear * 2f, bodyH + 2f);
+                                    using (SolidBrush vb = new SolidBrush(VeilCol(veil)))
+                                    {
+                                        g.FillRectangle(vb, x0 - ear, 0f, bodyW + ear * 2f, bodyH + 2f);
+                                    }
                                 }
                             }
                         }
-                        else if (expProg > 0.01f)
+                        else
                         {
-                            GraphicsState stExp = g.Save();
-                            float yOff = -(1.0f - expProg) * U(6f);
-                            g.TranslateTransform(0f, yOff);
-                            float expFullH = (_pageIndex == 0 && _isLyricsSplit && _state.ShowLyrics) ? U(152f) : U(140f);
-                            DrawExpandedNusa(g, x0, bodyW, expFullH);
-                            g.Restore(stExp);
-
-                            int veil = (int)((1.0f - expProg) * 255f);
-                            if (veil > 2)
+                            float expProg = SmoothStep01((bodyH - splitH) / U(60f));
+                            if (expProg > 0.01f)
                             {
-                                using (SolidBrush vb = new SolidBrush(VeilCol(veil)))
+                                GraphicsState stExp = g.Save();
+                                float yOff = -(1.0f - expProg) * U(6f);
+                                g.TranslateTransform(0f, yOff);
+                                float expFullH = (_pageIndex == 0 && _isLyricsSplit && _state.ShowLyrics) ? U(152f) : U(140f);
+                                DrawExpandedNusa(g, x0, bodyW, expFullH);
+                                g.Restore(stExp);
+
+                                int veil = (int)((1.0f - expProg) * 255f);
+                                if (veil > 2)
+                                {
+                                    using (SolidBrush vb = new SolidBrush(VeilCol(veil)))
+                                    {
+                                        g.FillRectangle(vb, x0 - ear, 0f, bodyW + ear * 2f, bodyH + 2f);
+                                    }
+                                }
+                            }
+                            else
+                            {
+                                using (SolidBrush vb = new SolidBrush(VeilCol(255)))
                                 {
                                     g.FillRectangle(vb, x0 - ear, 0f, bodyW + ear * 2f, bodyH + 2f);
                                 }
@@ -1518,27 +1525,29 @@ RefreshBatteryLevel();
         private void DrawCollapsedNusa(Graphics g, float x0, float w, float h)
         {
             float midY = h * 0.5f;
-            float oEase = SmoothStep01(_osdFade);
-            if (oEase > 0.01f)
+            int mode = _previewForceWave ? 1 : _activeColMode;
+            float cAlpha = _previewForceWave ? 1.0f : SmoothStep01(_colContentFade);
+            if (cAlpha <= 0.01f) return;
+
+            if (mode == 3)
             {
                 GraphicsState stOsd = g.Save();
-                g.TranslateTransform(0f, -(1.0f - oEase) * U(2.5f));
-                DrawOsdHudRow(g, x0 + U(13f), midY, Math.Max(U(80f), w - U(26f)), oEase);
+                g.TranslateTransform(0f, -(1.0f - cAlpha) * U(2.0f));
+                DrawOsdHudRow(g, x0 + U(14f), midY, Math.Max(U(80f), w - U(28f)), cAlpha);
                 g.Restore(stOsd);
                 return;
             }
 
-            float dEase = _alwaysMinimal ? 0f : SmoothStep01(_dlFade);
-            if (dEase > 0.01f)
+            if (mode == 2 && !_alwaysMinimal)
             {
                 GraphicsState stDl = g.Save();
-                g.TranslateTransform(0f, -(1.0f - dEase) * U(2.5f));
-                DrawDownloadHudRow(g, x0 + U(13f), midY, Math.Max(U(80f), w - U(26f)), dEase);
+                g.TranslateTransform(0f, -(1.0f - cAlpha) * U(2.0f));
+                DrawDownloadHudRow(g, x0 + U(14f), midY, Math.Max(U(80f), w - U(28f)), cAlpha);
                 g.Restore(stDl);
                 return;
             }
 
-            float mEase = SmoothStep01(_previewForceWave ? 1.0f : _mascotFade);
+            float mEase = (mode == 1) ? cAlpha : 0f;
             float wEase = SmoothStep01(_previewForceWave ? 1.0f : _waveFade);
             float sEase = SmoothStep01(_previewForceWave ? 0.0f : _sleepFade);
             if (mEase > 0.01f)
@@ -1633,11 +1642,11 @@ RefreshBatteryLevel();
                 return;
             }
 
-            float cEase = SmoothStep01(_glanceFade);
+            float cEase = cAlpha;
             if (cEase <= 0.01f) return;
 
             GraphicsState stClock = g.Save();
-            g.TranslateTransform(0f, -(1.0f - cEase) * U(3.0f));
+            g.TranslateTransform(0f, -(1.0f - cEase) * U(2.5f));
 
             if ((_media.HasMedia && _media.IsPlaying) && _batteryStateKind != 2)
             {
@@ -1790,7 +1799,7 @@ RefreshBatteryLevel();
             return x0 + U(15f) + wTitle + U(8f);
         }
 
-        // ==================== STAGE 1: EXPANDED NUSA ====================
+        // ==================== STAGE 1: EXPANDED NUSA (FLAT INLINE HEADER — NO FLOATING POPUPS!) ====================
         private void DrawExpandedNusa(Graphics g, float x0, float w, float h)
         {
             bool isSplitLyrics = (_pageIndex == 0 && _isLyricsSplit && _state.ShowLyrics);
@@ -1798,122 +1807,102 @@ RefreshBatteryLevel();
 
             float gearX = _state.EqualizerEnabled ? (x0 + w - U(43f)) : (x0 + w - U(23f));
             float slotRight = gearX - U(13f);
-            float leftLimitX = MeasurePageHeaderLeftLimit(g, x0, isSplitLyrics);
-            float slotLeft = Math.Max(leftLimitX, x0 + (isSplitLyrics ? U(140f) : U(132f)));
+            float slotLeft = MeasurePageHeaderLeftLimit(g, x0, isSplitLyrics);
 
-            float oBan = SmoothStep01(_osdFade);
-            float dBan = (oBan > 0.01f || !IsDownloadActive) ? 0f : SmoothStep01(_dlExpBannerFade);
-            float banCover = Math.Max(oBan, dBan);
-
-            if (banCover < 0.96f)
+            float badgeRightX = slotRight;
+            float osdInline = SmoothStep01(_osdFade);
+            // At most ONE flat inline status badge on the right — Battery & Clock ALWAYS stay visible & centered!
+            if (osdInline > 0.03f)
             {
-                bool allowHdrHits = (banCover < 0.15f);
-                float badgeRightX = slotRight;
-                // Show at most ONE priority status pill on the right so header items never pile up!
-                if (IsPrivacyActive)
-                {
-                    badgeRightX = DrawPrivacyHeaderBadge(g, allowHdrHits ? "hdr_privacy" : null, badgeRightX, hdrY, !isSplitLyrics) - U(6f);
-                }
-                else if (IsDownloadActive)
-                {
-                    DrawDownloadHeaderBadge(g, allowHdrHits ? "hdr_dl" : null, badgeRightX - U(10f), hdrY);
-                    badgeRightX -= U(25f);
-                }
-                else if (UpdaterService.HasNewerRelease && !string.IsNullOrEmpty(UpdaterService.LatestTag))
-                {
-                    string upTxt = "\u2B06 " + UpdaterService.LatestTag;
-                    SizeF upSz = g.MeasureString(upTxt, _fShelfSub);
-                    float upW = upSz.Width + U(11f);
-                    RectangleF upRect = new RectangleF(badgeRightX - upW, hdrY - U(8.5f), upW, U(17f));
-                    if (allowHdrHits) _hitZones.Add(new HitZone { Id = "hdr_update", Rect = upRect });
-                    bool upHov = (_hoveredId == "hdr_update");
-                    FillPill(g, upRect, upHov ? Color.FromArgb(230, 16, 185, 129) : Color.FromArgb(145, 5, 150, 105));
-                    DrawCenteredText(g, upTxt, _fShelfSub, Color.White, upRect.X + upRect.Width * 0.5f, hdrY);
-                    badgeRightX = upRect.X - U(6f);
-                }
+                badgeRightX = DrawOsdHeaderBadge(g, "osd_banner", badgeRightX, hdrY, osdInline, !isSplitLyrics) - U(6f);
+            }
+            else if (IsPrivacyActive)
+            {
+                badgeRightX = DrawPrivacyHeaderBadge(g, "hdr_privacy", badgeRightX, hdrY, !isSplitLyrics) - U(6f);
+            }
+            else if (IsDownloadActive)
+            {
+                badgeRightX = DrawDownloadHeaderBadge(g, "hdr_dl", badgeRightX, hdrY, !isSplitLyrics) - U(6f);
+            }
+            else if (UpdaterService.HasNewerRelease && !string.IsNullOrEmpty(UpdaterService.LatestTag))
+            {
+                string upTxt = "\u2B06 " + UpdaterService.LatestTag;
+                SizeF upSz = g.MeasureString(upTxt, _fShelfSub);
+                float upW = upSz.Width + U(11f);
+                RectangleF upRect = new RectangleF(badgeRightX - upW, hdrY - U(8.5f), upW, U(17f));
+                _hitZones.Add(new HitZone { Id = "hdr_update", Rect = upRect });
+                bool upHov = (_hoveredId == "hdr_update");
+                FillPill(g, upRect, upHov ? Color.FromArgb(230, 16, 185, 129) : Color.FromArgb(145, 5, 150, 105));
+                DrawCenteredText(g, upTxt, _fShelfSub, Color.White, upRect.X + upRect.Width * 0.5f, hdrY);
+                badgeRightX = upRect.X - U(6f);
+            }
 
-                string shortBat = string.Format(CultureInfo.InvariantCulture, "{0}%", _batteryPercent);
-                string fullBat;
-                Color batCol;
-                if (_batteryStateKind == 1)
+            string shortBat = string.Format(CultureInfo.InvariantCulture, "{0}%", _batteryPercent);
+            string fullBat;
+            Color batCol;
+            if (_batteryStateKind == 1)
+            {
+                fullBat = string.Format(CultureInfo.InvariantCulture, "{0}% \u00B7 {1}", _batteryPercent, _state.T("\u0110ang s\u1EA1c", "Charging"));
+                batCol = IsLight ? Color.FromArgb(5, 150, 105) : Color.FromArgb(74, 222, 128);
+            }
+            else if (_batteryStateKind == 2)
+            {
+                fullBat = string.Format(CultureInfo.InvariantCulture, "{0}% \u00B7 {1}", _batteryPercent, _state.T("Pin y\u1EBFu", "Low"));
+                batCol = IsLight ? Color.FromArgb(220, 38, 38) : Color.FromArgb(255, 98, 98);
+            }
+            else
+            {
+                fullBat = string.Format(CultureInfo.InvariantCulture, "{0}% \u00B7 {1}", _batteryPercent, _state.T("Pin bth", "Normal"));
+                batCol = Nw(215);
+            }
+
+            string dateStr = DateTime.Now.ToString("dd MMM ", CultureInfo.InvariantCulture);
+            string timeStr = DateTime.Now.ToString(_showHeaderSeconds ? "HH:mm:ss" : "HH:mm");
+            SizeF dSz = g.MeasureString(dateStr, _fHdrDate);
+            SizeF tSz = g.MeasureString(timeStr, _fHdrTime);
+
+            float availSpan = Math.Max(U(52f), badgeRightX - slotLeft);
+            string batTxt = isSplitLyrics ? shortBat : fullBat;
+            SizeF bSz = g.MeasureString(batTxt, _fAxis);
+            if (!isSplitLyrics && (U(24f) + bSz.Width + dSz.Width + tSz.Width + U(8f) > availSpan))
+            {
+                batTxt = shortBat;
+                bSz = g.MeasureString(batTxt, _fAxis);
+            }
+            bool drawDate = true;
+            if (U(24f) + bSz.Width + dSz.Width + tSz.Width + U(6f) > availSpan)
+            {
+                drawDate = false;
+                dSz = SizeF.Empty;
+            }
+
+            // Center Battery + Date + Clock symmetrically between left title and right status area!
+            float visualClusterW = U(24f) + bSz.Width + (drawDate ? dSz.Width : 0f) + tSz.Width;
+            float clusterStartX = isSplitLyrics
+                ? Math.Max(slotLeft + U(4f), Math.Min(badgeRightX - visualClusterW - U(4f), x0 + (w - visualClusterW) * 0.5f))
+                : (slotLeft + Math.Max(U(3f), (availSpan - visualClusterW) * 0.5f));
+            float ringX = clusterStartX + U(7.5f);
+
+            DrawBatteryRing(g, ringX, hdrY);
+            float batX = ringX + U(10.5f);
+            _hitZones.Add(new HitZone { Id = "hdr_bat", Rect = new RectangleF(ringX - U(8f), hdrY - U(11f), bSz.Width + U(20f), U(22f)) });
+            DrawLeftVCenteredText(g, batTxt, _fAxis, batCol, batX, hdrY);
+
+            float dateX = batX + bSz.Width + U(6f);
+            float dateY = hdrY - _fHdrTime.Height * 0.5f;
+            float dtW = (drawDate ? dSz.Width : 0f) + tSz.Width;
+            _hitZones.Add(new HitZone { Id = "hdr_clock", Rect = new RectangleF(dateX - U(2f), hdrY - U(11f), dtW + U(6f), U(22f)) });
+            using (SolidBrush bDate = new SolidBrush(ToCrispInk(Nw(_hoveredId == "hdr_clock" ? 255 : 210))))
+            using (SolidBrush bTime = new SolidBrush(InkPri))
+            {
+                if (drawDate)
                 {
-                    fullBat = string.Format(CultureInfo.InvariantCulture, "{0}% \u00B7 {1}", _batteryPercent, _state.T("\u0110ang s\u1EA1c", "Charging"));
-                    batCol = IsLight ? Color.FromArgb(5, 150, 105) : Color.FromArgb(74, 222, 128);
-                }
-                else if (_batteryStateKind == 2)
-                {
-                    fullBat = string.Format(CultureInfo.InvariantCulture, "{0}% \u00B7 {1}", _batteryPercent, _state.T("Pin y\u1EBFu", "Low"));
-                    batCol = IsLight ? Color.FromArgb(220, 38, 38) : Color.FromArgb(255, 98, 98);
+                    g.DrawString(dateStr, _fHdrDate, bDate, (float)Math.Round(dateX), (float)Math.Round(hdrY - dSz.Height * 0.5f));
+                    g.DrawString(timeStr, _fHdrTime, bTime, (float)Math.Round(dateX + dSz.Width), (float)Math.Round(dateY));
                 }
                 else
                 {
-                    fullBat = string.Format(CultureInfo.InvariantCulture, "{0}% \u00B7 {1}", _batteryPercent, _state.T("Pin bth", "Normal"));
-                    batCol = Nw(215);
-                }
-
-                string dateStr = DateTime.Now.ToString("dd MMM ", CultureInfo.InvariantCulture);
-                string timeStr = DateTime.Now.ToString(_showHeaderSeconds ? "HH:mm:ss" : "HH:mm");
-                SizeF dSz = g.MeasureString(dateStr, _fHdrDate);
-                SizeF tSz = g.MeasureString(timeStr, _fHdrTime);
-
-                float availSpan = Math.Max(U(60f), badgeRightX - slotLeft);
-                string batTxt = isSplitLyrics ? shortBat : fullBat;
-                SizeF bSz = g.MeasureString(batTxt, _fAxis);
-                if (!isSplitLyrics && (U(19f) + bSz.Width + U(6f) + dSz.Width + tSz.Width > availSpan))
-                {
-                    batTxt = shortBat;
-                    bSz = g.MeasureString(batTxt, _fAxis);
-                }
-                bool drawDate = true;
-                if (U(19f) + bSz.Width + U(6f) + dSz.Width + tSz.Width > availSpan)
-                {
-                    drawDate = false;
-                    dSz = SizeF.Empty;
-                }
-
-                float totalClusterW = U(19f) + bSz.Width + U(6f) + (drawDate ? dSz.Width : 0f) + tSz.Width;
-                float minRingX = slotLeft + U(8f);
-                float maxRingX = Math.Max(minRingX, badgeRightX - totalClusterW + U(2f));
-                float idealRingX = isSplitLyrics
-                    ? (x0 + (w - totalClusterW) * 0.5f + U(8f))
-                    : (x0 + U(143f));
-                float ringX = Math.Max(minRingX, Math.Min(maxRingX, idealRingX));
-
-                DrawBatteryRing(g, ringX, hdrY);
-                float batX = ringX + U(10.5f);
-                if (allowHdrHits)
-                {
-                    _hitZones.Add(new HitZone { Id = "hdr_bat", Rect = new RectangleF(ringX - U(8f), hdrY - U(11f), bSz.Width + U(20f), U(22f)) });
-                }
-                DrawLeftVCenteredText(g, batTxt, _fAxis, batCol, batX, hdrY);
-
-                float dateX = batX + bSz.Width + U(6f);
-                float dateY = hdrY - _fHdrTime.Height * 0.5f;
-                float dtW = (drawDate ? dSz.Width : 0f) + tSz.Width;
-                if (allowHdrHits)
-                {
-                    _hitZones.Add(new HitZone { Id = "hdr_clock", Rect = new RectangleF(dateX - U(2f), hdrY - U(11f), dtW + U(6f), U(22f)) });
-                }
-                using (SolidBrush bDate = new SolidBrush(ToCrispInk(Nw(_hoveredId == "hdr_clock" ? 255 : 210))))
-                using (SolidBrush bTime = new SolidBrush(InkPri))
-                {
-                    if (drawDate)
-                    {
-                        g.DrawString(dateStr, _fHdrDate, bDate, (float)Math.Round(dateX), (float)Math.Round(hdrY - dSz.Height * 0.5f));
-                        g.DrawString(timeStr, _fHdrTime, bTime, (float)Math.Round(dateX + dSz.Width), (float)Math.Round(dateY));
-                    }
-                    else
-                    {
-                        g.DrawString(timeStr, _fHdrTime, bTime, (float)Math.Round(dateX), (float)Math.Round(dateY));
-                    }
-                }
-
-                if (banCover > 0.02f)
-                {
-                    using (SolidBrush vb = new SolidBrush(VeilCol((int)(banCover * 255f))))
-                    {
-                        g.FillRectangle(vb, slotLeft - U(2f), 0f, (slotRight - slotLeft) + U(4f), isSplitLyrics ? U(28.5f) : U(31f));
-                    }
+                    g.DrawString(timeStr, _fHdrTime, bTime, (float)Math.Round(dateX), (float)Math.Round(dateY));
                 }
             }
 
@@ -1953,50 +1942,6 @@ RefreshBatteryLevel();
             DrawNavArrow(g, "nav_prev", x0 + U(20f), navCy, true);
             DrawNavArrow(g, "nav_next", x0 + w - U(20f), navCy, false);
             DrawPageDots(g, x0 + w * 0.5f, h - U(7.5f));
-
-            // Render OSD / Download Capsule strictly inside the Header Dynamic Slot so it NEVER overlaps Page Titles, Album Art, or Gear!
-            if (oBan > 0.02f)
-            {
-                float maxSlotW = Math.Max(U(165f), slotRight - slotLeft);
-                float bw = Math.Min(maxSlotW, U(284f));
-                float bh = U(25.0f);
-                float bx = slotLeft + (maxSlotW - bw) * 0.5f;
-                RectangleF banner = new RectangleF(bx, hdrY - bh * 0.5f - (1.0f - oBan) * U(4f), bw, bh);
-                if (_osdKind == OsdKind.Screenshot || _osdKind == OsdKind.PrivacyAlert)
-                {
-                    _hitZones.Add(new HitZone { Id = "osd_banner", Rect = banner });
-                }
-                Color capBg = IsLight
-                    ? Color.FromArgb((int)(252f * oBan), 255, 255, 255)
-                    : Color.FromArgb((int)(252f * oBan), 16, 20, 30);
-                FillPill(g, banner, capBg);
-                using (GraphicsPath bp = CreateRoundRect(banner, bh * 0.5f))
-                using (Pen bPen = new Pen(IsLight ? Color.FromArgb((int)(195f * oBan), 186, 202, 224) : Color.FromArgb((int)(155f * oBan), 75, 95, 130), 1.0f))
-                {
-                    g.DrawPath(bPen, bp);
-                }
-                DrawOsdHudRow(g, banner.X + U(10f), banner.Y + bh * 0.5f, banner.Width - U(20f), oBan);
-            }
-            else if (dBan > 0.02f && IsDownloadActive)
-            {
-                float maxSlotW = Math.Max(U(165f), slotRight - slotLeft);
-                float bw = Math.Min(maxSlotW, U(288f));
-                float bh = U(25.0f);
-                float bx = slotLeft + (maxSlotW - bw) * 0.5f;
-                RectangleF banner = new RectangleF(bx, hdrY - bh * 0.5f - (1.0f - dBan) * U(4f), bw, bh);
-                _hitZones.Add(new HitZone { Id = "dl_open", Rect = banner });
-                bool hovDl = (_hoveredId == "dl_open");
-                Color capBg = IsLight
-                    ? Color.FromArgb((int)(252f * dBan), hovDl ? 241 : 255, hovDl ? 248 : 255, 255)
-                    : Color.FromArgb((int)(252f * dBan), hovDl ? 22 : 14, hovDl ? 30 : 19, hovDl ? 44 : 30);
-                FillPill(g, banner, capBg);
-                using (GraphicsPath bp = CreateRoundRect(banner, bh * 0.5f))
-                using (Pen bPen = new Pen(IsLight ? Color.FromArgb((int)(195f * dBan), 148, 196, 238) : Color.FromArgb((int)(160f * dBan), 56, 189, 248), 1.0f))
-                {
-                    g.DrawPath(bPen, bp);
-                }
-                DrawDownloadHudRow(g, banner.X + U(10f), banner.Y + bh * 0.5f, banner.Width - U(20f), dBan);
-            }
         }
 
         // ==================== PAGE 0: REAL WINRT SMTC MUSIC & ALBUM ART ====================
@@ -3250,12 +3195,97 @@ RefreshBatteryLevel();
             }
         }
 
+        private float DrawOsdHeaderBadge(Graphics g, string id, float rightEdgeX, float cy, float alpha01, bool compact)
+        {
+            int a = Math.Max(0, Math.Min(255, (int)(255f * alpha01)));
+            if (a <= 6) return rightEdgeX;
+
+            string text;
+            Color bgTint;
+            if (_osdKind == OsdKind.AudioDevice)
+            {
+                bool hp = (_osdDelta > 0);
+                string dev = (_osd != null && !string.IsNullOrEmpty(_osd.AudioDeviceName))
+                    ? _osd.AudioDeviceName
+                    : (hp ? _state.T("Tai nghe", "Audio") : _state.T("Loa", "Speaker"));
+                text = compact ? string.Format(CultureInfo.InvariantCulture, "{0}%", _osdPercent) : Truncate(dev, 11);
+                bgTint = Color.FromArgb((int)(72 * alpha01), 14, 165, 233);
+            }
+            else if (_osdKind == OsdKind.Screenshot)
+            {
+                text = compact ? _state.T("K\u1EC7 t\u1EC7p", "Shelf") : _state.T("\u0110\u00E3 ghim", "Pinned");
+                bgTint = Color.FromArgb((int)(76 * alpha01), 124, 58, 237);
+            }
+            else if (_osdKind == OsdKind.PrivacyAlert)
+            {
+                bool cam = (_osdDelta == 2 || _osdDelta == 3);
+                text = (_osdDelta == 3) ? "Cam+Mic" : (cam ? "Cam" : "Mic");
+                bgTint = cam ? Color.FromArgb((int)(74 * alpha01), 34, 197, 94) : Color.FromArgb((int)(74 * alpha01), 249, 115, 22);
+            }
+            else if (_osdKind == OsdKind.Brightness)
+            {
+                text = string.Format(CultureInfo.InvariantCulture, "{0}%", _osdPercent);
+                bgTint = Color.FromArgb((int)(68 * alpha01), 245, 158, 11);
+            }
+            else if (_osdKind == OsdKind.MediaToggle)
+            {
+                text = (_osdDelta > 0) ? _state.T("Ph\u00E1t", "Play") : _state.T("D\u1EEBng", "Pause");
+                bgTint = Color.FromArgb((int)(68 * alpha01), 14, 165, 233);
+            }
+            else if (_osdKind == OsdKind.Battery)
+            {
+                text = (_batteryStateKind == 1) ? _state.T("S\u1EA1c", "Chg") : string.Format(CultureInfo.InvariantCulture, "{0}%", _osdPercent);
+                bgTint = Color.FromArgb((int)(68 * alpha01), 16, 185, 129);
+            }
+            else
+            {
+                text = _osdMuted ? _state.T("T\u1EAFt", "Mute") : string.Format(CultureInfo.InvariantCulture, "{0}%", _osdPercent);
+                bgTint = _osdMuted
+                    ? Color.FromArgb((int)(78 * alpha01), 239, 68, 68)
+                    : (IsLight ? Color.FromArgb((int)(42 * alpha01), 15, 23, 42) : Color.FromArgb((int)(46 * alpha01), 255, 255, 255));
+            }
+
+            SizeF tSz = g.MeasureString(text, _fShelfSub);
+            float iconSpan = U(17f);
+            float pillW = iconSpan + tSz.Width + U(9f);
+            RectangleF rect = new RectangleF(rightEdgeX - pillW, cy - U(8.5f), pillW, U(17f));
+            if (!string.IsNullOrEmpty(id) && (_osdKind == OsdKind.Screenshot || _osdKind == OsdKind.PrivacyAlert))
+            {
+                _hitZones.Add(new HitZone { Id = id, Rect = rect });
+            }
+            FillPill(g, rect, bgTint);
+
+            float icx = rect.X + U(9.5f);
+            GraphicsState stIc = g.Save();
+            g.TranslateTransform(icx, cy);
+            g.ScaleTransform(0.76f, 0.76f);
+            g.TranslateTransform(-icx, -cy);
+            if (_osdKind == OsdKind.AudioDevice && _osdDelta > 0) DrawHeadphonesVector(g, icx, cy, a);
+            else if (_osdKind == OsdKind.Brightness) DrawSunVector(g, icx, cy, _osdPercent, a);
+            else if (_osdKind == OsdKind.Screenshot) DrawScreenshotVector(g, icx, cy, a);
+            else if (_osdKind == OsdKind.PrivacyAlert) DrawPrivacySensorVector(g, icx, cy, (_osdDelta == 2 || _osdDelta == 3), a);
+            else if (_osdKind == OsdKind.MediaToggle) DrawMediaToggleVector(g, icx, cy, _osdDelta > 0, a);
+            else
+            {
+                Color spkCol = _osdMuted ? Color.FromArgb(248, 113, 113) : (IsLight ? Color.FromArgb(15, 23, 42) : Color.FromArgb(255, 255, 255));
+                DrawSpeakerVector(g, icx, cy, _osdMuted, _osdPercent, spkCol, a);
+            }
+            g.Restore(stIc);
+
+            Color txtCol = Color.FromArgb(a, InkPri.R, InkPri.G, InkPri.B);
+            DrawLeftVCenteredText(g, text, _fShelfSub, txtCol, rect.X + iconSpan, cy);
+            return rect.X;
+        }
+
+        // Single-row horizontal Dynamic Island HUD — 100% centered on cy, zero 2-deck text stacking!
         private void DrawOsdHudRow(Graphics g, float x, float cy, float w, float alpha01)
         {
             int a = Math.Max(0, Math.Min(255, (int)(255f * alpha01)));
             if (a <= 4) return;
-            float iconCx = x + U(9f);
-            string label, rightTxt;
+            float iconCx = x + U(8.5f);
+            string label = "";
+            string rightTxt;
+            bool showBar = true;
             Color barStart, barEnd, labelCol;
 
             if (_osdKind == OsdKind.AudioDevice)
@@ -3273,7 +3303,7 @@ RefreshBatteryLevel();
                 string dev = (_osd != null && !string.IsNullOrEmpty(_osd.AudioDeviceName))
                     ? _osd.AudioDeviceName
                     : (hp ? _state.T("Tai nghe", "Headphones") : _state.T("Loa ngo\u00E0i", "Speakers"));
-                label = Truncate(dev, 23);
+                label = Truncate(dev, 18);
                 rightTxt = _osdMuted ? _state.T("T\u1EAFt", "Mute") : string.Format(CultureInfo.InvariantCulture, "{0}%", _osdPercent);
                 barStart = Color.FromArgb(a, 14, 165, 233); barEnd = Color.FromArgb(a, 56, 189, 248);
                 labelCol = IsLight ? Color.FromArgb(a, 2, 132, 199) : Color.FromArgb(a, 125, 211, 252);
@@ -3283,13 +3313,11 @@ RefreshBatteryLevel();
                 bool cam = (_osdDelta == 2 || _osdDelta == 3);
                 DrawPrivacySensorVector(g, iconCx, cy, cam, a);
                 string app = (_osd != null) ? (cam ? _osd.CameraAppName : _osd.MicAppName) : "";
-                string kindName = (_osdDelta == 3)
-                    ? "Camera & Mic"
-                    : (cam ? "Camera" : "Microphone");
-                label = !string.IsNullOrEmpty(app) ? Truncate(kindName + " \u00B7 " + app, 24) : kindName;
+                string kindName = (_osdDelta == 3) ? "Camera & Mic" : (cam ? "Camera" : "Microphone");
+                label = !string.IsNullOrEmpty(app) ? Truncate(kindName + " \u00B7 " + app, 21) : kindName;
                 rightTxt = _state.T("\u0110ang b\u1EADt", "Active");
-                barStart = cam ? Color.FromArgb(a, 22, 163, 74) : Color.FromArgb(a, 234, 88, 12);
-                barEnd   = cam ? Color.FromArgb(a, 74, 222, 128) : Color.FromArgb(a, 251, 146, 60);
+                showBar = false;
+                barStart = Color.Empty; barEnd = Color.Empty;
                 labelCol = cam
                     ? (IsLight ? Color.FromArgb(a, 21, 128, 61) : Color.FromArgb(a, 74, 222, 128))
                     : (IsLight ? Color.FromArgb(a, 194, 65, 12) : Color.FromArgb(a, 253, 186, 116));
@@ -3297,9 +3325,10 @@ RefreshBatteryLevel();
             else if (_osdKind == OsdKind.Screenshot)
             {
                 DrawScreenshotVector(g, iconCx, cy, a);
-                label = _state.T("\u0110\u00E3 ghim \u1EA3nh ch\u1EE5p v\u00E0o K\u1EC7", "Screenshot pinned to Shelf");
+                label = _state.T("\u0110\u00E3 ghim \u1EA3nh ch\u1EE5p v\u00E0o K\u1EC7", "Pinned screenshot to Shelf");
                 rightTxt = _state.T("K\u1EC7 t\u1EC7p", "Shelf");
-                barStart = Color.FromArgb(a, 124, 58, 237); barEnd = Color.FromArgb(a, 56, 189, 248);
+                showBar = false;
+                barStart = Color.Empty; barEnd = Color.Empty;
                 labelCol = IsLight ? Color.FromArgb(a, 109, 40, 217) : Color.FromArgb(a, 196, 181, 253);
             }
             else if (_osdKind == OsdKind.MediaToggle)
@@ -3309,17 +3338,16 @@ RefreshBatteryLevel();
                 string tr = !string.IsNullOrEmpty(_media.CurrentTitle) ? _media.CurrentTitle : _state.T("Tr\u00ECnh ph\u00E1t nh\u1EA1c", "Media Player");
                 label = Truncate(tr, 20);
                 rightTxt = pl ? _state.T("Ph\u00E1t", "Play") : _state.T("D\u1EEBng", "Pause");
-                barStart = Color.FromArgb(a, 14, 165, 233); barEnd = Color.FromArgb(a, 52, 211, 153);
-                labelCol = Nw((int)(230 * alpha01));
+                showBar = false;
+                barStart = Color.Empty; barEnd = Color.Empty;
+                labelCol = Color.FromArgb(a, InkPri.R, InkPri.G, InkPri.B);
             }
             else if (_osdKind == OsdKind.Brightness)
             {
                 DrawSunVector(g, iconCx, cy, _osdPercent, a);
-                string dir = (_osdDelta > 0) ? " \u25B2" : ((_osdDelta < 0) ? " \u25BC" : "");
-                label = _state.T("\u0110\u1ED9 s\u00E1ng", "Brightness") + dir;
                 rightTxt = string.Format(CultureInfo.InvariantCulture, "{0}%", _osdPercent);
                 barStart = Color.FromArgb(a, 245, 158, 11); barEnd = Color.FromArgb(a, 253, 224, 71);
-                labelCol = Nw((int)(225 * alpha01));
+                labelCol = Color.Empty;
             }
             else if (_osdKind == OsdKind.Battery)
             {
@@ -3327,22 +3355,21 @@ RefreshBatteryLevel();
                 if (_batteryStateKind == 1)
                 {
                     label = _state.T("\u0110ang s\u1EA1c pin \u26A1", "Charging \u26A1");
-                    barStart = Color.FromArgb(a, 22, 163, 74); barEnd = Color.FromArgb(a, 74, 222, 128);
                     labelCol = IsLight ? Color.FromArgb(a, 5, 150, 105) : Color.FromArgb(a, 74, 222, 128);
                 }
                 else if (_batteryStateKind == 2)
                 {
                     label = _state.T("Pin y\u1EBFu \u00B7 C\u1EA7n s\u1EA1c", "Low Battery");
-                    barStart = Color.FromArgb(a, 220, 38, 38); barEnd = Color.FromArgb(a, 251, 146, 60);
                     labelCol = IsLight ? Color.FromArgb(a, 220, 38, 38) : Color.FromArgb(a, 252, 129, 129);
                 }
                 else
                 {
                     label = _state.T("Pin b\u00ECnh th\u01B0\u1EDDng", "Battery Normal");
-                    barStart = Color.FromArgb(a, 16, 185, 129); barEnd = Color.FromArgb(a, 52, 211, 153);
-                    labelCol = Nw((int)(225 * alpha01));
+                    labelCol = Color.FromArgb(a, InkPri.R, InkPri.G, InkPri.B);
                 }
                 rightTxt = string.Format(CultureInfo.InvariantCulture, "{0}%", _osdPercent);
+                showBar = false;
+                barStart = Color.Empty; barEnd = Color.Empty;
             }
             else
             {
@@ -3352,44 +3379,72 @@ RefreshBatteryLevel();
                 {
                     label = _state.T("\u0110\u00E3 t\u1EAFt ti\u1EBFng", "Muted");
                     rightTxt = _state.T("T\u1EAFt", "Mute");
-                    barStart = Color.FromArgb(a, 239, 68, 68); barEnd = Color.FromArgb(a, 248, 113, 113);
+                    showBar = false;
+                    barStart = Color.Empty; barEnd = Color.Empty;
                     labelCol = IsLight ? Color.FromArgb(a, 220, 38, 38) : Color.FromArgb(a, 248, 113, 113);
                 }
                 else
                 {
-                    string dir = (_osdDelta > 0) ? " \u25B2" : ((_osdDelta < 0) ? " \u25BC" : "");
-                    label = _state.T("\u00C2m l\u01B0\u1EE3ng", "Volume") + dir;
                     rightTxt = string.Format(CultureInfo.InvariantCulture, "{0}%", _osdPercent);
                     Color volInk = IsLight ? Color.FromArgb(a, 15, 23, 42) : Color.FromArgb(a, 255, 255, 255);
                     barStart = volInk; barEnd = volInk;
-                    labelCol = volInk;
+                    labelCol = Color.Empty;
                 }
             }
 
             SizeF rSz = g.MeasureString(rightTxt, _fPill);
-            float rightReserve = Math.Max(U(42f), rSz.Width + U(10f));
-            float barX = x + U(24f);
-            float barW = Math.Max(U(36f), w - U(24f) - rightReserve);
-
-            GraphicsState stOsdLbl = g.Save();
-            g.SetClip(new RectangleF(barX, cy - U(15f), barW + U(2f), U(16f)), CombineMode.Intersect);
-            DrawLeftVCenteredText(g, label, _fAxis, labelCol, barX, cy - U(5.8f));
-            g.Restore(stOsdLbl);
-
+            float contentLeft = x + U(23f);
+            float contentRight = x + w - rSz.Width - U(9f);
             DrawRightVCenteredText(g, rightTxt, _fPill, Color.FromArgb(a, InkPri.R, InkPri.G, InkPri.B), x + w, cy);
 
-            RectangleF track = new RectangleF(barX, cy + U(3.2f), barW, U(4.6f));
-            Color trackBg = IsLight
-                ? Color.FromArgb(Math.Max(0, Math.Min(255, (int)(55 * alpha01))), 15, 23, 42)
-                : Color.FromArgb(Math.Max(0, Math.Min(255, (int)(74 * alpha01))), 255, 255, 255);
-            FillPill(g, track, trackBg);
-            float frac = Math.Max(0f, Math.Min(1f, _osdAnimBar));
-            if (frac > 0.008f)
+            if (!string.IsNullOrEmpty(label) && showBar)
             {
-                RectangleF fillRect = new RectangleF(track.X, track.Y, Math.Max(track.Height, track.Width * frac), track.Height);
-                using (LinearGradientBrush lgb = new LinearGradientBrush(track, barStart, barEnd, LinearGradientMode.Horizontal))
+                float barW = U(56f);
+                float maxLblW = Math.Max(U(40f), (contentRight - barW - U(8f)) - contentLeft);
+                GraphicsState stOsdLbl = g.Save();
+                g.SetClip(new RectangleF(contentLeft, cy - U(11f), maxLblW, U(22f)), CombineMode.Intersect);
+                DrawLeftVCenteredText(g, label, _fAxis, labelCol, contentLeft, cy);
+                g.Restore(stOsdLbl);
+
+                RectangleF track = new RectangleF(contentRight - barW, cy - U(2.5f), barW, U(5.0f));
+                Color trackBg = IsLight
+                    ? Color.FromArgb(Math.Max(0, Math.Min(255, (int)(55 * alpha01))), 15, 23, 42)
+                    : Color.FromArgb(Math.Max(0, Math.Min(255, (int)(74 * alpha01))), 255, 255, 255);
+                FillPill(g, track, trackBg);
+                float frac = Math.Max(0f, Math.Min(1f, _osdAnimBar));
+                if (frac > 0.008f)
                 {
-                    FillPillBrush(g, fillRect, lgb);
+                    RectangleF fillRect = new RectangleF(track.X, track.Y, Math.Max(track.Height, track.Width * frac), track.Height);
+                    using (LinearGradientBrush lgb = new LinearGradientBrush(track, barStart, barEnd, LinearGradientMode.Horizontal))
+                    {
+                        FillPillBrush(g, fillRect, lgb);
+                    }
+                }
+            }
+            else if (!string.IsNullOrEmpty(label))
+            {
+                float maxLblW = Math.Max(U(40f), contentRight - contentLeft);
+                GraphicsState stOsdLbl = g.Save();
+                g.SetClip(new RectangleF(contentLeft, cy - U(11f), maxLblW, U(22f)), CombineMode.Intersect);
+                DrawLeftVCenteredText(g, label, _fAxis, labelCol, contentLeft, cy);
+                g.Restore(stOsdLbl);
+            }
+            else if (showBar)
+            {
+                float barW = Math.Max(U(44f), contentRight - contentLeft);
+                RectangleF track = new RectangleF(contentLeft, cy - U(2.6f), barW, U(5.2f));
+                Color trackBg = IsLight
+                    ? Color.FromArgb(Math.Max(0, Math.Min(255, (int)(55 * alpha01))), 15, 23, 42)
+                    : Color.FromArgb(Math.Max(0, Math.Min(255, (int)(74 * alpha01))), 255, 255, 255);
+                FillPill(g, track, trackBg);
+                float frac = Math.Max(0f, Math.Min(1f, _osdAnimBar));
+                if (frac > 0.008f)
+                {
+                    RectangleF fillRect = new RectangleF(track.X, track.Y, Math.Max(track.Height, track.Width * frac), track.Height);
+                    using (LinearGradientBrush lgb = new LinearGradientBrush(track, barStart, barEnd, LinearGradientMode.Horizontal))
+                    {
+                        FillPillBrush(g, fillRect, lgb);
+                    }
                 }
             }
         }
@@ -3402,25 +3457,50 @@ RefreshBatteryLevel();
             try { ext = Path.GetExtension(name) ?? ""; } catch { ext = ""; }
             if (ext.Length >= 2 && ext.Length <= 7 && maxChars > ext.Length + 6)
             {
-                int headLen = maxChars - ext.Length - 2;
-                return name.Substring(0, headLen).TrimEnd() + ".." + ext;
+                int headLen = maxChars - ext.Length - 1;
+                return name.Substring(0, headLen).TrimEnd(' ', '.', '-', '_') + "\u2026" + ext;
             }
-            return name.Substring(0, Math.Max(4, maxChars - 2)).TrimEnd() + "..";
+            return name.Substring(0, Math.Max(4, maxChars - 1)).TrimEnd(' ', '.', '-', '_') + "\u2026";
         }
 
-        private void DrawDownloadHeaderBadge(Graphics g, string id, float cx, float cy)
+        private float DrawDownloadHeaderBadge(Graphics g, string id, float rightEdgeX, float cy, bool compact)
         {
-            RectangleF hit = new RectangleF(cx - U(11f), cy - U(10f), U(22f), U(20f));
-            if (!string.IsNullOrEmpty(id))
+            string badgeTxt = "";
+            if (_dlSnap.IsCompleted)
             {
-                _hitZones.Add(new HitZone { Id = id, Rect = hit });
+                badgeTxt = _state.T("Xong", "Done");
             }
+            else if (_dlSnap.HasExactPercent)
+            {
+                badgeTxt = string.Format(CultureInfo.InvariantCulture, "{0}%", Math.Max(1, Math.Min(99, (int)Math.Round(_dlSnap.Progress01 * 100f))));
+            }
+            else if (!compact && _dlSnap.SpeedBytesPerSec > 1024.0)
+            {
+                badgeTxt = DownloadMonitor.FormatSpeed(_dlSnap.SpeedBytesPerSec);
+            }
+
             bool hov = (!string.IsNullOrEmpty(id) && _hoveredId == id);
             Color pillBg = _dlSnap.IsCompleted
-                ? Color.FromArgb(hov ? 95 : 65, 16, 185, 129)
-                : Color.FromArgb(hov ? 95 : 62, 14, 165, 233);
-            FillRoundRect(g, new RectangleF(cx - U(9.5f), cy - U(8.5f), U(19f), U(17f)), U(6f), pillBg);
-            DrawDownloadVectorIcon(g, cx, cy, _dlSnap.IsCompleted, _dlSnap.IsStoreApp, 255, 0.78f);
+                ? Color.FromArgb(hov ? 105 : 68, 16, 185, 129)
+                : Color.FromArgb(hov ? 105 : 64, 14, 165, 233);
+
+            if (string.IsNullOrEmpty(badgeTxt))
+            {
+                RectangleF rectOnly = new RectangleF(rightEdgeX - U(20f), cy - U(8.5f), U(20f), U(17f));
+                if (!string.IsNullOrEmpty(id)) _hitZones.Add(new HitZone { Id = id, Rect = rectOnly });
+                FillPill(g, rectOnly, pillBg);
+                DrawDownloadVectorIcon(g, rectOnly.X + rectOnly.Width * 0.5f, cy, _dlSnap.IsCompleted, _dlSnap.IsStoreApp, 255, 0.76f);
+                return rectOnly.X;
+            }
+
+            SizeF tSz = g.MeasureString(badgeTxt, _fShelfSub);
+            float pillW = U(18f) + tSz.Width + U(8f);
+            RectangleF rect = new RectangleF(rightEdgeX - pillW, cy - U(8.5f), pillW, U(17f));
+            if (!string.IsNullOrEmpty(id)) _hitZones.Add(new HitZone { Id = id, Rect = rect });
+            FillPill(g, rect, pillBg);
+            DrawDownloadVectorIcon(g, rect.X + U(9.5f), cy, _dlSnap.IsCompleted, _dlSnap.IsStoreApp, 255, 0.72f);
+            DrawLeftVCenteredText(g, badgeTxt, _fShelfSub, InkPri, rect.X + U(17.5f), cy);
+            return rect.X;
         }
 
         private void DrawDownloadVectorIcon(Graphics g, float cx, float cy, bool completed, bool isStore, int alpha, float scaleMul)
@@ -3492,28 +3572,28 @@ RefreshBatteryLevel();
             }
         }
 
+        // Single-row horizontal Download HUD — 100% centered on cy, zero 2-deck text stacking!
         private void DrawDownloadHudRow(Graphics g, float x, float cy, float w, float alpha01)
         {
             int a = Math.Max(0, Math.Min(255, (int)(255f * alpha01)));
             if (a <= 4) return;
 
-            DrawDownloadVectorIcon(g, x + U(9f), cy, _dlSnap.IsCompleted, _dlSnap.IsStoreApp, a, 1.0f);
+            DrawDownloadVectorIcon(g, x + U(8.5f), cy, _dlSnap.IsCompleted, _dlSnap.IsStoreApp, a, 0.96f);
 
-            string shortName = ShortFileName(_dlSnap.FileName, _dlSnap.IsStoreApp ? 18 : 21);
             string label;
             string rightTxt;
             Color labelCol;
 
             if (_dlSnap.IsCompleted)
             {
-                label = _state.T("T\u1EA3i xong \u00B7 ", "Saved \u00B7 ") + shortName;
+                label = _state.T("T\u1EA3i xong \u00B7 ", "Saved \u00B7 ") + ShortFileName(_dlSnap.FileName, 18);
                 long doneBytes = _dlSnap.TotalBytes > 0 ? _dlSnap.TotalBytes : _dlSnap.DownloadedBytes;
                 rightTxt = doneBytes > 0 ? DownloadMonitor.FormatBytes(doneBytes) : "100%";
                 labelCol = IsLight ? Color.FromArgb(a, 5, 150, 105) : Color.FromArgb(a, 74, 222, 128);
             }
             else if (_dlSnap.IsStoreApp)
             {
-                label = "Store \u00B7 " + shortName;
+                label = ShortFileName(_dlSnap.FileName, 18);
                 rightTxt = _dlSnap.HasExactPercent
                     ? string.Format(CultureInfo.InvariantCulture, "{0}%", (int)Math.Round(_dlSnap.Progress01 * 100f))
                     : (_dlSnap.SpeedBytesPerSec > 1024.0 ? DownloadMonitor.FormatSpeed(_dlSnap.SpeedBytesPerSec) : _state.T("\u0110ang t\u1EA3i", "Active"));
@@ -3521,62 +3601,55 @@ RefreshBatteryLevel();
             }
             else
             {
+                label = ShortFileName(_dlSnap.FileName, 18);
                 if (_dlSnap.HasExactPercent)
                 {
                     int pctInt = Math.Max(1, Math.Min(99, (int)Math.Round(_dlSnap.Progress01 * 100f)));
-                    label = ShortFileName(_dlSnap.FileName, 15) + " \u00B7 " + pctInt.ToString(CultureInfo.InvariantCulture) + "%";
-                    rightTxt = _dlSnap.SpeedBytesPerSec > 1024.0
-                        ? DownloadMonitor.FormatSpeed(_dlSnap.SpeedBytesPerSec)
-                        : (_dlSnap.TotalBytes > 0 ? DownloadMonitor.FormatBytes(_dlSnap.TotalBytes) : (pctInt.ToString(CultureInfo.InvariantCulture) + "%"));
+                    rightTxt = string.Format(CultureInfo.InvariantCulture, "{0}%", pctInt);
                 }
                 else if (_dlSnap.SpeedBytesPerSec > 1024.0)
                 {
-                    long sizeShow = _dlSnap.DownloadedBytes > 0 ? _dlSnap.DownloadedBytes : _dlSnap.TotalBytes;
-                    label = sizeShow > 0
-                        ? (ShortFileName(_dlSnap.FileName, 15) + " \u00B7 " + DownloadMonitor.FormatBytes(sizeShow))
-                        : (_state.T("\u0110ang t\u1EA3i \u00B7 ", "DL \u00B7 ") + shortName);
                     rightTxt = DownloadMonitor.FormatSpeed(_dlSnap.SpeedBytesPerSec);
                 }
                 else
                 {
                     long sizeShow = _dlSnap.DownloadedBytes > 0 ? _dlSnap.DownloadedBytes : _dlSnap.TotalBytes;
-                    label = _state.T("\u0110ang t\u1EA3i \u00B7 ", "DL \u00B7 ") + shortName;
-                    rightTxt = sizeShow > 0
-                        ? DownloadMonitor.FormatBytes(sizeShow)
-                        : _state.T("M\u1EDBi b\u1EAFt \u0111\u1EA7u", "Starting");
+                    rightTxt = sizeShow > 0 ? DownloadMonitor.FormatBytes(sizeShow) : _state.T("\u0110ang t\u1EA3i", "Active");
                 }
                 labelCol = Color.FromArgb(a, InkPri.R, InkPri.G, InkPri.B);
             }
 
-            float barX = x + U(24f);
             SizeF rSz = g.MeasureString(rightTxt, _fPill);
-            float rightReserve = Math.Max(U(54f), rSz.Width + U(10f));
-            float barW = Math.Max(U(64f), w - U(24f) - rightReserve);
-
-            GraphicsState stLbl = g.Save();
-            g.SetClip(new RectangleF(barX, cy - U(15f), barW + U(4f), U(16f)), CombineMode.Intersect);
-            DrawLeftVCenteredText(g, label, _fAxis, labelCol, barX, cy - U(5.8f));
-            g.Restore(stLbl);
-
+            float contentLeft = x + U(23f);
+            float contentRight = x + w - rSz.Width - U(9f);
             DrawRightVCenteredText(g, rightTxt, _fPill, Color.FromArgb(a, InkPri.R, InkPri.G, InkPri.B), x + w, cy);
 
-            RectangleF track = new RectangleF(barX, cy + U(3.2f), barW, U(4.6f));
+            if (_dlSnap.IsCompleted)
+            {
+                float maxLblW = Math.Max(U(40f), contentRight - contentLeft);
+                GraphicsState stLbl = g.Save();
+                g.SetClip(new RectangleF(contentLeft, cy - U(11f), maxLblW, U(22f)), CombineMode.Intersect);
+                DrawLeftVCenteredText(g, label, _fAxis, labelCol, contentLeft, cy);
+                g.Restore(stLbl);
+                return;
+            }
+
+            float barW = U(62f);
+            float lblAvailW = Math.Max(U(40f), (contentRight - barW - U(8f)) - contentLeft);
+            GraphicsState stDlLbl = g.Save();
+            g.SetClip(new RectangleF(contentLeft, cy - U(11f), lblAvailW, U(22f)), CombineMode.Intersect);
+            DrawLeftVCenteredText(g, label, _fAxis, labelCol, contentLeft, cy);
+            g.Restore(stDlLbl);
+
+            RectangleF track = new RectangleF(contentRight - barW, cy - U(2.5f), barW, U(5.0f));
             Color trackCol = IsLight
                 ? Color.FromArgb(Math.Max(0, Math.Min(255, (int)(55 * alpha01))), 15, 23, 42)
                 : Color.FromArgb(Math.Max(0, Math.Min(255, (int)(68 * alpha01))), 255, 255, 255);
             FillPill(g, track, trackCol);
 
-            if (_dlSnap.IsCompleted)
+            if (_dlSnap.HasExactPercent)
             {
-                using (LinearGradientBrush lgb = new LinearGradientBrush(
-                    track, Color.FromArgb(a, 16, 185, 129), Color.FromArgb(a, 74, 222, 128), LinearGradientMode.Horizontal))
-                {
-                    FillPillBrush(g, track, lgb);
-                }
-            }
-            else if (_dlSnap.HasExactPercent)
-            {
-                float frac = Math.Max(0.03f, Math.Min(1.0f, _dlAnimBar));
+                float frac = Math.Max(0.04f, Math.Min(1.0f, _dlAnimBar));
                 RectangleF fillRect = new RectangleF(track.X, track.Y, Math.Max(track.Height, track.Width * frac), track.Height);
                 using (LinearGradientBrush lgb = new LinearGradientBrush(
                     track, Color.FromArgb(a, 14, 165, 233), Color.FromArgb(a, 103, 232, 249), LinearGradientMode.Horizontal))
@@ -3587,7 +3660,7 @@ RefreshBatteryLevel();
             else
             {
                 double cyc = (_frameClock.Elapsed.TotalSeconds * 0.72) % 1.0;
-                float segW = Math.Max(track.Height * 2.2f, track.Width * 0.40f);
+                float segW = Math.Max(track.Height * 2.2f, track.Width * 0.42f);
                 float segX = track.X - segW + (float)cyc * (track.Width + segW);
 
                 GraphicsState stBar = g.Save();
@@ -4014,7 +4087,8 @@ RefreshBatteryLevel();
                 if (!_isExpanded)
                 {
                     _hoverDwellSec = 0f;
-                    _gestureHoldCollapsedUntilUtc = DateTime.UtcNow.AddSeconds(1.35);
+                    _stationarySuppressOrigin = Cursor.Position;
+                    _gestureHoldCollapsedUntilUtc = DateTime.UtcNow.AddSeconds(0.55);
                 }
                 if (_osd.SupportsBrightness)
                     _osd.AdjustBrightness(e.Delta > 0 ? 5 : -5);
@@ -4026,7 +4100,8 @@ RefreshBatteryLevel();
             if (!_isExpanded)
             {
                 _hoverDwellSec = 0f;
-                _gestureHoldCollapsedUntilUtc = DateTime.UtcNow.AddSeconds(1.35);
+                _stationarySuppressOrigin = Cursor.Position;
+                _gestureHoldCollapsedUntilUtc = DateTime.UtcNow.AddSeconds(0.55);
                 if (_osd != null)
                 {
                     _osd.AdjustVolume(e.Delta > 0 ? 4 : -4);
@@ -4128,7 +4203,8 @@ RefreshBatteryLevel();
                 if (!_isExpanded)
                 {
                     _hoverDwellSec = 0f;
-                    _gestureHoldCollapsedUntilUtc = DateTime.UtcNow.AddSeconds(1.35);
+                    _stationarySuppressOrigin = Cursor.Position;
+                    _gestureHoldCollapsedUntilUtc = DateTime.UtcNow.AddSeconds(0.55);
                 }
                 bool willPlay = !_media.IsPlaying;
                 if (_media.HasMedia)
