@@ -178,7 +178,7 @@
       const r = await fetch("https://api.github.com/repos/buiduchuy2010qn-prog/kumo/releases/latest");
       if (!r.ok) return;
       const d = await r.json();
-      const tag = d.tag_name || "v1.1.13";
+      const tag = d.tag_name || "v1.1.14";
       const exe = (d.assets || []).find(a => a.name && a.name.toLowerCase().endsWith(".exe"));
       const url = exe ? exe.browser_download_url : "https://github.com/buiduchuy2010qn-prog/kumo/releases/latest";
       $$("[data-dl-link]").forEach(el => { el.href = url; });
@@ -268,7 +268,7 @@
     const vp = $("#knColViewport");
     const ct = $("#knColText");
     if (showColLyrics) {
-      ct.textContent = curLyric().text;
+      ct.textContent = curLyric().text; ct.classList.add("karaoke-sweep");
       requestAnimationFrame(() => {
         const overflow = ct.scrollWidth - vp.clientWidth;
         if (overflow > 3) {
@@ -280,7 +280,7 @@
       });
     } else {
       vp.classList.remove("scrolling");
-      ct.textContent = hhmm;
+      ct.classList.remove("karaoke-sweep"); ct.textContent = hhmm;
     }
 
     // Expanded Header & Pages
@@ -307,7 +307,7 @@
 
     const li = curLyric();
     $("#musLyricsPane").innerHTML = li.list.map((item, idx) =>
-      `<div class="lyr-line ${idx === li.idx ? "current" : ""}">${item.text}</div>`
+      `<div class="lyr-line ${idx === li.idx ? "current karaoke-sweep" : (idx < li.idx ? "past" : "")}">${item.text}</div>`
     ).join("");
 
     // Sync Windows 11 Chrome YouTube Window
@@ -545,10 +545,41 @@
       renderAll();
     }));
 
+    let lastTickMs = performance.now();
+    let subSec = 0;
+
+    function tickKaraoke(nowMs) {
+      const dt = Math.min(0.1, (nowMs - lastTickMs) / 1000);
+      lastTickMs = nowMs;
+      if (state.playing) {
+        subSec += dt;
+        if (subSec >= 1.0) {
+          const step = Math.floor(subSec);
+          subSec -= step;
+          state.posSec = (state.posSec + step) % TRACKS[state.trackIdx].dur;
+          renderAll();
+        }
+      }
+      const exactLoop = ((state.posSec + (state.playing ? subSec : 0.4)) % 20);
+      const tr = TRACKS[state.trackIdx];
+      let idx = 0;
+      for (let i = 0; i < tr.lyrics.length; i++) {
+        if (tr.lyrics[i].t <= exactLoop) idx = i;
+      }
+      const t0 = tr.lyrics[idx].t;
+      const t1 = (idx + 1 < tr.lyrics.length) ? tr.lyrics[idx + 1].t : 20;
+      const frac = Math.max(0, Math.min(1, (exactLoop - t0) / Math.max(0.5, (t1 - t0) * 0.88)));
+      const kp = (frac * 100).toFixed(1) + "%";
+      const ct = $("#knColText");
+      if (ct && ct.classList.contains("karaoke-sweep")) ct.style.setProperty("--kp", kp);
+      const curEl = $(".lyr-line.current");
+      if (curEl) curEl.style.setProperty("--kp", kp);
+      requestAnimationFrame(tickKaraoke);
+    }
+    requestAnimationFrame(tickKaraoke);
+
     setInterval(() => {
-      if (state.playing) state.posSec = (state.posSec + 1) % TRACKS[state.trackIdx].dur;
-      if (state.pomoRun && state.pomoSec > 0) state.pomoSec--;
-      renderAll();
+      if (state.pomoRun && state.pomoSec > 0) { state.pomoSec--; renderAll(); }
     }, 1000);
   }
 

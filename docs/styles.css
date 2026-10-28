@@ -818,3 +818,11 @@ footer {
   .win-chrome { left: 10px; right: 10px; }
   .win11-icons { display: none; }
 }
+/* 60 FPS Word-by-Word Karaoke Sweep */
+.karaoke-sweep {
+  background-image: linear-gradient(90deg, #ffffff 0%, #ffffff var(--kp, 0%), #7b8698 calc(var(--kp, 0%) + 3.5%), #7b8698 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent !important;
+}
+.lyr-line.past { color: #cbd5e1; }
