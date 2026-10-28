@@ -1963,12 +1963,12 @@ RefreshBatteryLevel();
             else
             {
                 double effPos = _media.GetEffectiveLyricsPosSec();
-                float lyY = U(38.5f);
+                float lyY = U(41.5f);
                 for (int i = 0; i < win.Length; i++)
                 {
                     bool active = (i == activeSlot);
                     string lid = "lyric_seek_" + i;
-                    RectangleF lRect = new RectangleF(paneX - U(4f), lyY - U(10f), paneW + U(6f), U(20f));
+                    RectangleF lRect = new RectangleF(paneX - U(4f), lyY - U(11f), paneW + U(6f), U(22f));
                     _hitZones.Add(new HitZone { Id = lid, Rect = lRect });
                     bool lHov = (_hoveredId == lid);
 
@@ -1995,7 +1995,7 @@ RefreshBatteryLevel();
                         lSz = g.MeasureString(fullTxt, useFont);
                     }
 
-                    RectangleF lineViewport = new RectangleF(paneX, lyY - U(10.5f), availLineW, U(21f));
+                    RectangleF lineViewport = new RectangleF(paneX, lyY - U(11f), availLineW, U(22f));
                     if (active)
                     {
                         DrawKaraokeLyricLine(g, win[i], fullTxt, effPos, true, useFont, lineViewport, false);
@@ -2003,82 +2003,14 @@ RefreshBatteryLevel();
                     else
                     {
                         Color lineCol = lHov
-                            ? ToCrispInk(Nw(230))
-                            : ((activeSlot >= 0 && i < activeSlot) ? ToCrispInk(Nw(142)) : ToCrispInk(Nw(98)));
+                            ? ToCrispInk(Nw(232))
+                            : ((activeSlot < 0 && i == 0)
+                                ? ToCrispInk(Nw(158))
+                                : ((activeSlot >= 0 && i < activeSlot) ? ToCrispInk(Nw(142)) : ToCrispInk(Nw(98))));
                         DrawClippedMarqueeText(g, fullTxt, useFont, lineCol, lineViewport, lHov);
                     }
-                    lyY += U(21.0f);
+                    lyY += U(24.5f);
                 }
-
-                // Bottom Sync Status & Clean Fine-Tuning Pills (aligned with media buttons at U(124f))
-                float barCy = U(124.5f);
-                double totOff = _media.TotalLyricsOffsetSec;
-                bool hasCustomOff = (Math.Abs(totOff) >= 0.1);
-                string syncInfo;
-                Color syncCol;
-                if (manualScrolling && _lyricScrollOffset != 0)
-                {
-                    syncInfo = _state.T("↕ Cuộn xem lời · Nhấp dòng để tua", "↕ Scrolling · Click line to seek");
-                    syncCol = IsLight ? Color.FromArgb(255, 2, 132, 199) : Color.FromArgb(255, 125, 211, 252);
-                }
-                else if (activeSlot < 0)
-                {
-                    syncInfo = hasCustomOff
-                        ? string.Format(CultureInfo.InvariantCulture, "\u266A {0} ({1:+0.0;-0.0}s)", _state.T("D\u1EA1o \u0111\u1EA7u", "Intro"), totOff)
-                        : ("\u266A " + _state.T("\u0110ang d\u1EA1o \u0111\u1EA7u...", "Waiting for vocals..."));
-                    syncCol = IsLight ? Color.FromArgb(255, 2, 132, 199) : Color.FromArgb(255, 125, 211, 252);
-                }
-                else if (hasCustomOff)
-                {
-                    syncInfo = string.Format(CultureInfo.InvariantCulture, "{0}: {1:+0.0;-0.0}s", _state.T("\u0110\u1ED9 tr\u1EC5 l\u1EDDi", "Offset"), totOff);
-                    syncCol = ToCrispInk(Nw(165));
-                }
-                else
-                {
-                    syncInfo = "\u266A " + _state.T("Kh\u1EDBp t\u1EF1 \u0111\u1ED9ng", "Auto-synced");
-                    syncCol = ToCrispInk(Nw(128));
-                }
-
-                float pH = U(17.5f);
-                float rx = paneX + paneW;
-                RectangleF rAdd = new RectangleF(rx - U(38f), barCy - pH * 0.5f, U(38f), pH);
-                _hitZones.Add(new HitZone { Id = "lyr_off_add", Rect = rAdd });
-                FillPill(g, rAdd, _hoveredId == "lyr_off_add" ? Nw(72) : Nw(36));
-                DrawCenteredText(g, "+0.5s", _fShelfSub, InkPri, rAdd.X + rAdd.Width * 0.5f, barCy);
-
-                float leftAnchorX = rAdd.X;
-                if (hasCustomOff)
-                {
-                    string rstTxt = _state.T("\u0110\u1EB7t l\u1EA1i 0s", "Reset 0s");
-                    SizeF rstSz = g.MeasureString(rstTxt, _fShelfSub);
-                    float rstW = Math.Max(U(58f), rstSz.Width + U(14f));
-                    RectangleF rRst = new RectangleF(rAdd.X - U(4f) - rstW, barCy - pH * 0.5f, rstW, pH);
-                    _hitZones.Add(new HitZone { Id = "lyr_off_reset", Rect = rRst });
-                    FillPill(g, rRst, _hoveredId == "lyr_off_reset" ? Color.FromArgb(215, 14, 165, 233) : Color.FromArgb(140, 2, 132, 199));
-                    DrawCenteredText(g, rstTxt, _fShelfSub, Color.White, rRst.X + rRst.Width * 0.5f, barCy);
-                    leftAnchorX = rRst.X;
-                }
-                else if (activeSlot < 0 && pos >= 4.0)
-                {
-                    string synTxt = _state.T("Kh\u1EDBp gi\u1ECDng", "Sync vocal");
-                    SizeF synSz = g.MeasureString(synTxt, _fShelfSub);
-                    float synW = Math.Max(U(66f), synSz.Width + U(16f));
-                    RectangleF rNow = new RectangleF(rAdd.X - U(4f) - synW, barCy - pH * 0.5f, synW, pH);
-                    _hitZones.Add(new HitZone { Id = "lyr_sync_now", Rect = rNow });
-                    FillPill(g, rNow, _hoveredId == "lyr_sync_now" ? Color.FromArgb(215, 14, 165, 233) : Color.FromArgb(145, 2, 132, 199));
-                    DrawCenteredText(g, synTxt, _fShelfSub, Color.White, rNow.X + rNow.Width * 0.5f, barCy);
-                    leftAnchorX = rNow.X;
-                }
-
-                RectangleF rSub = new RectangleF(leftAnchorX - U(4f) - U(38f), barCy - pH * 0.5f, U(38f), pH);
-                _hitZones.Add(new HitZone { Id = "lyr_off_sub", Rect = rSub });
-                FillPill(g, rSub, _hoveredId == "lyr_off_sub" ? Nw(72) : Nw(36));
-                DrawCenteredText(g, "-0.5s", _fShelfSub, InkPri, rSub.X + rSub.Width * 0.5f, barCy);
-
-                GraphicsState stSyncLbl = g.Save();
-                g.SetClip(new RectangleF(paneX, barCy - U(10f), Math.Max(U(40f), rSub.X - paneX - U(6f)), U(20f)), CombineMode.Intersect);
-                DrawLeftVCenteredText(g, syncInfo, _fShelfSub, syncCol, paneX, barCy);
-                g.Restore(stSyncLbl);
             }
         }
 
@@ -3079,16 +3011,28 @@ RefreshBatteryLevel();
             }
             else
             {
-                if (_dlSnap.DownloadedBytes > 0 && _dlSnap.SpeedBytesPerSec > 1024.0)
+                if (_dlSnap.HasExactPercent)
                 {
-                    label = ShortFileName(_dlSnap.FileName, 15) + " \u00B7 " + DownloadMonitor.FormatBytes(_dlSnap.DownloadedBytes);
+                    int pctInt = Math.Max(1, Math.Min(99, (int)Math.Round(_dlSnap.Progress01 * 100f)));
+                    label = ShortFileName(_dlSnap.FileName, 15) + " \u00B7 " + pctInt.ToString(CultureInfo.InvariantCulture) + "%";
+                    rightTxt = _dlSnap.SpeedBytesPerSec > 1024.0
+                        ? DownloadMonitor.FormatSpeed(_dlSnap.SpeedBytesPerSec)
+                        : (_dlSnap.TotalBytes > 0 ? DownloadMonitor.FormatBytes(_dlSnap.TotalBytes) : (pctInt.ToString(CultureInfo.InvariantCulture) + "%"));
+                }
+                else if (_dlSnap.SpeedBytesPerSec > 1024.0)
+                {
+                    long sizeShow = _dlSnap.DownloadedBytes > 0 ? _dlSnap.DownloadedBytes : _dlSnap.TotalBytes;
+                    label = sizeShow > 0
+                        ? (ShortFileName(_dlSnap.FileName, 15) + " \u00B7 " + DownloadMonitor.FormatBytes(sizeShow))
+                        : (_state.T("\u0110ang t\u1EA3i \u00B7 ", "DL \u00B7 ") + shortName);
                     rightTxt = DownloadMonitor.FormatSpeed(_dlSnap.SpeedBytesPerSec);
                 }
                 else
                 {
+                    long sizeShow = _dlSnap.DownloadedBytes > 0 ? _dlSnap.DownloadedBytes : _dlSnap.TotalBytes;
                     label = _state.T("\u0110ang t\u1EA3i \u00B7 ", "DL \u00B7 ") + shortName;
-                    rightTxt = _dlSnap.DownloadedBytes > 0
-                        ? DownloadMonitor.FormatBytes(_dlSnap.DownloadedBytes)
+                    rightTxt = sizeShow > 0
+                        ? DownloadMonitor.FormatBytes(sizeShow)
                         : _state.T("M\u1EDBi b\u1EAFt \u0111\u1EA7u", "Starting");
                 }
                 labelCol = Color.FromArgb(a, InkPri.R, InkPri.G, InkPri.B);
@@ -3816,22 +3760,6 @@ RefreshBatteryLevel();
                     _lyricScrollUntilUtc = DateTime.MinValue;
                     _media.SeekToSeconds(Math.Max(0.0, _lastDisplayedLyrics[lIdx].TimeSec + _media.TotalLyricsOffsetSec));
                 }
-            }
-            else if (id == "lyr_off_sub")
-            {
-                _media.AdjustUserLyricsOffset(-0.5);
-            }
-            else if (id == "lyr_off_add")
-            {
-                _media.AdjustUserLyricsOffset(0.5);
-            }
-            else if (id == "lyr_off_reset")
-            {
-                _media.ResetUserLyricsOffset();
-            }
-            else if (id == "lyr_sync_now")
-            {
-                _media.SyncFirstLineToNow();
             }
             else if (id == "pomo_toggle")
             {

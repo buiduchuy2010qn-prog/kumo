@@ -94,11 +94,11 @@ namespace Kumo
         private double _lrcAudioMasterDurSec = 0.0;
         private double _lrcFirstTagSec = 0.0;
         private double _lrcLastTagSec = 0.0;
+        private bool _lrcAlreadyMvShifted = false;
+        private bool _lrcIsStreamingMaster = false;
+        private bool _isLikelyMvTrack = false;
         private double _autoMvOffsetSec = 0.0;
-        private double _userOffsetSec = 0.0;
-        private readonly Dictionary<string, double> _perSongUserOffsets = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
         private bool _sawNearZeroStart = false;
-        private bool _onsetCalibratedOffset = false;
         private int _sustainedMusicTicks = 0;
         private volatile bool _silentIntroHold = false;
 
@@ -166,67 +166,17 @@ namespace Kumo
 
         public double TotalLyricsOffsetSec
         {
-            get { return _autoMvOffsetSec + _userOffsetSec; }
+            get { return _autoMvOffsetSec; }
         }
 
         public double GetEffectiveLyricsPosSec()
         {
             double raw = GetLivePositionSec();
-            if (_silentIntroHold && raw < 35.0)
+            if (_silentIntroHold && raw < 30.0)
             {
                 return -1.0;
             }
-            return raw - (_autoMvOffsetSec + _userOffsetSec);
-        }
-
-        public void AdjustUserLyricsOffset(double deltaSec)
-        {
-            lock (_lock)
-            {
-                _userOffsetSec = Math.Max(-90.0, Math.Min(120.0, Math.Round(_userOffsetSec + deltaSec, 1)));
-                if (!string.IsNullOrEmpty(_lastTrackKey))
-                {
-                    _perSongUserOffsets[_lastTrackKey] = _userOffsetSec;
-                }
-            }
-        }
-
-        public void ResetUserLyricsOffset()
-        {
-            lock (_lock)
-            {
-                _userOffsetSec = 0.0;
-                _silentIntroHold = false;
-                if (!string.IsNullOrEmpty(_lastTrackKey))
-                {
-                    _perSongUserOffsets.Remove(_lastTrackKey);
-                }
-            }
-        }
-
-        public void SyncFirstLineToNow()
-        {
-            double raw = GetLivePositionSec();
-            lock (_lock)
-            {
-                if (_syncedLyrics.Count == 0) return;
-                _silentIntroHold = false;
-                double firstT = _syncedLyrics[0].TimeSec;
-                if (raw <= firstT + 0.4)
-                {
-                    _userOffsetSec = 0.0;
-                    if (!string.IsNullOrEmpty(_lastTrackKey))
-                    {
-                        _perSongUserOffsets.Remove(_lastTrackKey);
-                    }
-                    return;
-                }
-                _userOffsetSec = Math.Max(0.0, Math.Min(150.0, Math.Round((raw - firstT) - _autoMvOffsetSec, 2)));
-                if (!string.IsNullOrEmpty(_lastTrackKey))
-                {
-                    _perSongUserOffsets[_lastTrackKey] = _userOffsetSec;
-                }
-            }
+            return raw - _autoMvOffsetSec;
         }
 
         public LyricLine[] GetDisplayLyricsWindow(out int activeSlot)
@@ -477,7 +427,6 @@ namespace Kumo
             {
                 _sawNearZeroStart = true;
                 _sustainedMusicTicks = 0;
-                _onsetCalibratedOffset = false;
             }
 
             float pk = ReadAudioPeak();
@@ -487,36 +436,20 @@ namespace Kumo
                 return;
             }
 
-            if (pk >= 0.058f)
+            if (pk >= 0.045f)
             {
                 _sustainedMusicTicks = Math.Min(30, _sustainedMusicTicks + 1);
             }
-            else if (pk < 0.024f)
+            else if (pk < 0.018f)
             {
                 _sustainedMusicTicks = Math.Max(0, _sustainedMusicTicks - 1);
             }
 
-            if (raw < 35.0 && _sustainedMusicTicks < 3 && pk < 0.022f)
+            if (_sawNearZeroStart && raw < 30.0 && _sustainedMusicTicks < 3 && pk < 0.015f)
             {
                 _silentIntroHold = true;
             }
-            else if (_sustainedMusicTicks >= 5)
-            {
-                _silentIntroHold = false;
-                lock (_lock)
-                {
-                    if (_sawNearZeroStart && !_onsetCalibratedOffset && _autoMvOffsetSec > 0.5 && _durationSec > 45.0 && _lrcAudioMasterDurSec > 30.0)
-                    {
-                        double excess = _durationSec - _lrcAudioMasterDurSec;
-                        if (raw >= 4.0 && raw <= excess + 2.5)
-                        {
-                            _autoMvOffsetSec = Math.Round(Math.Max(0.0, raw - 0.5), 1);
-                            _onsetCalibratedOffset = true;
-                        }
-                    }
-                }
-            }
-            else if (raw >= 35.0)
+            else if (_sustainedMusicTicks >= 4 || raw >= 30.0)
             {
                 _silentIntroHold = false;
             }
@@ -524,22 +457,24 @@ namespace Kumo
 
         private void RecalculateAutoMvOffsetLocked()
         {
-            if (_syncedLyrics.Count == 0 || !string.Equals(LyricsStatus, "Synced", StringComparison.Ordinal))
+            if (_syncedLyrics.Count == 0 ||
+                !string.Equals(LyricsStatus, "Synced", StringComparison.Ordinal) ||
+                _lrcAlreadyMvShifted ||
+                _lrcIsStreamingMaster)
             {
                 _autoMvOffsetSec = 0.0;
                 return;
             }
-            if (_durationSec > 45.0 && _lrcAudioMasterDurSec > 30.0)
+            if (_durationSec > 45.0 && _lrcAudioMasterDurSec > 35.0)
             {
                 double excess = _durationSec - _lrcAudioMasterDurSec;
-                bool startsEarly = (_lrcFirstTagSec < 10.0);
-                bool endsEarly = ((_durationSec - _lrcLastTagSec) > Math.Max(20.0, excess * 0.68));
-                if (excess >= 6.0 && excess <= 95.0 && startsEarly && endsEarly)
+                bool allowMvShift = _isLikelyMvTrack ||
+                    (_lrcFirstTagSec < 18.0 && (_durationSec - _lrcLastTagSec) > Math.Max(18.0, excess * 0.65));
+                if (allowMvShift && excess >= 5.0 && excess <= 95.0 && _lrcLastTagSec <= _lrcAudioMasterDurSec + 3.0)
                 {
-                    if (!_onsetCalibratedOffset)
-                    {
-                        _autoMvOffsetSec = Math.Round(excess * 0.72, 1);
-                    }
+                    _autoMvOffsetSec = (excess <= 14.5)
+                        ? Math.Round(excess * 0.88, 1)
+                        : Math.Round(excess * 0.76, 1);
                     return;
                 }
             }
@@ -701,11 +636,11 @@ namespace Kumo
                         _lrcAudioMasterDurSec = 0.0;
                         _lrcFirstTagSec = 0.0;
                         _lrcLastTagSec = 0.0;
+                        _lrcAlreadyMvShifted = false;
+                        _lrcIsStreamingMaster = false;
+                        _isLikelyMvTrack = false;
                         _autoMvOffsetSec = 0.0;
-                        double savedOff;
-                        _userOffsetSec = _perSongUserOffsets.TryGetValue(trackKey, out savedOff) ? savedOff : 0.0;
                         _sawNearZeroStart = (GetLivePositionSec() <= 3.0);
-                        _onsetCalibratedOffset = false;
                         _sustainedMusicTicks = 0;
                         _silentIntroHold = false;
                     }
@@ -1001,10 +936,150 @@ namespace Kumo
             return fb;
         }
 
-        private static void MeasureLrcTagBounds(string rawLrc, out double firstNonEmptySec, out double lastTagSec)
+        private static string SanitizeSpeakerTags(string s)
+        {
+            if (string.IsNullOrEmpty(s)) return "";
+            string r = Regex.Replace(s, @"\{\s*[a-zA-Z0-9_.-]+\s*:[^}]*\}", "");
+            r = Regex.Replace(r, @"\[\s*(?:agent|bg|v\d+|duet|male|female|all|chorus|verse|intro|outro)\b[^\]]*\]", "", RegexOptions.IgnoreCase);
+            r = Regex.Replace(r, @"^\s*(?:v\d+|male|female|duet)\s*:\s*", "", RegexOptions.IgnoreCase);
+            return r;
+        }
+
+        private static string SanitizeLyricText(string s)
+        {
+            if (string.IsNullOrEmpty(s)) return "";
+            string r = SanitizeSpeakerTags(s);
+            r = Regex.Replace(r, @"<\d+:\d+(?:\.\d+)?>", "");
+            r = Regex.Replace(r, @"<[^>\r\n]+:\d+(?:\.\d+)?:\d+(?:\.\d+)?(?:\|[^>\r\n]+)?>", "");
+            return Regex.Replace(r, @"\s{2,}", " ").Trim();
+        }
+
+        private static string NormalizeFold(string s)
+        {
+            if (string.IsNullOrEmpty(s)) return "";
+            string formD = s.ToLowerInvariant().Replace('\u0111', 'd').Replace('\u0110', 'd').Normalize(NormalizationForm.FormD);
+            StringBuilder sb = new StringBuilder(formD.Length);
+            for (int i = 0; i < formD.Length; i++)
+            {
+                UnicodeCategory uc = CharUnicodeInfo.GetUnicodeCategory(formD[i]);
+                if (uc == UnicodeCategory.NonSpacingMark) continue;
+                char ch = formD[i];
+                if (char.IsLetterOrDigit(ch)) sb.Append(ch);
+                else sb.Append(' ');
+            }
+            return Regex.Replace(sb.ToString(), @"\s+", " ").Trim();
+        }
+
+        private static bool HasNonAscii(string s)
+        {
+            if (string.IsNullOrEmpty(s)) return false;
+            for (int i = 0; i < s.Length; i++)
+            {
+                if (s[i] > 127) return true;
+            }
+            return false;
+        }
+
+        private static void ExtractSongAndArtist(string rawTitle, string rawArtist, out string songCore, out string artistCore, out bool isLikelyMv)
+        {
+            string t = rawTitle ?? "";
+            string a = rawArtist ?? "";
+            isLikelyMv = Regex.IsMatch(t, @"(\bofficial\s*music\s*video\b|\bofficial\s*video\b|\bmusic\s*video\b|\bofficial\s*mv\b|\bmv\s*official\b|\bm/v\b|\bmv\b)", RegexOptions.IgnoreCase) &&
+                         !Regex.IsMatch(t, @"(\blyric\s*video\b|\bmv\s*lyric\b|\bofficial\s*audio\b|\baudio\b|\bremix\b)", RegexOptions.IgnoreCase);
+
+            string cleanA = Regex.Replace(a, @"(\s*-\s*Topic$|\bOfficial\b|\bChannel\b|\bMusic\b|\bVEVO\b)", "", RegexOptions.IgnoreCase).Trim();
+            int slash = cleanA.IndexOf('/');
+            if (slash > 0) cleanA = cleanA.Substring(0, slash).Trim();
+
+            string cleanT = Regex.Replace(t, @"(\(.*?\)|\[.*?\]|\|+.*$|#.*$|official\s*music\s*video|official\s*lyric\s*video|official\s*video|music\s*video|lyric\s*video|visualizer|\bmv\b|\bm/v\b|\b4k\b|\blyrics?\b|\baudio\b)", "", RegexOptions.IgnoreCase).Trim();
+
+            string[] parts = Regex.Split(cleanT, @"\s+[-\u2013\u2014]\s+");
+            if (parts.Length >= 2)
+            {
+                string p0 = parts[0].Trim();
+                string p1 = parts[1].Trim();
+                string foldA = NormalizeFold(cleanA).Replace(" ", "");
+                string fold0 = NormalizeFold(p0).Replace(" ", "");
+                string fold1 = NormalizeFold(p1).Replace(" ", "");
+                if (!string.IsNullOrEmpty(foldA) && !string.IsNullOrEmpty(fold0) && (foldA.Contains(fold0) || fold0.Contains(foldA)))
+                {
+                    cleanT = p1;
+                    if (string.IsNullOrEmpty(cleanA) || (HasNonAscii(p0) && !HasNonAscii(cleanA))) cleanA = p0;
+                }
+                else if (!string.IsNullOrEmpty(foldA) && !string.IsNullOrEmpty(fold1) && (foldA.Contains(fold1) || fold1.Contains(foldA)))
+                {
+                    cleanT = p0;
+                    if (string.IsNullOrEmpty(cleanA) || (HasNonAscii(p1) && !HasNonAscii(cleanA))) cleanA = p1;
+                }
+            }
+
+            cleanT = Regex.Replace(cleanT, @"(\bft\.?\b.*$|\bfeat\.?\b.*$|\bprod\.?\b.*$)", "", RegexOptions.IgnoreCase).Trim();
+            cleanT = Regex.Replace(cleanT, @"\s{2,}", " ").Trim(' ', '-', '\u2013', '\u2014');
+            songCore = cleanT;
+            artistCore = cleanA;
+        }
+
+        private static double ScoreCandidateTitle(string targetSongFold, string candTrackFold, out bool isSameSong)
+        {
+            if (string.IsNullOrEmpty(targetSongFold))
+            {
+                isSameSong = true;
+                return 0.0;
+            }
+            if (string.IsNullOrEmpty(candTrackFold))
+            {
+                isSameSong = false;
+                return -400.0;
+            }
+            if (string.Equals(candTrackFold, targetSongFold, StringComparison.Ordinal))
+            {
+                isSameSong = true;
+                return 1200.0;
+            }
+
+            string[] tWords = targetSongFold.Split(new char[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+            string[] cWords = candTrackFold.Split(new char[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+            if (tWords.Length == 0)
+            {
+                isSameSong = true;
+                return 0.0;
+            }
+
+            int matched = 0;
+            for (int i = 0; i < tWords.Length; i++)
+            {
+                for (int j = 0; j < cWords.Length; j++)
+                {
+                    if (string.Equals(tWords[i], cWords[j], StringComparison.Ordinal))
+                    {
+                        matched++;
+                        break;
+                    }
+                }
+            }
+
+            if (matched == tWords.Length)
+            {
+                isSameSong = true;
+                int extra = Math.Max(0, cWords.Length - tWords.Length);
+                return 920.0 - Math.Min(220.0, extra * 14.0);
+            }
+            if (tWords.Length >= 3 && matched >= tWords.Length - 1 && ((double)matched / tWords.Length) >= 0.75)
+            {
+                isSameSong = true;
+                return 540.0;
+            }
+
+            isSameSong = false;
+            return -950.0 + matched * 75.0;
+        }
+
+        private static void MeasureLrcTagBounds(string rawLrc, out double firstNonEmptySec, out double lastTagSec, out bool isStreamingMaster)
         {
             firstNonEmptySec = -1.0;
             lastTagSec = 0.0;
+            isStreamingMaster = (rawLrc.IndexOf("{agent:", StringComparison.OrdinalIgnoreCase) >= 0) ||
+                                Regex.IsMatch(rawLrc, @"<[^>\r\n]+:\d+\.\d+:\d+\.\d+\|");
             Regex rx = new Regex(@"\[(\d+):(\d+(?:\.\d+)?)\](.*)");
             string[] lines = rawLrc.Split(new char[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
             for (int i = 0; i < lines.Length; i++)
@@ -1018,8 +1093,8 @@ namespace Kumo
                 {
                     double t = mins * 60.0 + secs;
                     if (t > lastTagSec) lastTagSec = t;
-                    string txt = m.Groups[3].Value.Trim();
-                    if (firstNonEmptySec < 0.0 && !string.IsNullOrEmpty(txt))
+                    string txt = SanitizeLyricText(m.Groups[3].Value);
+                    if (firstNonEmptySec < 0.0 && !string.IsNullOrEmpty(txt) && txt != "\u266A" && txt != "...")
                     {
                         firstNonEmptySec = t;
                     }
@@ -1028,116 +1103,235 @@ namespace Kumo
             if (firstNonEmptySec < 0.0) firstNonEmptySec = 0.0;
         }
 
-        private bool TryQueryLrclibSingle(string rawQuery)
+        private sealed class LrcCandidate
         {
-            if (string.IsNullOrEmpty(rawQuery)) return false;
-            string url = "https://lrclib.net/api/search?q=" + Uri.EscapeDataString(rawQuery.Trim());
-            HttpWebRequest req = (HttpWebRequest)WebRequest.Create(url);
-            req.UserAgent = "Kumo/1.1 (+https://github.com/buiduchuy2010qn-prog/kumo)";
-            req.Timeout = 5000;
+            public int Index;
+            public double Dur;
+            public double FirstSec;
+            public double LastSec;
+            public bool IsSameSong;
+            public bool IsStreamingMaster;
+            public double TitleScore;
+            public double ArtistBonus;
+            public string RawSynced;
+        }
 
-            using (HttpWebResponse resp = (HttpWebResponse)req.GetResponse())
-            using (StreamReader sr = new StreamReader(resp.GetResponseStream(), Encoding.UTF8))
+        private static string FetchUrlStringWithRetry(string url)
+        {
+            for (int attempt = 0; attempt < 3; attempt++)
             {
-                string json = sr.ReadToEnd();
-                MatchCollection objs = Regex.Matches(json, @"\{\s*""id""\s*:[\s\S]*?(?=\},\s*\{\s*""id""|\}\s*\]\s*$)");
-
-                string bestSynced = null;
-                double bestScore = -1e9;
-                double bestFirstSec = 0.0;
-                double bestLastSec = 0.0;
-                double bestCandDur = 0.0;
-                double minCanonicalAudioDur = 1e9;
-                string firstPlain = null;
-
-                for (int i = 0; i < objs.Count; i++)
+                try
                 {
-                    string chunk = objs[i].Value;
-                    double cDur = 0.0;
-                    Match mDur = Regex.Match(chunk, @"""duration""\s*:\s*([0-9]+(?:\.[0-9]+)?)");
-                    if (mDur.Success)
+                    HttpWebRequest req = (HttpWebRequest)WebRequest.Create(url);
+                    req.UserAgent = "Kumo/1.1 (+https://github.com/buiduchuy2010qn-prog/kumo)";
+                    req.Timeout = 5500;
+                    using (HttpWebResponse resp = (HttpWebResponse)req.GetResponse())
+                    using (StreamReader sr = new StreamReader(resp.GetResponseStream(), Encoding.UTF8))
                     {
-                        double.TryParse(mDur.Groups[1].Value, NumberStyles.Float, CultureInfo.InvariantCulture, out cDur);
+                        return sr.ReadToEnd();
                     }
-
-                    Match mSyn = Regex.Match(chunk, "\"syncedLyrics\"\\s*:\\s*\"((?:\\\\.|[^\"\\\\])*)\"");
-                    if (mSyn.Success && !string.IsNullOrEmpty(mSyn.Groups[1].Value))
+                }
+                catch (WebException wex)
+                {
+                    HttpWebResponse hr = wex.Response as HttpWebResponse;
+                    if (hr != null && hr.StatusCode == HttpStatusCode.NotFound)
                     {
-                        string unesc = Regex.Unescape(mSyn.Groups[1].Value);
-                        double fSec, lSec;
-                        MeasureLrcTagBounds(unesc, out fSec, out lSec);
-                        if (lSec > 5.0)
-                        {
-                            if (cDur > 30.0 && cDur < minCanonicalAudioDur)
-                            {
-                                minCanonicalAudioDur = cDur;
-                            }
-                            double score = 100.0 - i * 1.5;
-                            if (_durationSec > 30.0 && cDur > 30.0)
-                            {
-                                double diff = Math.Abs(cDur - _durationSec);
-                                bool genuinelyAlignedToVideo = (fSec >= 10.0) || ((_durationSec - lSec) <= 22.0);
-                                if (diff <= 4.5 && genuinelyAlignedToVideo)
-                                {
-                                    score += 500.0 - diff * 20.0;
-                                }
-                                else if (diff <= 4.5)
-                                {
-                                    score += 40.0 - diff * 4.0;
-                                }
-                            }
-                            if (score > bestScore)
-                            {
-                                bestScore = score;
-                                bestSynced = unesc;
-                                bestFirstSec = fSec;
-                                bestLastSec = lSec;
-                                bestCandDur = cDur;
-                            }
-                        }
+                        return null;
                     }
+                    if (attempt < 2) Thread.Sleep(550 * (attempt + 1));
+                }
+                catch
+                {
+                    if (attempt < 2) Thread.Sleep(550 * (attempt + 1));
+                }
+            }
+            return null;
+        }
 
-                    if (firstPlain == null)
+        private bool TryProcessLrclibJson(string json, string targetSongFold, string targetArtistFold)
+        {
+            if (string.IsNullOrEmpty(json)) return false;
+
+            MatchCollection objs = Regex.Matches(json, @"\{\s*""id""\s*:[\s\S]*?(?=\},\s*\{\s*""id""|\}\s*\]\s*$|\}\s*$)");
+            if (objs.Count == 0) return false;
+
+            List<LrcCandidate> cands = new List<LrcCandidate>();
+            string bestPlain = null;
+            double bestPlainScore = -1e9;
+            string artistCompact = (targetArtistFold ?? "").Replace(" ", "");
+
+            double minSameSongAudioDur = 1e9;
+            double minSameSongFirstSec = 0.0;
+            bool hasStreamingAtCurrentDur = false;
+
+            for (int i = 0; i < objs.Count; i++)
+            {
+                string chunk = objs[i].Value;
+                double cDur = 0.0;
+                Match mDur = Regex.Match(chunk, @"""duration""\s*:\s*([0-9]+(?:\.[0-9]+)?)");
+                if (mDur.Success)
+                {
+                    double.TryParse(mDur.Groups[1].Value, NumberStyles.Float, CultureInfo.InvariantCulture, out cDur);
+                }
+
+                string cTrack = "";
+                Match mTr = Regex.Match(chunk, "\"trackName\"\\s*:\\s*\"((?:\\\\.|[^\"\\\\])*)\"");
+                if (mTr.Success) cTrack = Regex.Unescape(mTr.Groups[1].Value);
+
+                string cArtist = "";
+                Match mAr = Regex.Match(chunk, "\"artistName\"\\s*:\\s*\"((?:\\\\.|[^\"\\\\])*)\"");
+                if (mAr.Success) cArtist = Regex.Unescape(mAr.Groups[1].Value);
+
+                bool isSame;
+                double tScore = ScoreCandidateTitle(targetSongFold, NormalizeFold(cTrack), out isSame);
+                double aBonus = 0.0;
+                string cArtCompact = NormalizeFold(cArtist).Replace(" ", "");
+                if (!string.IsNullOrEmpty(artistCompact) && !string.IsNullOrEmpty(cArtCompact))
+                {
+                    if (cArtCompact.Contains(artistCompact) || artistCompact.Contains(cArtCompact))
                     {
-                        Match mPl = Regex.Match(chunk, "\"plainLyrics\"\\s*:\\s*\"((?:\\\\.|[^\"\\\\])*)\"");
-                        if (mPl.Success && !string.IsNullOrEmpty(mPl.Groups[1].Value))
-                        {
-                            firstPlain = Regex.Unescape(mPl.Groups[1].Value);
-                        }
+                        aBonus = 220.0;
                     }
                 }
 
-                if (!string.IsNullOrEmpty(bestSynced))
+                Match mSyn = Regex.Match(chunk, "\"syncedLyrics\"\\s*:\\s*\"((?:\\\\.|[^\"\\\\])*)\"");
+                if (mSyn.Success && !string.IsNullOrEmpty(mSyn.Groups[1].Value))
                 {
-                    ParseLrc(bestSynced);
-                    if (_syncedLyrics.Count > 0)
+                    string unesc = Regex.Unescape(mSyn.Groups[1].Value);
+                    double fSec, lSec;
+                    bool streamMaster;
+                    MeasureLrcTagBounds(unesc, out fSec, out lSec, out streamMaster);
+                    if (lSec > 8.0)
                     {
-                        lock (_lock)
+                        if (isSame && streamMaster && _durationSec > 35.0 && Math.Abs(cDur - _durationSec) <= 3.5)
                         {
-                            LyricsStatus = "Synced";
-                            _lrcFirstTagSec = bestFirstSec;
-                            _lrcLastTagSec = bestLastSec;
-                            _lrcAudioMasterDurSec = (minCanonicalAudioDur < 1e8) ? minCanonicalAudioDur : bestCandDur;
-                            RecalculateAutoMvOffsetLocked();
+                            hasStreamingAtCurrentDur = true;
                         }
-                        UpdateActiveLyricLine();
-                        return true;
+                        if (isSame && cDur > 35.0 && cDur < minSameSongAudioDur)
+                        {
+                            minSameSongAudioDur = cDur;
+                            minSameSongFirstSec = fSec;
+                        }
+                        cands.Add(new LrcCandidate
+                        {
+                            Index = i,
+                            Dur = cDur,
+                            FirstSec = fSec,
+                            LastSec = lSec,
+                            IsSameSong = isSame,
+                            IsStreamingMaster = streamMaster,
+                            TitleScore = tScore,
+                            ArtistBonus = aBonus,
+                            RawSynced = unesc
+                        });
                     }
                 }
 
-                if (!string.IsNullOrEmpty(firstPlain))
+                Match mPl = Regex.Match(chunk, "\"plainLyrics\"\\s*:\\s*\"((?:\\\\.|[^\"\\\\])*)\"");
+                if (mPl.Success && !string.IsNullOrEmpty(mPl.Groups[1].Value))
                 {
-                    string[] lines = firstPlain.Split(new char[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
-                    double dur = _durationSec > 25.0 ? _durationSec : (lines.Length * 4.0 + 14.0);
+                    double pSc = tScore + aBonus - i * 1.5;
+                    if (isSame && pSc > bestPlainScore)
+                    {
+                        bestPlainScore = pSc;
+                        bestPlain = Regex.Unescape(mPl.Groups[1].Value);
+                    }
+                }
+            }
+
+            LrcCandidate best = null;
+            double bestScore = -1e9;
+            bool bestAlreadyShifted = false;
+
+            for (int i = 0; i < cands.Count; i++)
+            {
+                LrcCandidate c = cands[i];
+                if (!c.IsSameSong) continue;
+
+                double sc = c.TitleScore + c.ArtistBonus + (100.0 - c.Index * 1.5);
+                bool candShifted = false;
+
+                if (_durationSec > 35.0 && c.Dur > 35.0)
+                {
+                    double diff = Math.Abs(c.Dur - _durationSec);
+                    double excessOverMin = (minSameSongAudioDur < 1e8) ? (_durationSec - minSameSongAudioDur) : 0.0;
+
+                    if (diff <= 4.5)
+                    {
+                        if (c.IsStreamingMaster || excessOverMin < 5.0)
+                        {
+                            sc += 340.0 - diff * 15.0;
+                        }
+                        else if ((c.FirstSec - minSameSongFirstSec) >= Math.Max(4.0, excessOverMin * 0.42))
+                        {
+                            candShifted = true;
+                            sc += 480.0 - diff * 18.0;
+                        }
+                        else
+                        {
+                            sc += 25.0 - diff * 3.0;
+                        }
+                    }
+                    else if (minSameSongAudioDur < 1e8 && Math.Abs(c.Dur - minSameSongAudioDur) <= 2.5)
+                    {
+                        sc += 95.0;
+                    }
+                }
+
+                if (c.RawSynced.IndexOf("<", StringComparison.Ordinal) >= 0)
+                {
+                    sc += 35.0;
+                }
+
+                if (sc > bestScore)
+                {
+                    bestScore = sc;
+                    best = c;
+                    bestAlreadyShifted = candShifted;
+                }
+            }
+
+            if (best != null)
+            {
+                ParseLrc(best.RawSynced);
+                if (_syncedLyrics.Count > 0)
+                {
+                    lock (_lock)
+                    {
+                        LyricsStatus = "Synced";
+                        _lrcFirstTagSec = best.FirstSec;
+                        _lrcLastTagSec = best.LastSec;
+                        _lrcAlreadyMvShifted = bestAlreadyShifted;
+                        _lrcIsStreamingMaster = best.IsStreamingMaster || hasStreamingAtCurrentDur;
+                        _lrcAudioMasterDurSec = (minSameSongAudioDur < 1e8) ? minSameSongAudioDur : best.Dur;
+                        RecalculateAutoMvOffsetLocked();
+                    }
+                    UpdateActiveLyricLine();
+                    return true;
+                }
+            }
+
+            if (!string.IsNullOrEmpty(bestPlain))
+            {
+                string[] rawLines = bestPlain.Split(new char[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+                List<string> cleanLines = new List<string>();
+                for (int i = 0; i < rawLines.Length; i++)
+                {
+                    string cl = SanitizeLyricText(rawLines[i]);
+                    if (!string.IsNullOrEmpty(cl)) cleanLines.Add(cl);
+                }
+                if (cleanLines.Count > 0)
+                {
+                    double dur = _durationSec > 25.0 ? _durationSec : (cleanLines.Count * 4.0 + 14.0);
                     double introPad = Math.Min(16.0, dur * 0.10);
-                    double stepSec = Math.Max(2.5, (dur - introPad - 6.0) / Math.Max(1, lines.Length));
+                    double stepSec = Math.Max(2.5, (dur - introPad - 6.0) / Math.Max(1, cleanLines.Count));
                     lock (_lock)
                     {
                         _syncedLyrics.Clear();
                         double t = introPad;
-                        foreach (string ln in lines)
+                        for (int i = 0; i < cleanLines.Count; i++)
                         {
-                            _syncedLyrics.Add(new LyricLine { TimeSec = t, Text = ln.Trim() });
+                            _syncedLyrics.Add(new LyricLine { TimeSec = t, Text = cleanLines[i] });
                             t += stepSec;
                         }
                         FinalizeLyricTimings(_syncedLyrics, dur);
@@ -1148,7 +1342,16 @@ namespace Kumo
                     return true;
                 }
             }
+
             return false;
+        }
+
+        private bool TryQueryLrclibSingle(string rawQuery, string targetSongFold, string targetArtistFold)
+        {
+            if (string.IsNullOrEmpty(rawQuery)) return false;
+            string url = "https://lrclib.net/api/search?q=" + Uri.EscapeDataString(rawQuery.Trim());
+            string json = FetchUrlStringWithRetry(url);
+            return TryProcessLrclibJson(json, targetSongFold, targetArtistFold);
         }
 
         private void FetchLyricsFromLrclib(string track, string artist)
@@ -1163,15 +1366,35 @@ namespace Kumo
 
             try
             {
-                string cleanTrack = Regex.Replace(track ?? "", @"(\(.*?\)|\[.*?\]|\|.*$|#.*$|official\s*music\s*video|official\s*lyric\s*video|official\s*video|lyric\s*video|visualizer|4k|\bmv\b|\blyrics\b|\baudio\b|ft\..*$)", "", RegexOptions.IgnoreCase).Trim();
-                cleanTrack = Regex.Replace(cleanTrack, @"\s{2,}", " ").Trim(' ', '-', '\u2013', '\u2014');
-                string cleanArtist = Regex.Replace(artist ?? "", @"(\s*-\s*Topic$|\bOfficial\b|\bChannel\b|\bMusic\b|\bVEVO\b)", "", RegexOptions.IgnoreCase).Trim();
-
-                string q1 = (cleanArtist + " " + cleanTrack).Trim();
-                if (TryQueryLrclibSingle(q1)) return;
-                if (!string.IsNullOrEmpty(cleanTrack) && !string.Equals(q1, cleanTrack, StringComparison.OrdinalIgnoreCase))
+                string songCore;
+                string artistCore;
+                bool isMv;
+                ExtractSongAndArtist(track, artist, out songCore, out artistCore, out isMv);
+                lock (_lock)
                 {
-                    if (TryQueryLrclibSingle(cleanTrack)) return;
+                    _isLikelyMvTrack = isMv;
+                }
+
+                string songFold = NormalizeFold(songCore);
+                string artistFold = NormalizeFold(artistCore);
+
+                string q1 = (songCore + " " + artistCore).Trim();
+                if (!string.IsNullOrEmpty(q1) && TryQueryLrclibSingle(q1, songFold, artistFold)) return;
+
+                if (!string.IsNullOrEmpty(songCore) && !string.Equals(q1, songCore, StringComparison.OrdinalIgnoreCase))
+                {
+                    if (TryQueryLrclibSingle(songCore, songFold, artistFold)) return;
+                }
+
+                if (!string.IsNullOrEmpty(songCore) && !string.IsNullOrEmpty(artistCore))
+                {
+                    string getUrl = "https://lrclib.net/api/get?track_name=" + Uri.EscapeDataString(songCore) +
+                                    "&artist_name=" + Uri.EscapeDataString(artistCore);
+                    string getJson = FetchUrlStringWithRetry(getUrl);
+                    if (!string.IsNullOrEmpty(getJson) && TryProcessLrclibJson("[" + getJson + "]", songFold, artistFold))
+                    {
+                        return;
+                    }
                 }
 
                 lock (_lock)
@@ -1286,6 +1509,50 @@ namespace Kumo
             }
         }
 
+        private static void TryAttachPipeWordSpans(string pipeLine, LyricLine targetLine)
+        {
+            if (targetLine == null || string.IsNullOrEmpty(pipeLine) || string.IsNullOrEmpty(targetLine.Text)) return;
+            string inner = pipeLine.Trim();
+            if (!inner.StartsWith("<", StringComparison.Ordinal) || !inner.EndsWith(">", StringComparison.Ordinal)) return;
+            inner = inner.Substring(1, inner.Length - 2);
+            string[] parts = inner.Split(new char[] { '|' }, StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length < 2) return;
+
+            List<LyricWordSpan> spans = new List<LyricWordSpan>();
+            string lineTxt = targetLine.Text;
+            int searchPos = 0;
+
+            for (int i = 0; i < parts.Length; i++)
+            {
+                Match pm = Regex.Match(parts[i], @"^(.*):(\d+(?:\.\d+)?):(\d+(?:\.\d+)?)$");
+                if (!pm.Success) return;
+                string word = SanitizeLyricText(pm.Groups[1].Value);
+                if (string.IsNullOrEmpty(word)) continue;
+                double sSec, eSec;
+                if (!double.TryParse(pm.Groups[2].Value, NumberStyles.Float, CultureInfo.InvariantCulture, out sSec) ||
+                    !double.TryParse(pm.Groups[3].Value, NumberStyles.Float, CultureInfo.InvariantCulture, out eSec))
+                {
+                    return;
+                }
+                int idx = lineTxt.IndexOf(word, searchPos, StringComparison.OrdinalIgnoreCase);
+                if (idx < 0) return;
+                spans.Add(new LyricWordSpan
+                {
+                    CharStart = idx,
+                    CharLength = word.Length,
+                    StartSec = sSec,
+                    EndSec = Math.Max(sSec + 0.04, eSec)
+                });
+                searchPos = idx + word.Length;
+            }
+
+            if (spans.Count >= 2)
+            {
+                targetLine.Words = spans.ToArray();
+                targetLine.EndSec = Math.Max(targetLine.EndSec, spans[spans.Count - 1].EndSec);
+            }
+        }
+
         private void ParseLrc(string lrcText)
         {
             List<LyricLine> list = new List<LyricLine>();
@@ -1295,13 +1562,23 @@ namespace Kumo
 
             foreach (string rawLine in lines)
             {
-                Match m = rxLine.Match(rawLine.Trim());
+                string trimmed = rawLine.Trim();
+                if (trimmed.StartsWith("<", StringComparison.Ordinal) && trimmed.EndsWith(">", StringComparison.Ordinal) && trimmed.IndexOf('|') > 0)
+                {
+                    if (list.Count > 0)
+                    {
+                        TryAttachPipeWordSpans(trimmed, list[list.Count - 1]);
+                    }
+                    continue;
+                }
+
+                Match m = rxLine.Match(trimmed);
                 if (!m.Success) continue;
 
                 int mins = int.Parse(m.Groups[1].Value, CultureInfo.InvariantCulture);
                 double secs = double.Parse(m.Groups[2].Value, CultureInfo.InvariantCulture);
                 double tSec = mins * 60.0 + secs;
-                string body = m.Groups[3].Value.Trim();
+                string body = SanitizeSpeakerTags(m.Groups[3].Value).Trim();
 
                 if (string.IsNullOrEmpty(body) || body == "\u266A" || body == "...")
                 {
@@ -1323,7 +1600,7 @@ namespace Kumo
                         int wMin = int.Parse(wm[w].Groups[1].Value, CultureInfo.InvariantCulture);
                         double wSec = double.Parse(wm[w].Groups[2].Value, CultureInfo.InvariantCulture);
                         double wt = wMin * 60.0 + wSec;
-                        string seg = wm[w].Groups[3].Value;
+                        string seg = SanitizeSpeakerTags(wm[w].Groups[3].Value);
                         if (string.IsNullOrEmpty(seg)) continue;
 
                         int startIdx = sbClean.Length;
@@ -1344,7 +1621,7 @@ namespace Kumo
                         cur.EndSec = Math.Max(cur.StartSec + 0.04, wList[w + 1].StartSec);
                         wList[w] = cur;
                     }
-                    string cleanTxt = sbClean.ToString().Trim();
+                    string cleanTxt = SanitizeLyricText(sbClean.ToString());
                     if (!string.IsNullOrEmpty(cleanTxt))
                     {
                         list.Add(new LyricLine
@@ -1357,8 +1634,8 @@ namespace Kumo
                 }
                 else
                 {
-                    string cleanBody = Regex.Replace(body, @"<\d+:\d+(?:\.\d+)?>", "").Trim();
-                    if (!string.IsNullOrEmpty(cleanBody))
+                    string cleanBody = SanitizeLyricText(body);
+                    if (!string.IsNullOrEmpty(cleanBody) && cleanBody != "\u266A" && cleanBody != "...")
                     {
                         list.Add(new LyricLine { TimeSec = tSec, Text = cleanBody });
                     }
