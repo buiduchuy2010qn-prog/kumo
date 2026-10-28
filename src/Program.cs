@@ -121,9 +121,10 @@ namespace Kumo
                 using (HardwareMonitor hw = new HardwareMonitor())
                 using (MediaLyricsManager media = new MediaLyricsManager())
                 using (SystemOsdMonitor osd = new SystemOsdMonitor())
+                using (DownloadMonitor dl = new DownloadMonitor())
                 using (NotifyIcon tray = new NotifyIcon())
                 {
-                    NotchForm form = new NotchForm(state, hw, media, osd);
+                    NotchForm form = new NotchForm(state, hw, media, osd, dl);
                     Thread sigThread = new Thread((ThreadStart)delegate {
                         while (!form.IsDisposed) {
                             try { if (openSignal.WaitOne(500) && !form.IsDisposed && form.IsHandleCreated) form.BeginInvoke(new MethodInvoker(delegate { form.RevealAndOpenSettings(); })); } catch { break; }

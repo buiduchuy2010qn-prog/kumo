@@ -677,6 +677,11 @@ namespace Kumo
                 _state.T("Tự động ẩn tai thỏ khi bạn chơi game, xem phim hoặc trình chiếu toàn màn hình.", "Automatically hide during games, full-screen videos, and presentations."),
                 _state.HideInFullscreen);
 
+            y = DrawToggleCard(g, x, y, w, "tog_dl_hud",
+                _state.T("Thanh trạng thái tải tệp & Store (Download bar)", "Live file & Store download bar"),
+                _state.T("Tự động hiện thanh tiến trình khi tải tệp trên trình duyệt (Chrome, Edge, Cốc Cốc, Firefox...) hoặc tải app từ Microsoft Store.", "Show live download progress on the notch for web browsers and Microsoft Store apps."),
+                _state.DownloadHudEnabled);
+
             y = DrawToggleCard(g, x, y, w, "tog_sounds",
                 _state.T("Âm báo nhắc nhở (Reminder sounds)", "Reminder sounds"),
                 _state.T("Phát âm báo nhẹ khi kết thúc phiên tập trung Pomodoro.", "Play subtle chimes when Pomodoro focus or break timers complete."),
@@ -1346,6 +1351,11 @@ namespace Kumo
             else if (id == "tog_fullscreen")
             {
                 _state.HideInFullscreen = !_state.HideInFullscreen;
+                SaveAndApply();
+            }
+            else if (id == "tog_dl_hud")
+            {
+                _state.DownloadHudEnabled = !_state.DownloadHudEnabled;
                 SaveAndApply();
             }
             else if (id == "tog_sounds")

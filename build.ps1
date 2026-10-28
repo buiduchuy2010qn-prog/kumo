@@ -89,6 +89,7 @@ $sources = @(
     (Join-Path $projDir "src\NativeMethods.cs"),
     (Join-Path $projDir "src\HardwareMonitor.cs"),
     (Join-Path $projDir "src\SystemOsdMonitor.cs"),
+    (Join-Path $projDir "src\DownloadMonitor.cs"),
     (Join-Path $projDir "src\MediaLyricsManager.cs"),
     (Join-Path $projDir "src\UpdaterService.cs"),
     (Join-Path $projDir "src\AppState.cs"),

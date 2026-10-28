@@ -49,7 +49,8 @@ namespace Kumo
         // ==================== MUSIC & LYRICS ====================
         public bool ShowLyrics = true;         // Show synced lyrics from LRCLIB
         public bool DefaultLyricsSplit = false;
-        public bool EqualizerEnabled = true;   // Animated equalizer bars on Notch
+        public bool EqualizerEnabled = true;
+        public bool DownloadHudEnabled = true;   // Animated equalizer bars on Notch
 
         // ==================== ACTIVE UI NAVIGATION ====================
         public int ActiveTab = 0;
@@ -242,6 +243,7 @@ namespace Kumo
                         else if (k == "show_lyrics") ShowLyrics = (v == "1");
                         else if (k == "lyrics_split") DefaultLyricsSplit = (v == "1");
                         else if (k == "equalizer") EqualizerEnabled = (v == "1");
+                        else if (k == "dl_hud") DownloadHudEnabled = (v == "1");
                         else if (k == "water_remind") WaterRemindersEnabled = (v == "1");
                         else if (k == "water_goal") int.TryParse(v, out WaterGoalMl);
                         else if (k == "water_drank") int.TryParse(v, out WaterDrankMl);
@@ -369,6 +371,7 @@ namespace Kumo
                 sb.AppendLine("show_lyrics=" + (ShowLyrics ? "1" : "0"));
                 sb.AppendLine("lyrics_split=" + (DefaultLyricsSplit ? "1" : "0"));
                 sb.AppendLine("equalizer=" + (EqualizerEnabled ? "1" : "0"));
+                sb.AppendLine("dl_hud=" + (DownloadHudEnabled ? "1" : "0"));
                 sb.AppendLine("water_remind=" + (WaterRemindersEnabled ? "1" : "0"));
                 sb.AppendLine("water_goal=" + WaterGoalMl);
                 sb.AppendLine("water_drank=" + WaterDrankMl);
