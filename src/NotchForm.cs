@@ -80,6 +80,10 @@ namespace Kumo
         private bool _isScrubbingSeek = false;
         private RectangleF _lastSeekBarRect = RectangleF.Empty;
         private LyricLine[] _lastDisplayedLyrics = new LyricLine[0];
+        private int _lyricScrollOffset = 0;
+        private DateTime _lyricScrollUntilUtc = DateTime.MinValue;
+        private string _lyricScrollTrackKey = "";
+        private Point _lastHoverPt = Point.Empty;
         private int _shelfDragCandidate = -1;
         private Point _mouseDownPt = Point.Empty;
 
@@ -575,8 +579,8 @@ namespace Kumo
 
         private void InitReusableCanvas()
         {
-            _canvasW = Math.Max(320, (int)Math.Ceiling(U(680f)));
-            _canvasH = Math.Max(120, (int)Math.Ceiling(U(162f)));
+            _canvasW = Math.Max(320, (int)Math.Ceiling(U(696f)));
+            _canvasH = Math.Max(120, (int)Math.Ceiling(U(182f)));
             Rectangle screen = GetTargetScreen().Bounds;
             _canvasWinX = screen.Left + (screen.Width - _canvasW) / 2;
             _canvasWinY = screen.Top;
@@ -606,7 +610,7 @@ namespace Kumo
             if (_isExpanded)
             {
                 bool wide = (_pageIndex == 0 && _isLyricsSplit && _state.ShowLyrics);
-                _targetW = U(wide ? 588f : 416f); _targetH = U(139f); _targetR = U(30f); _targetE = U(20f);
+                _targetW = U(wide ? 598f : 416f); _targetH = U(wide ? 152f : 139f); _targetR = U(30f); _targetE = U(20f);
             }
             else if (IsOsdActive)
             {
@@ -1309,7 +1313,8 @@ RefreshBatteryLevel();
                             GraphicsState stExp = g.Save();
                             float yOff = -(1.0f - expProg) * U(6f);
                             g.TranslateTransform(0f, yOff);
-                            DrawExpandedNusa(g, x0, bodyW, U(140f));
+                            float expFullH = (_pageIndex == 0 && _isLyricsSplit && _state.ShowLyrics) ? U(152f) : U(140f);
+                            DrawExpandedNusa(g, x0, bodyW, expFullH);
                             g.Restore(stExp);
 
                             int veil = (int)((1.0f - expProg) * 255f);
@@ -1604,69 +1609,88 @@ RefreshBatteryLevel();
             g.Restore(st);
         }
 
-        // ==================== STAGE 1: EXPANDED NUSA (420 x 140 dp) ====================
+        // ==================== STAGE 1: EXPANDED NUSA ====================
         private void DrawExpandedNusa(Graphics g, float x0, float w, float h)
         {
-            if (!(_pageIndex == 0 && _isLyricsSplit && _state.ShowLyrics))
-            {
-                DrawBatteryRing(g, x0 + U(143f), U(18f));
-                string batTxt; Color batCol;
-                if (_batteryStateKind == 1)
-                {
-                    batTxt = string.Format(CultureInfo.InvariantCulture, "{0}% \u00B7 {1}", _batteryPercent, _state.T("\u0110ang s\u1EA1c", "Charging"));
-                    batCol = IsLight ? Color.FromArgb(5, 150, 105) : Color.FromArgb(74, 222, 128);
-                }
-                else if (_batteryStateKind == 2)
-                {
-                    batTxt = string.Format(CultureInfo.InvariantCulture, "{0}% \u00B7 {1}", _batteryPercent, _state.T("Pin y\u1EBFu", "Low"));
-                    batCol = IsLight ? Color.FromArgb(220, 38, 38) : Color.FromArgb(255, 98, 98);
-                }
-                else
-                {
-                    batTxt = string.Format(CultureInfo.InvariantCulture, "{0}% \u00B7 {1}", _batteryPercent, _state.T("Pin bth", "Normal"));
-                    batCol = Nw(215);
-                }
-                SizeF bSz = g.MeasureString(batTxt, _fAxis);
-                float batX = x0 + U(154f);
-                _hitZones.Add(new HitZone { Id = "hdr_bat", Rect = new RectangleF(x0 + U(134f), U(6f), bSz.Width + U(24f), U(24f)) });
-                DrawLeftVCenteredText(g, batTxt, _fAxis, batCol, batX, U(18f));
+            bool isSplitLyrics = (_pageIndex == 0 && _isLyricsSplit && _state.ShowLyrics);
+            float hdrY = isSplitLyrics ? U(15.5f) : U(18f);
 
-                string dateStr = DateTime.Now.ToString("dd MMM ", CultureInfo.InvariantCulture);
-                string timeStr = DateTime.Now.ToString(_showHeaderSeconds ? "HH:mm:ss" : "HH:mm");
-                SizeF dSz = g.MeasureString(dateStr, _fHdrDate);
-                float dateX = batX + bSz.Width + U(6f);
-                float dateY = U(18f) - dSz.Height * 0.5f;
-                _hitZones.Add(new HitZone { Id = "hdr_clock", Rect = new RectangleF(dateX - U(2f), U(6f), U(108f), U(24f)) });
-                using (SolidBrush bDate = new SolidBrush(ToCrispInk(Nw(_hoveredId == "hdr_clock" ? 255 : 215))))
-                using (SolidBrush bTime = new SolidBrush(InkPri))
-                {
-                    g.DrawString(dateStr, _fHdrDate, bDate, (float)Math.Round(dateX), (float)Math.Round(dateY));
-                    g.DrawString(timeStr, _fHdrTime, bTime, (float)Math.Round(dateX + dSz.Width), (float)Math.Round(dateY));
-                }
-                if (IsDownloadActive)
-                {
-                    DrawDownloadHeaderBadge(g, "hdr_dl", x0 + w - U(68f), U(18f));
-                }
-                DrawSettingsGearButton(g, "open_settings", x0 + w - U(45f), U(18f));
-                if (_state.EqualizerEnabled)
-                {
-                    _hitZones.Add(new HitZone { Id = "hdr_eq", Rect = new RectangleF(x0 + w - U(32f), U(6f), U(26f), U(24f)) });
-                    DrawEqualizerBars(g, x0 + w - U(20f), U(18f));
-                }
+            string batTxt;
+            Color batCol;
+            if (_batteryStateKind == 1)
+            {
+                batTxt = isSplitLyrics
+                    ? string.Format(CultureInfo.InvariantCulture, "{0}%", _batteryPercent)
+                    : string.Format(CultureInfo.InvariantCulture, "{0}% \u00B7 {1}", _batteryPercent, _state.T("\u0110ang s\u1EA1c", "Charging"));
+                batCol = IsLight ? Color.FromArgb(5, 150, 105) : Color.FromArgb(74, 222, 128);
+            }
+            else if (_batteryStateKind == 2)
+            {
+                batTxt = string.Format(CultureInfo.InvariantCulture, "{0}% \u00B7 {1}", _batteryPercent, _state.T("Pin y\u1EBFu", "Low"));
+                batCol = IsLight ? Color.FromArgb(220, 38, 38) : Color.FromArgb(255, 98, 98);
             }
             else
             {
-                DrawBatteryRing(g, x0 + U(104f), U(21f));
-                string splitClock = string.Format(CultureInfo.InvariantCulture, "{0}% \u00B7 {1}",
-                    _batteryPercent, DateTime.Now.ToString(_showHeaderSeconds ? "HH:mm:ss" : "HH:mm"));
-                _hitZones.Add(new HitZone { Id = "hdr_clock", Rect = new RectangleF(x0 + U(96f), U(11f), U(128f), U(19f)) });
-                DrawLeftVCenteredText(g, splitClock, _fHdrTime, InkPri, x0 + U(115f), U(21f));
+                batTxt = isSplitLyrics
+                    ? string.Format(CultureInfo.InvariantCulture, "{0}%", _batteryPercent)
+                    : string.Format(CultureInfo.InvariantCulture, "{0}% \u00B7 {1}", _batteryPercent, _state.T("Pin bth", "Normal"));
+                batCol = Nw(215);
+            }
 
-                if (IsDownloadActive)
-                {
-                    DrawDownloadHeaderBadge(g, "hdr_dl", x0 + w - U(48f), U(18f));
-                }
-                DrawSettingsGearButton(g, "open_settings", x0 + w - U(24f), U(18f));
+            SizeF bSz = g.MeasureString(batTxt, _fAxis);
+            string dateStr = DateTime.Now.ToString("dd MMM ", CultureInfo.InvariantCulture);
+            string timeStr = DateTime.Now.ToString(_showHeaderSeconds ? "HH:mm:ss" : "HH:mm");
+            SizeF dSz = g.MeasureString(dateStr, _fHdrDate);
+            SizeF tSz = g.MeasureString(timeStr, _fHdrTime);
+
+            float ringX;
+            if (isSplitLyrics)
+            {
+                float clusterW = U(18f) + bSz.Width + U(8f) + dSz.Width + tSz.Width;
+                ringX = x0 + Math.Max(U(186f), (w - clusterW) * 0.5f);
+            }
+            else
+            {
+                ringX = x0 + U(143f);
+            }
+
+            DrawBatteryRing(g, ringX, hdrY);
+            float batX = ringX + U(11f);
+            _hitZones.Add(new HitZone { Id = "hdr_bat", Rect = new RectangleF(ringX - U(9f), hdrY - U(11f), bSz.Width + U(24f), U(22f)) });
+            DrawLeftVCenteredText(g, batTxt, _fAxis, batCol, batX, hdrY);
+
+            float dateX = batX + bSz.Width + U(7f);
+            float dateY = hdrY - dSz.Height * 0.5f;
+            _hitZones.Add(new HitZone { Id = "hdr_clock", Rect = new RectangleF(dateX - U(2f), hdrY - U(11f), dSz.Width + tSz.Width + U(8f), U(22f)) });
+            using (SolidBrush bDate = new SolidBrush(ToCrispInk(Nw(_hoveredId == "hdr_clock" ? 255 : 210))))
+            using (SolidBrush bTime = new SolidBrush(InkPri))
+            {
+                g.DrawString(dateStr, _fHdrDate, bDate, (float)Math.Round(dateX), (float)Math.Round(dateY));
+                g.DrawString(timeStr, _fHdrTime, bTime, (float)Math.Round(dateX + dSz.Width), (float)Math.Round(dateY));
+            }
+
+            float gearX = _state.EqualizerEnabled ? (x0 + w - U(44f)) : (x0 + w - U(24f));
+            if (IsDownloadActive)
+            {
+                DrawDownloadHeaderBadge(g, "hdr_dl", gearX - U(23f), hdrY);
+            }
+            else if (UpdaterService.HasNewerRelease && !string.IsNullOrEmpty(UpdaterService.LatestTag))
+            {
+                string upTxt = "\u2B06 " + UpdaterService.LatestTag;
+                SizeF upSz = g.MeasureString(upTxt, _fShelfSub);
+                float upW = upSz.Width + U(12f);
+                RectangleF upRect = new RectangleF(gearX - U(14f) - upW, hdrY - U(8.5f), upW, U(17f));
+                _hitZones.Add(new HitZone { Id = "hdr_update", Rect = upRect });
+                bool upHov = (_hoveredId == "hdr_update");
+                FillPill(g, upRect, upHov ? Color.FromArgb(230, 16, 185, 129) : Color.FromArgb(145, 5, 150, 105));
+                DrawCenteredText(g, upTxt, _fShelfSub, Color.White, upRect.X + upRect.Width * 0.5f, hdrY);
+            }
+
+            DrawSettingsGearButton(g, "open_settings", gearX, hdrY);
+            if (_state.EqualizerEnabled)
+            {
+                _hitZones.Add(new HitZone { Id = "hdr_eq", Rect = new RectangleF(x0 + w - U(32f), hdrY - U(11f), U(26f), U(22f)) });
+                DrawEqualizerBars(g, x0 + w - U(20f), hdrY);
             }
 
             switch (_pageIndex)
@@ -1694,9 +1718,10 @@ RefreshBatteryLevel();
                     break;
             }
 
-            DrawNavArrow(g, "nav_prev", x0 + U(20f), U(70f), true);
-            DrawNavArrow(g, "nav_next", x0 + w - U(20f), U(70f), false);
-            DrawPageDots(g, x0 + w * 0.5f, U(132f));
+            float navCy = h * 0.5f;
+            DrawNavArrow(g, "nav_prev", x0 + U(20f), navCy, true);
+            DrawNavArrow(g, "nav_next", x0 + w - U(20f), navCy, false);
+            DrawPageDots(g, x0 + w * 0.5f, h - U(7.5f));
             if (_osdFade > 0.02f)
             {
                 float oEase = SmoothStep01(_osdFade);
@@ -1770,8 +1795,8 @@ RefreshBatteryLevel();
             Color titleCol = hasMedia ? InkPri : Nw(205);
             Color subCol = hasMedia ? Nw(155) : Nw(110);
 
-            DrawLeftVCenteredText(g, Truncate(title, 30), _fMusicTitle, titleCol, x0 + U(110f), U(44f));
-            DrawLeftVCenteredText(g, Truncate(artist, 48), _fMusicSub, subCol, x0 + U(110f), U(62f));
+            DrawClippedMarqueeText(g, title, _fMusicTitle, titleCol, new RectangleF(x0 + U(110f), U(33f), U(272f), U(22f)), hasMedia && _media.IsPlaying);
+            DrawClippedMarqueeText(g, artist, _fMusicSub, subCol, new RectangleF(x0 + U(110f), U(54f), U(272f), U(18f)), false);
 
             double pos = hasMedia ? _media.GetLivePositionSec() : 0.0;
             double dur = hasMedia ? _media.DurationSec : 0.0;
@@ -1807,6 +1832,10 @@ RefreshBatteryLevel();
                     }
                 }
             }
+            if (seekHov && hasMedia && dur > 0.5)
+            {
+                DrawSeekHoverTooltip(g, progTrack, dur);
+            }
 
             DrawLyricsBubbleIcon(g, "media_lyrics", x0 + U(56f), U(116f), _isLyricsSplit);
             DrawMediaPrevIcon(g, "media_prev", x0 + U(158f), U(115f));
@@ -1815,27 +1844,27 @@ RefreshBatteryLevel();
             DrawMusicSpeakerButton(g, "media_vol", x0 + w - U(56f), U(115f));
         }
 
-        // ==================== PAGE 0 SPLIT: REAL SYNCED LYRICS (520 x 140 dp) ====================
+        // ==================== PAGE 0 SPLIT: REAL SYNCED LYRICS (598 x 152 dp) ====================
         private void DrawLyricsSplitPage(Graphics g, float x0, float w, float h)
         {
             bool hasMedia = _media.HasMedia;
             Color dom = hasMedia ? _media.DominantColor : Color.FromArgb(44, 100, 184);
 
-            RectangleF ambRect = new RectangleF(x0, h * 0.20f, w, h * 0.80f);
+            RectangleF ambRect = new RectangleF(x0, h * 0.22f, w, h * 0.78f);
             using (LinearGradientBrush amb = new LinearGradientBrush(
                 ambRect,
                 Color.FromArgb(0, dom.R, dom.G, dom.B),
-                Color.FromArgb(hasMedia ? 145 : 65, dom.R, dom.G, dom.B),
+                Color.FromArgb(hasMedia ? 138 : 60, dom.R, dom.G, dom.B),
                 LinearGradientMode.Vertical))
             {
                 g.FillRectangle(amb, ambRect);
             }
 
-            RectangleF artRect = new RectangleF(x0 + U(36f), U(14f), U(54f), U(54f));
+            RectangleF artRect = new RectangleF(x0 + U(36f), U(28f), U(52f), U(52f));
             DrawAlbumArtThumb(g, artRect, U(10f));
             if (hasMedia)
             {
-                _hitZones.Add(new HitZone { Id = "media_focus", Rect = new RectangleF(x0 + U(36f), U(31f), U(192f), U(38f)) });
+                _hitZones.Add(new HitZone { Id = "media_focus", Rect = new RectangleF(x0 + U(36f), U(28f), U(192f), U(52f)) });
             }
 
             string title = hasMedia && !string.IsNullOrEmpty(_media.CurrentTitle)
@@ -1845,67 +1874,96 @@ RefreshBatteryLevel();
                 ? _media.CurrentArtist
                 : _state.T("YouTube · Spotify", "YouTube · Spotify");
 
-            DrawLeftVCenteredText(g, Truncate(title, 17), _fMusicTitle, InkPri, x0 + U(98f), U(41f));
-            DrawLeftVCenteredText(g, Truncate(artist, 21), _fMusicSub, Nw(150), x0 + U(98f), U(59f));
+            // Clipped smooth marquee inside Left Song Column (x0+96 .. x0+226, 12dp clear of vertical divider at x0+238!)
+            DrawClippedMarqueeText(g, title, _fMusicTitle, InkPri, new RectangleF(x0 + U(96f), U(33f), U(130f), U(22f)), hasMedia && _media.IsPlaying);
+            DrawClippedMarqueeText(g, artist, _fMusicSub, Nw(155), new RectangleF(x0 + U(96f), U(55f), U(130f), U(18f)), false);
 
             double pos = hasMedia ? _media.GetLivePositionSec() : 0.0;
             double dur = hasMedia ? _media.DurationSec : 0.0;
             double rem = Math.Max(0.0, dur - pos);
             float pct = (hasMedia && dur > 0.5) ? (float)Math.Max(0.0, Math.Min(1.0, pos / dur)) : 0.0f;
 
-            DrawLeftVCenteredText(g, FormatMMSS((int)pos), _fTimeSmall, InkPri, x0 + U(36f), U(90f));
+            float seekCy = U(98f);
+            DrawLeftVCenteredText(g, FormatMMSS((int)pos), _fTimeSmall, InkPri, x0 + U(36f), seekCy);
             bool seekHov = (_hoveredId == "media_seek") || _isScrubbingSeek;
             float barH = seekHov ? U(5.6f) : U(4.0f);
-            RectangleF progTrack = new RectangleF(x0 + U(76f), U(90f) - barH * 0.5f, U(104f), barH);
+            RectangleF progTrack = new RectangleF(x0 + U(76f), seekCy - barH * 0.5f, U(106f), barH);
             _lastSeekBarRect = progTrack;
             if (hasMedia && dur > 0.5)
             {
-                _hitZones.Add(new HitZone { Id = "media_seek", Rect = new RectangleF(progTrack.X - U(3f), U(80f), progTrack.Width + U(6f), U(20f)) });
+                _hitZones.Add(new HitZone { Id = "media_seek", Rect = new RectangleF(progTrack.X - U(3f), seekCy - U(10f), progTrack.Width + U(6f), U(20f)) });
             }
             FillPill(g, progTrack, Nw(60));
             if (pct > 0.005f)
             {
                 FillPill(g, new RectangleF(progTrack.X, progTrack.Y, Math.Max(barH, progTrack.Width * pct), progTrack.Height), InkPri);
+                if (seekHov)
+                {
+                    float kx = progTrack.X + progTrack.Width * pct;
+                    using (SolidBrush kb = new SolidBrush(InkPri))
+                    {
+                        g.FillEllipse(kb, kx - U(4.8f), seekCy - U(4.8f), U(9.6f), U(9.6f));
+                    }
+                }
             }
-            DrawRightVCenteredText(g, (!hasMedia) ? "00:00" : (dur > 0.5 ? ("-" + FormatMMSS((int)rem)) : "LIVE"), _fTimeSmall, InkPri, x0 + U(224f), U(90f));
-
-            DrawLyricsBubbleIcon(g, "media_lyrics", x0 + U(52f), U(115f), true);
-            DrawMediaPrevIcon(g, "media_prev", x0 + U(94f), U(115f));
-            DrawMediaPlayPauseIcon(g, "media_play", x0 + U(136f), U(115f), _media.IsPlaying);
-            DrawMediaNextIcon(g, "media_next", x0 + U(178f), U(115f));
-
-            using (SolidBrush div = new SolidBrush(Nw(38)))
+            DrawRightVCenteredText(g, (!hasMedia) ? "00:00" : (dur > 0.5 ? ("-" + FormatMMSS((int)rem)) : "LIVE"), _fTimeSmall, InkPri, x0 + U(226f), seekCy);
+            if (seekHov && hasMedia && dur > 0.5)
             {
-                g.FillRectangle(div, x0 + U(234f), U(20f), Math.Max(1f, U(1f)), U(98f));
+                DrawSeekHoverTooltip(g, progTrack, dur);
             }
 
-            float paneX = x0 + U(244f);
-            float paneW = Math.Max(U(120f), w - U(244f) - U(32f));
+            float btnCy = U(124f);
+            DrawLyricsBubbleIcon(g, "media_lyrics", x0 + U(50f), btnCy, true);
+            DrawMediaPrevIcon(g, "media_prev", x0 + U(88f), btnCy);
+            DrawMediaPlayPauseIcon(g, "media_play", x0 + U(126f), btnCy, _media.IsPlaying);
+            DrawMediaNextIcon(g, "media_next", x0 + U(164f), btnCy);
+            DrawMusicSpeakerButton(g, "media_vol", x0 + U(204f), btnCy);
+
+            using (SolidBrush div = new SolidBrush(Nw(42)))
+            {
+                g.FillRectangle(div, x0 + U(238f), U(30f), Math.Max(1f, U(1f)), U(102f));
+            }
+
+            float paneX = x0 + U(250f);
+            float paneW = Math.Max(U(140f), w - U(250f) - U(34f));
 
             if (!hasMedia)
             {
                 _lastDisplayedLyrics = new LyricLine[0];
-                DrawLeftVCenteredText(g, _state.T("♪ Phát một bài hát để xem", "♪ Play a song to see"), _fLyricOff, Nw(135), paneX, U(60f));
-                DrawLeftVCenteredText(g, _state.T("lời bài hát đồng bộ LRCLIB.", "synced lyrics from LRCLIB."), _fLyricOff, Nw(100), paneX, U(83f));
+                DrawLeftVCenteredText(g, _state.T("♪ Phát một bài hát để xem", "♪ Play a song to see"), _fLyricOff, Nw(140), paneX, U(66f));
+                DrawLeftVCenteredText(g, _state.T("lời bài hát Karaoke đồng bộ LRCLIB.", "word-by-word LRCLIB synced lyrics."), _fLyricOff, Nw(105), paneX, U(89f));
                 return;
             }
 
+            string curTrackKey = (_media.CurrentArtist ?? "") + "|" + (_media.CurrentTitle ?? "");
+            if (!string.Equals(curTrackKey, _lyricScrollTrackKey, StringComparison.Ordinal))
+            {
+                _lyricScrollTrackKey = curTrackKey;
+                _lyricScrollOffset = 0;
+                _lyricScrollUntilUtc = DateTime.MinValue;
+            }
+
+            bool manualScrolling = (DateTime.UtcNow < _lyricScrollUntilUtc) && (_lyricScrollOffset != 0);
+            if (!manualScrolling) _lyricScrollOffset = 0;
+
             int activeSlot;
-            LyricLine[] win = _media.GetDisplayLyricsWindow(out activeSlot);
+            int clampedScroll;
+            LyricLine[] win = _media.GetDisplayLyricsWindow(manualScrolling ? _lyricScrollOffset : 0, out activeSlot, out clampedScroll);
+            if (manualScrolling) _lyricScrollOffset = clampedScroll;
             _lastDisplayedLyrics = win;
 
             if (win.Length == 0)
             {
                 string stMsg = !string.IsNullOrEmpty(_media.CurrentLyricLine) ? _media.CurrentLyricLine : "Loading lyrics...";
                 GraphicsState stEmpty = g.Save();
-                g.SetClip(new RectangleF(paneX, U(50f), paneW, U(36f)), CombineMode.Intersect);
-                DrawLeftVCenteredText(g, stMsg, _fLyricOff, Nw(165), paneX, U(68f));
+                g.SetClip(new RectangleF(paneX, U(56f), paneW, U(38f)), CombineMode.Intersect);
+                DrawLeftVCenteredText(g, stMsg, _fLyricOff, Nw(165), paneX, U(75f));
                 g.Restore(stEmpty);
             }
             else
             {
                 double effPos = _media.GetEffectiveLyricsPosSec();
-                float lyY = U(27.5f);
+                float lyY = U(38.5f);
                 for (int i = 0; i < win.Length; i++)
                 {
                     bool active = (i == activeSlot);
@@ -1914,20 +1972,30 @@ RefreshBatteryLevel();
                     _hitZones.Add(new HitZone { Id = lid, Rect = lRect });
                     bool lHov = (_hoveredId == lid);
 
-                    if (lHov) FillRoundRect(g, lRect, U(6f), Nw(28));
+                    if (lHov) FillRoundRect(g, lRect, U(6f), Nw(30));
+
+                    float availLineW = paneW;
+                    if (lHov && dur > 0.5)
+                    {
+                        double seekTarget = Math.Max(0.0, win[i].TimeSec + _media.TotalLyricsOffsetSec);
+                        string tsBadge = FormatMMSS((int)seekTarget);
+                        SizeF tsSz = g.MeasureString(tsBadge, _fShelfSub);
+                        availLineW = Math.Max(U(80f), paneW - tsSz.Width - U(10f));
+                        DrawRightVCenteredText(g, tsBadge, _fShelfSub, IsLight ? Color.FromArgb(2, 132, 199) : Color.FromArgb(125, 211, 252), paneX + paneW, lyY);
+                    }
 
                     string fullTxt = win[i].Text ?? "";
                     Font fPrimary = active ? _fLyricOn : _fLyricOff;
                     Font fCompact = active ? _fLyricOnFit : _fLyricOffFit;
                     Font useFont = fPrimary;
                     SizeF lSz = g.MeasureString(fullTxt, useFont);
-                    if (lSz.Width > paneW + U(2f))
+                    if (lSz.Width > availLineW + U(2f))
                     {
                         useFont = fCompact;
                         lSz = g.MeasureString(fullTxt, useFont);
                     }
 
-                    RectangleF lineViewport = new RectangleF(paneX, lyY - U(10.5f), paneW, U(21f));
+                    RectangleF lineViewport = new RectangleF(paneX, lyY - U(10.5f), availLineW, U(21f));
                     if (active)
                     {
                         DrawKaraokeLyricLine(g, win[i], fullTxt, effPos, true, useFont, lineViewport, false);
@@ -1935,72 +2003,124 @@ RefreshBatteryLevel();
                     else
                     {
                         Color lineCol = lHov
-                            ? ToCrispInk(Nw(220))
-                            : ((activeSlot >= 0 && i < activeSlot) ? ToCrispInk(Nw(142)) : ToCrispInk(Nw(96)));
-                        GraphicsState stLine = g.Save();
-                        g.SetClip(lineViewport, CombineMode.Intersect);
-                        if (lSz.Width <= paneW + U(2f))
-                        {
-                            DrawLeftVCenteredText(g, fullTxt, useFont, lineCol, paneX, lyY);
-                        }
-                        else
-                        {
-                            float maxShift = lSz.Width - paneW + U(8f);
-                            float panT = lHov ? (float)(0.5 - 0.5 * Math.Cos(_frameClock.Elapsed.TotalSeconds * 1.35)) : 0f;
-                            float drawX = (float)Math.Round(paneX - maxShift * panT);
-                            float drawY = (float)Math.Round(lyY - lSz.Height * 0.5f);
-                            using (SolidBrush lb = new SolidBrush(lineCol))
-                            {
-                                g.DrawString(fullTxt, useFont, lb, drawX, drawY);
-                            }
-                        }
-                        g.Restore(stLine);
+                            ? ToCrispInk(Nw(230))
+                            : ((activeSlot >= 0 && i < activeSlot) ? ToCrispInk(Nw(142)) : ToCrispInk(Nw(98)));
+                        DrawClippedMarqueeText(g, fullTxt, useFont, lineCol, lineViewport, lHov);
                     }
-                    lyY += U(21.5f);
+                    lyY += U(21.0f);
                 }
 
-                // Bottom Sync Status & 1-Click Fine-Tuning Bar (aligned with media buttons at U(115f))
-                float barCy = U(115.5f);
+                // Bottom Sync Status & Clean Fine-Tuning Pills (aligned with media buttons at U(124f))
+                float barCy = U(124.5f);
                 double totOff = _media.TotalLyricsOffsetSec;
+                bool hasCustomOff = (Math.Abs(totOff) >= 0.1);
                 string syncInfo;
                 Color syncCol;
-                if (activeSlot < 0)
+                if (manualScrolling && _lyricScrollOffset != 0)
                 {
-                    syncInfo = (Math.Abs(totOff) >= 0.2)
-                        ? string.Format(CultureInfo.InvariantCulture, "\u266A {0} ({1:+0.0;-0.0}s)", _state.T("\u0110ang d\u1EA1o \u0111\u1EA7u", "Intro"), totOff)
+                    syncInfo = _state.T("↕ Cuộn xem lời · Nhấp dòng để tua", "↕ Scrolling · Click line to seek");
+                    syncCol = IsLight ? Color.FromArgb(255, 2, 132, 199) : Color.FromArgb(255, 125, 211, 252);
+                }
+                else if (activeSlot < 0)
+                {
+                    syncInfo = hasCustomOff
+                        ? string.Format(CultureInfo.InvariantCulture, "\u266A {0} ({1:+0.0;-0.0}s)", _state.T("D\u1EA1o \u0111\u1EA7u", "Intro"), totOff)
                         : ("\u266A " + _state.T("\u0110ang d\u1EA1o \u0111\u1EA7u...", "Waiting for vocals..."));
                     syncCol = IsLight ? Color.FromArgb(255, 2, 132, 199) : Color.FromArgb(255, 125, 211, 252);
                 }
-                else if (Math.Abs(totOff) >= 0.1)
+                else if (hasCustomOff)
                 {
-                    syncInfo = string.Format(CultureInfo.InvariantCulture, "{0}: {1:+0.0;-0.0}s", _state.T("Nh\u1ECBp MV", "Offset"), totOff);
-                    syncCol = ToCrispInk(Nw(155));
+                    syncInfo = string.Format(CultureInfo.InvariantCulture, "{0}: {1:+0.0;-0.0}s", _state.T("\u0110\u1ED9 tr\u1EC5 l\u1EDDi", "Offset"), totOff);
+                    syncCol = ToCrispInk(Nw(165));
                 }
                 else
                 {
-                    syncInfo = "\u266A " + _state.T("\u0110\u00E3 kh\u1EDBp l\u1EDDi", "Synced");
-                    syncCol = ToCrispInk(Nw(130));
+                    syncInfo = "\u266A " + _state.T("Kh\u1EDBp t\u1EF1 \u0111\u1ED9ng", "Auto-synced");
+                    syncCol = ToCrispInk(Nw(128));
                 }
-                DrawLeftVCenteredText(g, syncInfo, _fTimeSmall, syncCol, paneX, barCy);
 
-                float pH = U(16.5f);
+                float pH = U(17.5f);
                 float rx = paneX + paneW;
-                RectangleF rAdd  = new RectangleF(rx - U(34f), barCy - pH * 0.5f, U(34f), pH);
-                RectangleF rNow  = new RectangleF(rAdd.X - U(4f) - U(68f), barCy - pH * 0.5f, U(68f), pH);
-                RectangleF rSub  = new RectangleF(rNow.X - U(4f) - U(34f), barCy - pH * 0.5f, U(34f), pH);
-
-                _hitZones.Add(new HitZone { Id = "lyr_off_sub", Rect = rSub });
-                _hitZones.Add(new HitZone { Id = "lyr_sync_now", Rect = rNow });
+                RectangleF rAdd = new RectangleF(rx - U(38f), barCy - pH * 0.5f, U(38f), pH);
                 _hitZones.Add(new HitZone { Id = "lyr_off_add", Rect = rAdd });
+                FillPill(g, rAdd, _hoveredId == "lyr_off_add" ? Nw(72) : Nw(36));
+                DrawCenteredText(g, "+0.5s", _fShelfSub, InkPri, rAdd.X + rAdd.Width * 0.5f, barCy);
 
-                FillPill(g, rSub, _hoveredId == "lyr_off_sub" ? Nw(68) : Nw(34));
-                FillPill(g, rNow, _hoveredId == "lyr_sync_now" ? Color.FromArgb(210, 14, 165, 233) : Color.FromArgb(145, 2, 132, 199));
-                FillPill(g, rAdd, _hoveredId == "lyr_off_add" ? Nw(68) : Nw(34));
+                float leftAnchorX = rAdd.X;
+                if (hasCustomOff)
+                {
+                    string rstTxt = _state.T("\u0110\u1EB7t l\u1EA1i 0s", "Reset 0s");
+                    SizeF rstSz = g.MeasureString(rstTxt, _fShelfSub);
+                    float rstW = Math.Max(U(58f), rstSz.Width + U(14f));
+                    RectangleF rRst = new RectangleF(rAdd.X - U(4f) - rstW, barCy - pH * 0.5f, rstW, pH);
+                    _hitZones.Add(new HitZone { Id = "lyr_off_reset", Rect = rRst });
+                    FillPill(g, rRst, _hoveredId == "lyr_off_reset" ? Color.FromArgb(215, 14, 165, 233) : Color.FromArgb(140, 2, 132, 199));
+                    DrawCenteredText(g, rstTxt, _fShelfSub, Color.White, rRst.X + rRst.Width * 0.5f, barCy);
+                    leftAnchorX = rRst.X;
+                }
+                else if (activeSlot < 0 && pos >= 4.0)
+                {
+                    string synTxt = _state.T("Kh\u1EDBp gi\u1ECDng", "Sync vocal");
+                    SizeF synSz = g.MeasureString(synTxt, _fShelfSub);
+                    float synW = Math.Max(U(66f), synSz.Width + U(16f));
+                    RectangleF rNow = new RectangleF(rAdd.X - U(4f) - synW, barCy - pH * 0.5f, synW, pH);
+                    _hitZones.Add(new HitZone { Id = "lyr_sync_now", Rect = rNow });
+                    FillPill(g, rNow, _hoveredId == "lyr_sync_now" ? Color.FromArgb(215, 14, 165, 233) : Color.FromArgb(145, 2, 132, 199));
+                    DrawCenteredText(g, synTxt, _fShelfSub, Color.White, rNow.X + rNow.Width * 0.5f, barCy);
+                    leftAnchorX = rNow.X;
+                }
 
-                DrawCenteredText(g, "-0.5s", _fTimeSmall, InkPri, rSub.X + rSub.Width * 0.5f, barCy);
-                DrawCenteredText(g, _state.T("H\u00E1t c\u00E2u \u0111\u1EA7u", "Sync start"), _fTimeSmall, Color.White, rNow.X + rNow.Width * 0.5f, barCy);
-                DrawCenteredText(g, "+0.5s", _fTimeSmall, InkPri, rAdd.X + rAdd.Width * 0.5f, barCy);
+                RectangleF rSub = new RectangleF(leftAnchorX - U(4f) - U(38f), barCy - pH * 0.5f, U(38f), pH);
+                _hitZones.Add(new HitZone { Id = "lyr_off_sub", Rect = rSub });
+                FillPill(g, rSub, _hoveredId == "lyr_off_sub" ? Nw(72) : Nw(36));
+                DrawCenteredText(g, "-0.5s", _fShelfSub, InkPri, rSub.X + rSub.Width * 0.5f, barCy);
+
+                GraphicsState stSyncLbl = g.Save();
+                g.SetClip(new RectangleF(paneX, barCy - U(10f), Math.Max(U(40f), rSub.X - paneX - U(6f)), U(20f)), CombineMode.Intersect);
+                DrawLeftVCenteredText(g, syncInfo, _fShelfSub, syncCol, paneX, barCy);
+                g.Restore(stSyncLbl);
             }
+        }
+
+        private void DrawClippedMarqueeText(Graphics g, string text, Font font, Color col, RectangleF viewport, bool animateWhenLong)
+        {
+            if (string.IsNullOrEmpty(text) || viewport.Width <= 2f) return;
+            using (StringFormat sf = (StringFormat)StringFormat.GenericTypographic.Clone())
+            using (SolidBrush br = new SolidBrush(ToCrispInk(col)))
+            {
+                sf.FormatFlags |= StringFormatFlags.NoWrap | StringFormatFlags.MeasureTrailingSpaces;
+                SizeF sz = g.MeasureString(text, font, 10000, sf);
+                float drawY = (float)Math.Round(viewport.Y + (viewport.Height - sz.Height) * 0.5f);
+                float drawX = (float)Math.Round(viewport.X);
+
+                if (sz.Width > viewport.Width + U(1.5f) && animateWhenLong)
+                {
+                    float maxShift = sz.Width - viewport.Width + U(10f);
+                    double rawWave = 0.5 - 0.5 * Math.Cos(_frameClock.Elapsed.TotalSeconds * 0.72);
+                    float plateau = (float)Math.Max(0.0, Math.Min(1.0, rawWave * 1.36 - 0.18));
+                    drawX = (float)Math.Round(viewport.X - maxShift * plateau);
+                }
+
+                GraphicsState st = g.Save();
+                g.SetClip(viewport, CombineMode.Intersect);
+                g.DrawString(text, font, br, new PointF(drawX, drawY), sf);
+                g.Restore(st);
+            }
+        }
+
+        private void DrawSeekHoverTooltip(Graphics g, RectangleF progTrack, double durSec)
+        {
+            if (progTrack.Width <= 6f || durSec <= 0.5) return;
+            float clampedX = Math.Max(progTrack.X, Math.Min(progTrack.Right, (float)_lastHoverPt.X));
+            double frac = (clampedX - progTrack.X) / progTrack.Width;
+            string tip = FormatMMSS((int)Math.Round(frac * durSec));
+            SizeF tSz = g.MeasureString(tip, _fShelfSub);
+            float bw = tSz.Width + U(10f);
+            float bh = U(15.5f);
+            float bx = Math.Max(progTrack.X - U(4f), Math.Min(progTrack.Right - bw + U(4f), clampedX - bw * 0.5f));
+            RectangleF tipRect = new RectangleF(bx, progTrack.Y - bh - U(5.5f), bw, bh);
+            FillPill(g, tipRect, IsLight ? Color.FromArgb(238, 15, 23, 42) : Color.FromArgb(236, 30, 41, 59));
+            DrawCenteredText(g, tip, _fShelfSub, Color.White, tipRect.X + tipRect.Width * 0.5f, tipRect.Y + bh * 0.5f);
         }
 
         private void DrawKaraokeLyricLine(Graphics g, LyricLine line, string fallbackTxt, double posSec, bool isSynced, Font font, RectangleF viewport, bool centerWhenFits)
@@ -2008,10 +2128,10 @@ RefreshBatteryLevel();
             string txt = (line != null && !string.IsNullOrEmpty(line.Text)) ? line.Text : (fallbackTxt ?? "");
             if (string.IsNullOrEmpty(txt)) return;
 
-            using (StringFormat sf = (StringFormat)StringFormat.GenericTypographic.Clone())
+            using (StringFormat sfDraw = (StringFormat)StringFormat.GenericTypographic.Clone())
             {
-                sf.FormatFlags |= StringFormatFlags.NoWrap | StringFormatFlags.MeasureTrailingSpaces;
-                SizeF fullSz = g.MeasureString(txt, font, 10000, sf);
+                sfDraw.FormatFlags |= StringFormatFlags.NoWrap | StringFormatFlags.MeasureTrailingSpaces;
+                SizeF fullSz = g.MeasureString(txt, font, 10000, sfDraw);
                 float totalW = fullSz.Width;
                 float sweepPx = totalW + U(4f);
 
@@ -2045,14 +2165,18 @@ RefreshBatteryLevel();
                         int cLen = Math.Max(1, Math.Min(txt.Length - cStart, ws.CharLength));
                         try
                         {
-                            sf.SetMeasurableCharacterRanges(new CharacterRange[] { new CharacterRange(cStart, cLen) });
-                            Region[] regs = g.MeasureCharacterRanges(txt, font, new RectangleF(0f, 0f, 10000f, fullSz.Height + 24f), sf);
-                            if (regs != null && regs.Length > 0 && regs[0] != null)
+                            using (StringFormat sfMeasure = (StringFormat)StringFormat.GenericTypographic.Clone())
                             {
-                                RectangleF wb = regs[0].GetBounds(g);
-                                wLeft = wb.X;
-                                wRight = wb.Right;
-                                regs[0].Dispose();
+                                sfMeasure.FormatFlags |= StringFormatFlags.NoWrap | StringFormatFlags.MeasureTrailingSpaces;
+                                sfMeasure.SetMeasurableCharacterRanges(new CharacterRange[] { new CharacterRange(cStart, cLen) });
+                                Region[] regs = g.MeasureCharacterRanges(txt, font, new RectangleF(0f, 0f, 10000f, fullSz.Height + 24f), sfMeasure);
+                                if (regs != null && regs.Length > 0 && regs[0] != null)
+                                {
+                                    RectangleF wb = regs[0].GetBounds(g);
+                                    wLeft = wb.X;
+                                    wRight = wb.Right;
+                                    regs[0].Dispose();
+                                }
                             }
                         }
                         catch { }
@@ -2086,51 +2210,35 @@ RefreshBatteryLevel();
                     drawX = (float)Math.Round(viewport.X - shift);
                 }
 
-                Color unsungCol = IsLight ? Color.FromArgb(255, 138, 150, 170) : Color.FromArgb(255, 118, 128, 146);
-                Color edgeCol   = IsLight ? Color.FromArgb(255, 62, 78, 104)   : Color.FromArgb(255, 194, 205, 224);
+                Color unsungCol = IsLight ? Color.FromArgb(255, 138, 150, 170) : Color.FromArgb(255, 122, 134, 154);
                 Color sungCol   = InkPri;
 
-                GraphicsState stVp = g.Save();
-                g.SetClip(viewport, CombineMode.Intersect);
+                // Strictly disjoint Left (Sung) and Right (Unsung) clips — every glyph pixel is rendered ONCE with zero ghosting!
+                float splitX = Math.Max(viewport.X, Math.Min(viewport.Right, drawX + sweepPx));
 
-                if (sweepPx < totalW + U(1f))
-                {
-                    using (SolidBrush bBase = new SolidBrush(unsungCol))
-                    {
-                        g.DrawString(txt, font, bBase, new PointF(drawX, drawY), sf);
-                    }
-                }
-
-                float splitX = drawX + sweepPx;
-                float featherW = U(4.5f);
-
-                if (sweepPx > 0.5f && sweepPx < totalW)
-                {
-                    GraphicsState stEdge = g.Save();
-                    g.SetClip(new RectangleF(splitX - U(1f), viewport.Y - 4f, featherW, viewport.Height + 8f), CombineMode.Intersect);
-                    using (SolidBrush bEdge = new SolidBrush(edgeCol))
-                    {
-                        g.DrawString(txt, font, bEdge, new PointF(drawX, drawY), sf);
-                    }
-                    g.Restore(stEdge);
-                }
-
-                if (sweepPx > 0.4f)
+                if (splitX > viewport.X + 0.3f)
                 {
                     GraphicsState stSung = g.Save();
-                    float sungW = Math.Max(0f, splitX - (viewport.X - 4f));
-                    if (sungW > 0.4f)
+                    g.SetClip(viewport, CombineMode.Intersect);
+                    g.SetClip(new RectangleF(viewport.X - 2f, viewport.Y - 4f, (splitX - viewport.X) + 2f, viewport.Height + 8f), CombineMode.Intersect);
+                    using (SolidBrush bSung = new SolidBrush(sungCol))
                     {
-                        g.SetClip(new RectangleF(viewport.X - 4f, viewport.Y - 4f, sungW, viewport.Height + 8f), CombineMode.Intersect);
-                        using (SolidBrush bSung = new SolidBrush(sungCol))
-                        {
-                            g.DrawString(txt, font, bSung, new PointF(drawX, drawY), sf);
-                        }
+                        g.DrawString(txt, font, bSung, new PointF(drawX, drawY), sfDraw);
                     }
                     g.Restore(stSung);
                 }
 
-                g.Restore(stVp);
+                if (splitX < viewport.Right - 0.3f)
+                {
+                    GraphicsState stUnsung = g.Save();
+                    g.SetClip(viewport, CombineMode.Intersect);
+                    g.SetClip(new RectangleF(splitX, viewport.Y - 4f, (viewport.Right - splitX) + 2f, viewport.Height + 8f), CombineMode.Intersect);
+                    using (SolidBrush bUnsung = new SolidBrush(unsungCol))
+                    {
+                        g.DrawString(txt, font, bUnsung, new PointF(drawX, drawY), sfDraw);
+                    }
+                    g.Restore(stUnsung);
+                }
             }
         }
 
@@ -3425,11 +3533,30 @@ RefreshBatteryLevel();
         // ==================== FULL INTERACTION: CLICK, SCRUB, SCROLL & DRAG ====================
         private void OnNotchMouseWheel(object sender, MouseEventArgs e)
         {
-            if (!_isExpanded) return;
-            if (_hoveredId == "media_vol" && _osd != null) { _osd.AdjustVolume(e.Delta > 0 ? 4 : -4); return; }
+            if (!_isExpanded)
+            {
+                if (_osd != null)
+                {
+                    _osd.AdjustVolume(e.Delta > 0 ? 4 : -4);
+                }
+                return;
+            }
+            if (_hoveredId == "media_vol" && _osd != null)
+            {
+                _osd.AdjustVolume(e.Delta > 0 ? 4 : -4);
+                return;
+            }
+
+            float x0 = (_canvasW - _curW) * 0.5f;
+            if (_pageIndex == 0 && _isLyricsSplit && _state.ShowLyrics && _media.HasMedia && e.X >= x0 + U(238f))
+            {
+                _lyricScrollOffset += (e.Delta < 0) ? 1 : -1;
+                _lyricScrollUntilUtc = DateTime.UtcNow.AddSeconds(4.2);
+                _needsRedraw = true;
+                return;
+            }
 
             // On TodoList page, scrolling over the right task list scrolls tasks smoothly!
-            float x0 = (_canvasW - _curW) * 0.5f;
             if (_pageIndex == 4 && _state.Todos.Count > 3 && e.X >= x0 + U(190f))
             {
                 _todoScroll += (e.Delta < 0) ? 1 : -1;
@@ -3447,6 +3574,9 @@ RefreshBatteryLevel();
 
         private void OnNotchMouseMove(object sender, MouseEventArgs e)
         {
+            _lastHoverPt = e.Location;
+            if (_hoveredId == "media_seek") _needsRedraw = true;
+
             if (_isScrubbingSeek && e.Button == MouseButtons.Left && _lastSeekBarRect.Width > 10f)
             {
                 double pct = (e.X - _lastSeekBarRect.X) / _lastSeekBarRect.Width;
@@ -3500,6 +3630,13 @@ RefreshBatteryLevel();
         {
             _mouseDownPt = e.Location;
             _shelfDragCandidate = -1;
+
+            if (e.Button == MouseButtons.Middle)
+            {
+                _media.TogglePlayPause();
+                _needsRedraw = true;
+                return;
+            }
 
             if (!_isExpanded)
             {
@@ -3662,11 +3799,21 @@ RefreshBatteryLevel();
             {
                 _media.SkipNext();
             }
+            else if (id == "hdr_update")
+            {
+                _isExpanded = false;
+                _suppressHoverUntilLeave = true;
+                _hw.IsNotchExpanded = false;
+                UpdateTargetDimensions();
+                OpenSettings(6);
+            }
             else if (id.StartsWith("lyric_seek_"))
             {
                 int lIdx;
                 if (int.TryParse(id.Substring("lyric_seek_".Length), out lIdx) && lIdx >= 0 && lIdx < _lastDisplayedLyrics.Length)
                 {
+                    _lyricScrollOffset = 0;
+                    _lyricScrollUntilUtc = DateTime.MinValue;
                     _media.SeekToSeconds(Math.Max(0.0, _lastDisplayedLyrics[lIdx].TimeSec + _media.TotalLyricsOffsetSec));
                 }
             }
@@ -3677,6 +3824,10 @@ RefreshBatteryLevel();
             else if (id == "lyr_off_add")
             {
                 _media.AdjustUserLyricsOffset(0.5);
+            }
+            else if (id == "lyr_off_reset")
+            {
+                _media.ResetUserLyricsOffset();
             }
             else if (id == "lyr_sync_now")
             {

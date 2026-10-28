@@ -191,6 +191,19 @@ namespace Kumo
             }
         }
 
+        public void ResetUserLyricsOffset()
+        {
+            lock (_lock)
+            {
+                _userOffsetSec = 0.0;
+                _silentIntroHold = false;
+                if (!string.IsNullOrEmpty(_lastTrackKey))
+                {
+                    _perSongUserOffsets.Remove(_lastTrackKey);
+                }
+            }
+        }
+
         public void SyncFirstLineToNow()
         {
             double raw = GetLivePositionSec();
@@ -199,7 +212,16 @@ namespace Kumo
                 if (_syncedLyrics.Count == 0) return;
                 _silentIntroHold = false;
                 double firstT = _syncedLyrics[0].TimeSec;
-                _userOffsetSec = Math.Max(-90.0, Math.Min(150.0, Math.Round((raw - firstT) - _autoMvOffsetSec, 2)));
+                if (raw <= firstT + 0.4)
+                {
+                    _userOffsetSec = 0.0;
+                    if (!string.IsNullOrEmpty(_lastTrackKey))
+                    {
+                        _perSongUserOffsets.Remove(_lastTrackKey);
+                    }
+                    return;
+                }
+                _userOffsetSec = Math.Max(0.0, Math.Min(150.0, Math.Round((raw - firstT) - _autoMvOffsetSec, 2)));
                 if (!string.IsNullOrEmpty(_lastTrackKey))
                 {
                     _perSongUserOffsets[_lastTrackKey] = _userOffsetSec;
@@ -209,7 +231,14 @@ namespace Kumo
 
         public LyricLine[] GetDisplayLyricsWindow(out int activeSlot)
         {
+            int clampedScroll;
+            return GetDisplayLyricsWindow(0, out activeSlot, out clampedScroll);
+        }
+
+        public LyricLine[] GetDisplayLyricsWindow(int scrollDeltaLines, out int activeSlot, out int clampedScroll)
+        {
             activeSlot = -1;
+            clampedScroll = 0;
             double effPos = GetEffectiveLyricsPosSec();
             lock (_lock)
             {
@@ -218,35 +247,36 @@ namespace Kumo
                     return new LyricLine[0];
                 }
 
-                // Hold in calm unsung state until the exact timestamp of the first sung line!
-                if (effPos < _syncedLyrics[0].TimeSec)
+                bool preVocal = (effPos < _syncedLyrics[0].TimeSec);
+                int curIdx = -1;
+                if (!preVocal)
                 {
-                    int c0 = Math.Min(4, _syncedLyrics.Count);
-                    LyricLine[] pre = new LyricLine[c0];
-                    for (int i = 0; i < c0; i++) pre[i] = _syncedLyrics[i];
-                    return pre;
+                    curIdx = 0;
+                    for (int i = 0; i < _syncedLyrics.Count; i++)
+                    {
+                        if (_syncedLyrics[i].TimeSec <= effPos)
+                            curIdx = i;
+                        else
+                            break;
+                    }
                 }
 
-                int curIdx = 0;
-                for (int i = 0; i < _syncedLyrics.Count; i++)
-                {
-                    if (_syncedLyrics[i].TimeSec <= effPos)
-                        curIdx = i;
-                    else
-                        break;
-                }
+                int baseStart = preVocal ? 0 : Math.Max(0, curIdx - 1);
+                int maxStart = Math.Max(0, _syncedLyrics.Count - 4);
+                if (baseStart > maxStart) baseStart = maxStart;
 
-                int start = Math.Max(0, curIdx - 1);
-                if (start + 4 > _syncedLyrics.Count)
-                {
-                    start = Math.Max(0, _syncedLyrics.Count - 4);
-                }
+                int start = Math.Max(0, Math.Min(maxStart, baseStart + scrollDeltaLines));
+                clampedScroll = start - baseStart;
+
                 int count = Math.Min(4, _syncedLyrics.Count - start);
                 LyricLine[] res = new LyricLine[count];
                 for (int i = 0; i < count; i++)
                 {
                     res[i] = _syncedLyrics[start + i];
-                    if (start + i == curIdx) activeSlot = i;
+                    if (!preVocal && (start + i == curIdx))
+                    {
+                        activeSlot = i;
+                    }
                 }
                 return res;
             }

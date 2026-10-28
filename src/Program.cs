@@ -116,6 +116,7 @@ namespace Kumo
 
                 Application.EnableVisualStyles();
                 Application.SetCompatibleTextRenderingDefault(false);
+                UpdaterService.StartSilentStartupCheck();
 
                 AppState state = new AppState();
                 using (HardwareMonitor hw = new HardwareMonitor())
