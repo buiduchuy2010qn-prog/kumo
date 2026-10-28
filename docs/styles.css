@@ -205,10 +205,10 @@ body {
 .kumo-notch.state-micro::before { left: -5px; background: radial-gradient(circle at 0 100%, transparent 5px, #000 5.3px); }
 .kumo-notch.state-micro::after  { right: -5px; background: radial-gradient(circle at 100% 100%, transparent 5px, #000 5.3px); }
 
-.kumo-notch.state-lyrics-pill { width: 326px; height: 34px; border-radius: 0 0 16px 16px; }
-.kumo-notch.state-osd { width: 276px; height: 42px; border-radius: 0 0 18px 18px; }
+.kumo-notch.state-lyrics-pill { width: 428px; max-width: calc(100% - 32px); height: 34px; border-radius: 0 0 16px 16px; }
+.kumo-notch.state-osd { width: 318px; max-width: calc(100% - 32px); height: 42px; border-radius: 0 0 18px 18px; }
 .kumo-notch.state-expanded { width: 472px; height: 160px; border-radius: 0 0 28px 28px; cursor: default; }
-.kumo-notch.state-expanded.wide-lyrics { width: 566px; }
+.kumo-notch.state-expanded.wide-lyrics { width: 636px; max-width: calc(100% - 24px); }
 
 .kn-clip { position: relative; width: 100%; height: 100%; overflow: hidden; border-radius: inherit; }
 
@@ -228,8 +228,8 @@ body {
 }
 .kn-mini-art::after { content: "♪"; position: absolute; inset: 0; display: grid; place-items: center; font-size: 11px; color: #fff; font-weight: 800; }
 .kn-col-center {
-  flex: 1; min-width: 0; text-align: center; font-weight: 700; font-size: 13.5px;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: #fff;
+  flex: 1; min-width: 0; text-align: center; font-weight: 700; font-size: 13.4px;
+  white-space: nowrap; overflow: hidden; text-overflow: clip; color: #fff;
 }
 .kn-eq { display: flex; align-items: center; gap: 2.2px; height: 14px; flex-shrink: 0; }
 .kn-eq span { width: 2.4px; border-radius: 2px; background: #fb7185; height: 5px; animation: eqBounce 0.9s ease-in-out infinite alternate; }
@@ -313,12 +313,12 @@ body {
 .ctl-btn:hover { background: rgba(255,255,255,0.16); }
 .ctl-btn.lyr-on { background: #fff; color: #000; }
 .mus-lyrics-pane {
-  display: none; width: 215px; border-left: 1px solid rgba(255,255,255,0.16);
-  padding-left: 14px; flex-direction: column; gap: 5px; justify-content: center;
+  display: none; width: 298px; flex-shrink: 0; border-left: 1px solid rgba(255,255,255,0.16);
+  padding-left: 14px; flex-direction: column; gap: 5px; justify-content: center; overflow: hidden;
 }
 .kumo-notch.wide-lyrics .mus-lyrics-pane { display: flex; }
-.lyr-line { font-size: 12.5px; font-weight: 700; color: #94a3b8; transition: all 0.25s; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.lyr-line.current { color: #ffffff; font-size: 13.8px; font-weight: 800; }
+.lyr-line { font-size: 12.4px; font-weight: 700; color: #94a3b8; transition: all 0.25s; white-space: nowrap; overflow: hidden; text-overflow: clip; }
+.lyr-line.current { color: #ffffff; font-size: 13.5px; font-weight: 800; }
 
 /* Page 5: System Monitor (Kumo Signature!) */
 .sys-left { flex: 1; display: flex; flex-direction: column; gap: 5px; }

@@ -81,7 +81,7 @@
       const r = await fetch("https://api.github.com/repos/buiduchuy2010qn-prog/kumo/releases/latest");
       if (!r.ok) return;
       const data = await r.json();
-      const tag = data.tag_name || "v1.1.11";
+      const tag = data.tag_name || "v1.1.13";
       const exeAsset = (data.assets || []).find(a => a.name && a.name.toLowerCase().endsWith(".exe"));
       const dlUrl = exeAsset ? exeAsset.browser_download_url : `https://github.com/buiduchuy2010qn-prog/kumo/releases/latest`;
       const exeName = exeAsset ? exeAsset.name : `KumoSetup-${tag}.exe`;
@@ -295,7 +295,7 @@
         fill.style.width = "0%";
         val.textContent = state.lang === "vi" ? "Tắt" : "Mute";
       } else {
-        // PURE WHITE VOLUME OSD (#FFFFFF) per v1.1.11!
+        // PURE WHITE VOLUME OSD (#FFFFFF) per v1.1.13!
         const arrow = delta > 0 ? " ▲" : (delta < 0 ? " ▼" : "");
         ico.textContent = "🔊";
         ico.style.color = "#ffffff";
@@ -336,6 +336,7 @@
       val.textContent = "15%";
     }
 
+    clearInterval(state.dlInterval);
     clearTimeout(state.osdTimer);
     if (state.expanded) {
       osd.classList.add("banner-on");
@@ -352,6 +353,76 @@
       notch.classList.remove("state-osd");
       renderNotch();
     }, 2200);
+  }
+
+  function triggerDownloadSim(isStore) {
+    const notch = $("#kumoNotch");
+    const osd = $("#knOsd");
+    const ico = $("#osdIco");
+    const lbl = $("#osdLbl");
+    const fill = $("#osdFill");
+    const val = $("#osdVal");
+
+    clearInterval(state.dlInterval);
+    clearTimeout(state.osdTimer);
+    let pct = 8;
+
+    const applyFrame = (done) => {
+      if (done) {
+        ico.textContent = "\u2713";
+        ico.style.color = "#4ade80";
+        lbl.textContent = (state.lang === "vi" ? "Tải xong \u00B7 " : "Saved \u00B7 ") + (isStore ? "Spotify Music" : "KumoSetup..13.exe");
+        lbl.style.color = "#4ade80";
+        fill.style.background = "linear-gradient(90deg, #10b981, #4ade80)";
+        fill.style.width = "100%";
+        val.textContent = isStore ? "100%" : "210 KB";
+      } else if (isStore) {
+        ico.textContent = "\uD83D\uDECD";
+        ico.style.color = "#38bdf8";
+        lbl.textContent = "Store \u00B7 Spotify Music";
+        lbl.style.color = "#ffffff";
+        fill.style.background = "linear-gradient(90deg, #0ea5e9, #67e8f9)";
+        fill.style.width = pct + "%";
+        val.textContent = pct + "%";
+      } else {
+        ico.textContent = "\u2B07";
+        ico.style.color = "#22d3ee";
+        lbl.textContent = (state.lang === "vi" ? "Đang tải \u00B7 " : "DL \u00B7 ") + "KumoSetup..13.exe";
+        lbl.style.color = "#ffffff";
+        fill.style.background = "linear-gradient(90deg, #0ea5e9, #bae6fd)";
+        fill.style.width = pct + "%";
+        val.textContent = "18.4 MB/s";
+      }
+
+      if (state.expanded) {
+        osd.classList.add("banner-on");
+        notch.classList.remove("state-osd");
+      } else {
+        osd.classList.remove("banner-on");
+        notch.classList.remove("state-micro", "state-lyrics-pill");
+        notch.classList.add("state-osd");
+      }
+    };
+
+    state.expanded = false;
+    state.pinnedCollapsed = true;
+    renderNotch();
+    applyFrame(false);
+
+    state.dlInterval = setInterval(() => {
+      pct = Math.min(100, pct + 19);
+      if (pct >= 100) {
+        clearInterval(state.dlInterval);
+        applyFrame(true);
+        state.osdTimer = setTimeout(() => {
+          osd.classList.remove("banner-on");
+          notch.classList.remove("state-osd");
+          renderNotch();
+        }, 2600);
+      } else {
+        applyFrame(false);
+      }
+    }, 340);
   }
 
   // ===== 4. Wire Interactive Controls =====
@@ -455,7 +526,7 @@
     // Todo
     $("#btnTodoAdd").addEventListener("click", (e) => {
       e.stopPropagation();
-      const samples = ["Kiểm tra bản cài đè v1.1.11", "Uống đủ 2 lít nước hôm nay", "Đẩy code lên GitHub Actions"];
+      const samples = ["Kiểm tra bản cài đè v1.1.13", "Uống đủ 2 lít nước hôm nay", "Đẩy code lên GitHub Actions"];
       state.todos.unshift({ text: samples[state.todos.length % samples.length], done: false });
       renderNotch();
     });
@@ -480,6 +551,10 @@
     $("#trigBri").addEventListener("click", () => triggerOsd("bri", +20));
     $("#trigBatChg").addEventListener("click", () => triggerOsd("bat_chg", 0));
     $("#trigBatLow").addEventListener("click", () => triggerOsd("bat_low", 0));
+    const btnDlFile = $("#trigDlFile");
+    if (btnDlFile) btnDlFile.addEventListener("click", () => triggerDownloadSim(false));
+    const btnDlStore = $("#trigDlStore");
+    if (btnDlStore) btnDlStore.addEventListener("click", () => triggerDownloadSim(true));
 
     $("#trigAutoMin").addEventListener("click", () => {
       state.autoMinimal = !state.autoMinimal;

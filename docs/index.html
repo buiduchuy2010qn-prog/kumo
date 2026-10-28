@@ -24,7 +24,7 @@
         <a href="#" class="brand-link">
           <img src="./logo.png" alt="Kumo Logo" />
           <span>Kumo</span>
-          <span class="brand-tag" data-ver-tag>v1.1.11</span>
+          <span class="brand-tag" data-ver-tag>v1.1.13</span>
         </a>
         <nav class="nav-links">
           <a href="#playground" data-vi="Trải nghiệm trực tiếp" data-en="Live Playground">Trải nghiệm trực tiếp</a>
@@ -37,7 +37,7 @@
             <button type="button" class="active" data-lang-btn="vi">VI</button>
             <button type="button" data-lang-btn="en">EN</button>
           </div>
-          <a class="btn-sm-dl" data-dl-link href="https://github.com/buiduchuy2010qn-prog/kumo/releases/latest/download/KumoSetup-v1.1.11.exe">
+          <a class="btn-sm-dl" data-dl-link href="https://github.com/buiduchuy2010qn-prog/kumo/releases/latest/download/KumoSetup-v1.1.13.exe">
             <span>⬇</span>
             <span data-vi="Tải miễn phí" data-en="Download">Tải miễn phí</span>
           </a>
@@ -63,9 +63,9 @@
             Kumo kết hợp chiếc Tai Thỏ Đen cổ điển sắc nét (chuẩn PerMonitorV2 ClearType không nhòe DPI) cùng Bảng Quản Lý Sáng Dịu Mắt. Hiện lời nhạc ngay cả khi thu nhỏ, theo dõi CPU/RAM/GPU trực tiếp và tự thu gọn khi cửa sổ chạm đỉnh.
           </p>
           <div class="cta-row">
-            <a class="btn-primary" data-dl-link href="https://github.com/buiduchuy2010qn-prog/kumo/releases/latest/download/KumoSetup-v1.1.11.exe">
+            <a class="btn-primary" data-dl-link href="https://github.com/buiduchuy2010qn-prog/kumo/releases/latest/download/KumoSetup-v1.1.13.exe">
               <span>⬇</span>
-              <span data-exe-name>KumoSetup-v1.1.11.exe</span>
+              <span data-exe-name>KumoSetup-v1.1.13.exe</span>
             </a>
             <a class="btn-ghost" href="#playground" data-vi="Dùng thử ngay trên Web ↘" data-en="Try Interactive Demo ↘">Dùng thử ngay trên Web ↘</a>
             <a class="btn-ghost" href="https://github.com/buiduchuy2010qn-prog/kumo" target="_blank" rel="noopener">GitHub ↗</a>
@@ -75,7 +75,7 @@
         <aside class="release-meta-card">
           <div class="rm-top">
             <strong style="font-size:15px;" data-vi="Bản phát hành tự động mới nhất" data-en="Latest Automated Cloud Build">Bản phát hành tự động mới nhất</strong>
-            <span class="rm-badge" data-ver-tag>v1.1.11</span>
+            <span class="rm-badge" data-ver-tag>v1.1.13</span>
           </div>
           <div class="rm-stats">
             <div class="rm-stat">
@@ -298,7 +298,8 @@
               <div class="ssm-main">
                 <div class="ssm-row"><span>Tự khởi động cùng Windows</span><div class="ssm-toggle"></div></div>
                 <div class="ssm-row"><span>Tự thu gọn khi vướng Tab trình duyệt (Auto-Minimal)</span><div class="ssm-toggle"></div></div>
-                <div class="ssm-row"><span>Hiện lời nhạc đồng bộ ngay khi thu nhỏ</span><div class="ssm-toggle"></div></div>
+                <div class="ssm-row"><span>Hiện đầy đủ lời nhạc đồng bộ (Cả khi thu nhỏ)</span><div class="ssm-toggle"></div></div>
+                <div class="ssm-row"><span>Thanh trạng thái tải tệp Trình duyệt & Microsoft Store</span><div class="ssm-toggle"></div></div>
                 <div class="ssm-row"><span>Giao diện Bảng quản lý Sáng dịu mắt (Tai thỏ Đen)</span><div class="ssm-toggle"></div></div>
               </div>
             </div>
@@ -345,6 +346,8 @@
             <button class="chip-btn" id="trigBatLow" data-vi="🪫 Pin yếu" data-en="🪫 Low Battery">🪫 Pin yếu</button>
           </div>
           <div class="st-group">
+            <button class="chip-btn" id="trigDlFile" data-vi="&#11015; Thử tải tệp Trình duyệt" data-en="&#11015; Test Browser Download">&#11015; Thử tải tệp Trình duyệt</button>
+            <button class="chip-btn" id="trigDlStore" data-vi="&#128717; Thử tải App Store" data-en="&#128717; Test Store Download">&#128717; Thử tải App Store</button>
             <button class="chip-btn" id="trigAutoMin" data-vi="🪟 Thử phóng to cửa sổ (Tự né Tab)" data-en="🪟 Test Tab Anti-Collision">🪟 Thử phóng to cửa sổ (Tự né Tab)</button>
             <button class="chip-btn" id="trigSettings" data-vi="🎛️ Mở Bảng Quản Lý Trắng" data-en="🎛️ White Settings Panel">🎛️ Mở Bảng Quản Lý Trắng</button>
           </div>
@@ -419,8 +422,8 @@
         <div class="step-box">
           <span class="step-num">BƯỚC 01</span>
           <h3 data-vi="Tải bộ cài kèm số phiên bản" data-en="Download Versioned Installer">Tải bộ cài kèm số phiên bản</h3>
-          <p data-vi="Mỗi bản phát hành tự động từ GitHub Actions đều đánh số rõ ràng ngay trên tên file (ví dụ KumoSetup-v1.1.11.exe) để bạn dễ dàng phân biệt bản mới - cũ." data-en="Every automated GitHub Actions build stamps the exact version right in the filename (e.g. KumoSetup-v1.1.11.exe).">
-            Mỗi bản phát hành tự động từ GitHub Actions đều đánh số rõ ràng ngay trên tên file (ví dụ <code>KumoSetup-v1.1.11.exe</code>) để bạn dễ dàng phân biệt bản mới - cũ.
+          <p data-vi="Mỗi bản phát hành tự động từ GitHub Actions đều đánh số rõ ràng ngay trên tên file (ví dụ KumoSetup-v1.1.13.exe) để bạn dễ dàng phân biệt bản mới - cũ." data-en="Every automated GitHub Actions build stamps the exact version right in the filename (e.g. KumoSetup-v1.1.13.exe).">
+            Mỗi bản phát hành tự động từ GitHub Actions đều đánh số rõ ràng ngay trên tên file (ví dụ <code>KumoSetup-v1.1.13.exe</code>) để bạn dễ dàng phân biệt bản mới - cũ.
           </p>
         </div>
 
@@ -459,7 +462,7 @@
             <div class="spec-row"><span data-vi="Theo dõi / Quảng cáo" data-en="Telemetry / Ads">Theo dõi / Quảng cáo</span><strong data-vi="Không thu thập bất kỳ dữ liệu nào" data-en="Zero tracking, zero analytics">Không thu thập bất kỳ dữ liệu nào</strong></div>
           </div>
           <div style="margin-top:20px;">
-            <a class="btn-primary" style="width:100%;justify-content:center;" data-dl-link href="https://github.com/buiduchuy2010qn-prog/kumo/releases/latest/download/KumoSetup-v1.1.11.exe">
+            <a class="btn-primary" style="width:100%;justify-content:center;" data-dl-link href="https://github.com/buiduchuy2010qn-prog/kumo/releases/latest/download/KumoSetup-v1.1.13.exe">
               <span>⬇</span>
               <span data-vi="Tải bản mới nhất cho Windows" data-en="Download Latest for Windows">Tải bản mới nhất cho Windows</span>
             </a>
@@ -507,7 +510,7 @@
         <strong>Kumo 雲</strong> — <span data-vi="Đám Mây Tai Thỏ Sống & Bảng Quản Lý Dịu Mắt cho Windows." data-en="Living Cloud Island & Eye-Care Control Panel for Windows.">Đám Mây Tai Thỏ Sống & Bảng Quản Lý Dịu Mắt cho Windows.</span>
       </div>
       <div class="foot-links">
-        <a data-dl-link href="https://github.com/buiduchuy2010qn-prog/kumo/releases/latest/download/KumoSetup-v1.1.11.exe" data-vi="Tải bộ cài mới nhất" data-en="Latest Installer">Tải bộ cài mới nhất</a>
+        <a data-dl-link href="https://github.com/buiduchuy2010qn-prog/kumo/releases/latest/download/KumoSetup-v1.1.13.exe" data-vi="Tải bộ cài mới nhất" data-en="Latest Installer">Tải bộ cài mới nhất</a>
         <a href="https://github.com/buiduchuy2010qn-prog/kumo/releases" target="_blank" rel="noopener">Releases</a>
         <a href="https://github.com/buiduchuy2010qn-prog/kumo" target="_blank" rel="noopener">GitHub Repo</a>
       </div>
