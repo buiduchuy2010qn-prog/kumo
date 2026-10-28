@@ -112,6 +112,21 @@ namespace Kumo
             NativeMethods.ApplyModernWindowTheme(Handle, !_state.IsSettingsLight);
         }
 
+        protected override void WndProc(ref Message m)
+        {
+            if (m.Msg == NativeMethods.WM_DPICHANGED)
+            {
+                InitScaleAndFonts();
+                ClientSize = new Size(S(840), S(580));
+                if (_todoInput != null) _todoInput.Font = _fRowTitle;
+                UpdateTodoInputPlacement();
+                Invalidate();
+                m.Result = IntPtr.Zero;
+                return;
+            }
+            base.WndProc(ref m);
+        }
+
         protected override void OnFormClosing(FormClosingEventArgs e)
         {
             if (e.CloseReason == CloseReason.UserClosing)
@@ -126,32 +141,33 @@ namespace Kumo
 
         private void InitScaleAndFonts()
         {
-            float dpi = 96f;
-            try
-            {
-                using (Graphics g = CreateGraphics())
-                {
-                    if (g.DpiX > 0) dpi = g.DpiX;
-                }
-            }
-            catch { }
-
+            float dpi = NativeMethods.GetMonitorDpi(IsHandleCreated ? Handle : IntPtr.Zero, Screen.PrimaryScreen.Bounds);
             _s = dpi / 96.0f;
 
             _fAppTitle   = MakeFont(14.5f, FontStyle.Bold);
-            _fBadge      = MakeFont(10.0f, FontStyle.Bold);
+            _fBadge      = MakeFont(10.2f, FontStyle.Bold);
             _fNav        = MakeFont(12.8f, FontStyle.Bold);
             _fPageHeader = MakeFont(19.0f, FontStyle.Bold);
-            _fSecHeader  = MakeFont(11.2f, FontStyle.Bold);
+            _fSecHeader  = MakeFont(11.4f, FontStyle.Bold);
             _fRowTitle   = MakeFont(13.2f, FontStyle.Bold);
-            _fRowDesc    = MakeFont(11.2f, FontStyle.Regular);
+            _fRowDesc    = MakeFont(11.5f, FontStyle.Regular);
             _fSeg        = MakeFont(11.5f, FontStyle.Bold);
-            _fSmall      = MakeFont(10.5f, FontStyle.Regular);
+            _fSmall      = MakeFont(10.8f, FontStyle.Regular);
         }
 
         private Font MakeFont(float dp, FontStyle style)
         {
-            float px = Math.Max(9f, dp * _s);
+            float px = Math.Max(9f, (float)Math.Round(dp * _s));
+            if (style == FontStyle.Regular)
+            {
+                try
+                {
+                    Font sb = new Font("Segoe UI Semibold", px, FontStyle.Regular, GraphicsUnit.Pixel);
+                    if (sb != null && sb.Name.IndexOf("Segoe UI", StringComparison.OrdinalIgnoreCase) >= 0) return sb;
+                    if (sb != null) sb.Dispose();
+                }
+                catch { }
+            }
             try { return new Font("Segoe UI", px, style, GraphicsUnit.Pixel); }
             catch { return new Font(FontFamily.GenericSansSerif, px, style, GraphicsUnit.Pixel); }
         }
@@ -215,8 +231,8 @@ namespace Kumo
 
         private bool IsLight { get { return _state.IsSettingsLight; } }
         private Color ColTextPri { get { return IsLight ? Color.FromArgb(15, 23, 42) : Color.White; } }
-        private Color ColTextSec { get { return IsLight ? Color.FromArgb(71, 85, 105) : Color.FromArgb(152, 162, 184); } }
-        private Color ColTextMuted { get { return IsLight ? Color.FromArgb(100, 116, 139) : Color.FromArgb(135, 148, 175); } }
+        private Color ColTextSec { get { return IsLight ? Color.FromArgb(51, 65, 85) : Color.FromArgb(182, 192, 212); } }
+        private Color ColTextMuted { get { return IsLight ? Color.FromArgb(71, 85, 105) : Color.FromArgb(160, 172, 196); } }
         private Color ColSecHdr { get { return IsLight ? Color.FromArgb(2, 132, 199) : Color.FromArgb(96, 165, 250); } }
         private Color ColCardBg { get { return IsLight ? Color.White : Color.FromArgb(29, 33, 46); } }
         private Color ColCardBgHov { get { return IsLight ? Color.FromArgb(248, 251, 255) : Color.FromArgb(34, 39, 54); } }
@@ -276,7 +292,7 @@ namespace Kumo
         private void RenderFullSettingsUI(Graphics g, int winW, int winH, bool isStaticPreview)
         {
             g.SmoothingMode = SmoothingMode.AntiAlias;
-            g.PixelOffsetMode = PixelOffsetMode.HighQuality;
+            g.PixelOffsetMode = PixelOffsetMode.Default;
             g.TextRenderingHint = TextRenderingHint.ClearTypeGridFit;
 
             _zones.Clear();
@@ -1550,7 +1566,7 @@ namespace Kumo
             SizeF sz = g.MeasureString(text, font);
             using (SolidBrush b = new SolidBrush(col))
             {
-                g.DrawString(text, font, b, x, cy - sz.Height * 0.5f);
+                g.DrawString(text, font, b, (float)Math.Round(x), (float)Math.Round(cy - sz.Height * 0.5f));
             }
         }
 
@@ -1560,7 +1576,7 @@ namespace Kumo
             SizeF sz = g.MeasureString(text, font);
             using (SolidBrush b = new SolidBrush(col))
             {
-                g.DrawString(text, font, b, rect.X + (rect.Width - sz.Width) * 0.5f, rect.Y + (rect.Height - sz.Height) * 0.5f);
+                g.DrawString(text, font, b, (float)Math.Round(rect.X + (rect.Width - sz.Width) * 0.5f), (float)Math.Round(rect.Y + (rect.Height - sz.Height) * 0.5f));
             }
         }
 

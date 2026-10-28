@@ -36,10 +36,25 @@ namespace KumoSetup
         public static extern IntPtr SendMessage(IntPtr hWnd, int Msg, IntPtr wParam, IntPtr lParam);
 
         [DllImport("user32.dll")]
+        public static extern bool SetProcessDpiAwarenessContext(IntPtr dpiContext);
+
+        [DllImport("user32.dll")]
         public static extern bool SetProcessDPIAware();
 
         [DllImport("shcore.dll")]
         public static extern int SetProcessDpiAwareness(int value);
+
+        [DllImport("user32.dll")]
+        public static extern uint GetDpiForWindow(IntPtr hwnd);
+
+        [DllImport("user32.dll")]
+        public static extern IntPtr GetDC(IntPtr hWnd);
+
+        [DllImport("user32.dll")]
+        public static extern int ReleaseDC(IntPtr hWnd, IntPtr hDC);
+
+        [DllImport("gdi32.dll")]
+        public static extern int GetDeviceCaps(IntPtr hdc, int nIndex);
 
         [DllImport("dwmapi.dll")]
         public static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int attrValue, int attrSize);
@@ -49,8 +64,31 @@ namespace KumoSetup
 
         public static void EnableHighDpi()
         {
-            try { SetProcessDpiAwareness(2); }
-            catch { try { SetProcessDPIAware(); } catch { } }
+            bool ok = false;
+            try { ok = SetProcessDpiAwarenessContext(new IntPtr(-4)); } catch { }
+            if (!ok) { try { ok = (SetProcessDpiAwareness(2) == 0); } catch { } }
+            if (!ok) { try { SetProcessDPIAware(); } catch { } }
+        }
+
+        public static float GetSystemDpi(IntPtr hwnd)
+        {
+            if (hwnd != IntPtr.Zero)
+            {
+                try { uint wd = GetDpiForWindow(hwnd); if (wd >= 72 && wd <= 480) return (float)wd; } catch { }
+            }
+            IntPtr hdc = IntPtr.Zero;
+            try
+            {
+                hdc = GetDC(IntPtr.Zero);
+                if (hdc != IntPtr.Zero)
+                {
+                    int caps = GetDeviceCaps(hdc, 88);
+                    if (caps >= 72 && caps <= 480) return (float)caps;
+                }
+            }
+            catch { }
+            finally { if (hdc != IntPtr.Zero) ReleaseDC(IntPtr.Zero, hdc); }
+            return 96f;
         }
 
         public static void ApplyModernWindow(IntPtr hwnd)
@@ -593,12 +631,7 @@ namespace KumoSetup
 
         private void InitScaleAndFonts()
         {
-            float dpi = 96f;
-            try
-            {
-                using (Graphics g = CreateGraphics()) { if (g.DpiX > 0) dpi = g.DpiX; }
-            }
-            catch { }
+            float dpi = SetupNative.GetSystemDpi(IsHandleCreated ? Handle : IntPtr.Zero);
             _s = dpi / 96.0f;
 
             _fBrand = MakeFont(23.5f, FontStyle.Bold);
@@ -614,7 +647,17 @@ namespace KumoSetup
 
         private Font MakeFont(float dp, FontStyle st)
         {
-            float px = Math.Max(9f, dp * _s);
+            float px = Math.Max(9f, (float)Math.Round(dp * _s));
+            if (st == FontStyle.Regular)
+            {
+                try
+                {
+                    Font sb = new Font("Segoe UI Semibold", px, FontStyle.Regular, GraphicsUnit.Pixel);
+                    if (sb != null && sb.Name.IndexOf("Segoe UI", StringComparison.OrdinalIgnoreCase) >= 0) return sb;
+                    if (sb != null) sb.Dispose();
+                }
+                catch { }
+            }
             try { return new Font("Segoe UI", px, st, GraphicsUnit.Pixel); }
             catch { return new Font(FontFamily.GenericSansSerif, px, st, GraphicsUnit.Pixel); }
         }
@@ -645,7 +688,7 @@ namespace KumoSetup
         private void RenderWizard(Graphics g, int winW, int winH)
         {
             g.SmoothingMode = SmoothingMode.AntiAlias;
-            g.PixelOffsetMode = PixelOffsetMode.HighQuality;
+            g.PixelOffsetMode = PixelOffsetMode.Default;
             g.TextRenderingHint = TextRenderingHint.ClearTypeGridFit;
             _hits.Clear();
 
@@ -1380,7 +1423,7 @@ namespace KumoSetup
         private void DrawLeftText(Graphics g, string txt, Font f, Color c, float x, float cy)
         {
             SizeF sz = g.MeasureString(txt, f);
-            using (SolidBrush b = new SolidBrush(c)) g.DrawString(txt, f, b, x, cy - sz.Height * 0.5f);
+            using (SolidBrush b = new SolidBrush(c)) g.DrawString(txt, f, b, (float)Math.Round(x), (float)Math.Round(cy - sz.Height * 0.5f));
         }
 
         private void DrawRightText(Graphics g, string txt, Font f, Color c, float rx, float cy)

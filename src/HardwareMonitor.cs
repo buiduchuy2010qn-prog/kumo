@@ -362,7 +362,7 @@ namespace Kumo
         public static string FormatRate(double bytesPerSec)
         {
             if (bytesPerSec >= 1024.0 * 1024.0)
-                return string.Format(CultureInfo.InvariantCulture, "{0:0.1} MB/s", bytesPerSec / (1024.0 * 1024.0));
+                return string.Format(CultureInfo.InvariantCulture, "{0:0.0} MB/s", bytesPerSec / (1024.0 * 1024.0));
             return string.Format(CultureInfo.InvariantCulture, "{0:0} KB/s", bytesPerSec / 1024.0);
         }
 

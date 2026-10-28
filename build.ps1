@@ -39,6 +39,33 @@ if (-not (Test-Path $objDir)) {
     New-Item -ItemType Directory -Path $objDir | Out-Null
 }
 
+$manifestPath = Join-Path $objDir "app.manifest"
+$manifestXml = @"
+<?xml version="1.0" encoding="utf-8"?>
+<assembly manifestVersion="1.0" xmlns="urn:schemas-microsoft-com:asm.v1">
+  <assemblyIdentity version="1.0.0.0" name="Kumo.Desktop.App"/>
+  <trustInfo xmlns="urn:schemas-microsoft-com:asm.v2">
+    <security>
+      <requestedPrivileges xmlns="urn:schemas-microsoft-com:asm.v3">
+        <requestedExecutionLevel level="asInvoker" uiAccess="false" />
+      </requestedPrivileges>
+    </security>
+  </trustInfo>
+  <compatibility xmlns="urn:schemas-microsoft-com:compatibility.v1">
+    <application>
+      <supportedOS Id="{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}" />
+    </application>
+  </compatibility>
+  <application xmlns="urn:schemas-microsoft-com:asm.v3">
+    <windowsSettings>
+      <dpiAware xmlns="http://schemas.microsoft.com/SMI/2005/WindowsSettings">true/PM</dpiAware>
+      <dpiAwareness xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">PerMonitorV2, PerMonitor</dpiAwareness>
+    </windowsSettings>
+  </application>
+</assembly>
+"@
+[System.IO.File]::WriteAllText($manifestPath, $manifestXml, (New-Object System.Text.UTF8Encoding($false)))
+
 $buildInfoPath = Join-Path $objDir "BuildInfo.g.cs"
 $safeDisp = $dispVer.Replace('\', '\\').Replace('"', '\"')
 $buildInfoCode = @"
@@ -96,7 +123,7 @@ if (Test-Path "C:\Windows\System32\WinMetadata\Windows.Media.winmd") {
     }
 }
 
-& $csc /target:winexe /platform:x64 /optimize+ "/win32icon:$ico" "/out:$outExe" `
+& $csc /target:winexe /platform:x64 /optimize+ "/win32icon:$ico" "/win32manifest:$manifestPath" "/out:$outExe" `
     "/r:System.dll" "/r:System.Core.dll" "/r:System.Drawing.dll" "/r:System.Windows.Forms.dll" "/r:System.Management.dll" `
     "/r:$winrt" "/r:$sysRuntime" `
     $winmdArgs `
@@ -116,7 +143,7 @@ $fsOut.Close()
 
 Write-Host "3/3 Compiling Official Overwrite-Ready Installer $setupFileName..."
 $setupSrc = Join-Path $projDir "installer\SetupProgram.cs"
-& $csc /target:winexe /platform:x64 /optimize+ "/win32icon:$ico" "/resource:$payloadGz,Kumo.Payload.gz" "/out:$outSetup" `
+& $csc /target:winexe /platform:x64 /optimize+ "/win32icon:$ico" "/win32manifest:$manifestPath" "/resource:$payloadGz,Kumo.Payload.gz" "/out:$outSetup" `
     /r:System.dll,System.Core.dll,System.Drawing.dll,System.Windows.Forms.dll `
     $buildInfoPath $setupSrc
 if ($LASTEXITCODE -ne 0) {

@@ -668,6 +668,94 @@ namespace Kumo
             return Color.FromArgb(44, 110, 215);
         }
 
+        public string GetCollapsedLyricDisplay(out double lineProg01, out bool isSyncedLine)
+        {
+            double pos = GetLivePositionSec();
+            lock (_lock)
+            {
+                if (_syncedLyrics.Count > 0)
+                {
+                    if (pos + 0.45 < _syncedLyrics[0].TimeSec)
+                    {
+                        lineProg01 = 0.0;
+                        isSyncedLine = false;
+                        return "\u266A " + (!string.IsNullOrEmpty(CurrentTitle) ? CurrentTitle : "Music");
+                    }
+                    int idx = 0;
+                    for (int i = 0; i < _syncedLyrics.Count; i++)
+                    {
+                        if (_syncedLyrics[i].TimeSec <= pos + 0.35)
+                            idx = i;
+                        else
+                            break;
+                    }
+                    double t0 = _syncedLyrics[idx].TimeSec;
+                    double t1 = (idx + 1 < _syncedLyrics.Count)
+                        ? _syncedLyrics[idx + 1].TimeSec
+                        : Math.Max(t0 + 4.0, _durationSec);
+                    double span = Math.Max(1.2, t1 - t0);
+                    lineProg01 = Math.Max(0.0, Math.Min(1.0, (pos - t0) / span));
+                    CurrentLyricLine = _syncedLyrics[idx].Text;
+                    NextLyricLine = (idx + 1 < _syncedLyrics.Count) ? _syncedLyrics[idx + 1].Text : "";
+                    isSyncedLine = true;
+                    return _syncedLyrics[idx].Text;
+                }
+                lineProg01 = (pos % 10.0) / 10.0;
+                isSyncedLine = false;
+                return "\u266A " + (!string.IsNullOrEmpty(CurrentTitle) ? CurrentTitle : "Music");
+            }
+        }
+
+        private bool TryQueryLrclibSingle(string rawQuery)
+        {
+            if (string.IsNullOrEmpty(rawQuery)) return false;
+            string url = "https://lrclib.net/api/search?q=" + Uri.EscapeDataString(rawQuery.Trim());
+            HttpWebRequest req = (HttpWebRequest)WebRequest.Create(url);
+            req.UserAgent = "Kumo/1.1 (+https://github.com/buiduchuy2010qn-prog/kumo)";
+            req.Timeout = 5000;
+
+            using (HttpWebResponse resp = (HttpWebResponse)req.GetResponse())
+            using (StreamReader sr = new StreamReader(resp.GetResponseStream(), Encoding.UTF8))
+            {
+                string json = sr.ReadToEnd();
+                Match mSynced = Regex.Match(json, "\"syncedLyrics\"\\s*:\\s*\"((?:\\\\.|[^\"\\\\])*)\"");
+                if (mSynced.Success && !string.IsNullOrEmpty(mSynced.Groups[1].Value))
+                {
+                    string rawLrc = Regex.Unescape(mSynced.Groups[1].Value);
+                    ParseLrc(rawLrc);
+                    if (_syncedLyrics.Count > 0)
+                    {
+                        LyricsStatus = "Synced";
+                        UpdateActiveLyricLine();
+                        return true;
+                    }
+                }
+
+                Match mPlain = Regex.Match(json, "\"plainLyrics\"\\s*:\\s*\"((?:\\\\.|[^\"\\\\])*)\"");
+                if (mPlain.Success && !string.IsNullOrEmpty(mPlain.Groups[1].Value))
+                {
+                    string rawPlain = Regex.Unescape(mPlain.Groups[1].Value);
+                    string[] lines = rawPlain.Split(new char[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+                    double dur = _durationSec > 20.0 ? _durationSec : (lines.Length * 4.0);
+                    double stepSec = Math.Max(2.5, dur / Math.Max(1, lines.Length));
+                    lock (_lock)
+                    {
+                        _syncedLyrics.Clear();
+                        double t = 0;
+                        foreach (string ln in lines)
+                        {
+                            _syncedLyrics.Add(new LyricLine { TimeSec = t, Text = ln.Trim() });
+                            t += stepSec;
+                        }
+                        LyricsStatus = "Plain";
+                    }
+                    UpdateActiveLyricLine();
+                    return true;
+                }
+            }
+            return false;
+        }
+
         private void FetchLyricsFromLrclib(string track, string artist)
         {
             lock (_lock)
@@ -680,53 +768,15 @@ namespace Kumo
 
             try
             {
-                string cleanTrack = Regex.Replace(track, @"(\(.*?\)|\[.*?\]|\|.*$|official\s*music\s*video|official\s*video|mv|lyrics|audio|ft\..*$)", "", RegexOptions.IgnoreCase).Trim();
-                string cleanArtist = Regex.Replace(artist, @"\s*-\s*Topic$", "", RegexOptions.IgnoreCase).Trim();
-                string q = Uri.EscapeDataString((cleanArtist + " " + cleanTrack).Trim());
-                string url = "https://lrclib.net/api/search?q=" + q;
+                string cleanTrack = Regex.Replace(track ?? "", @"(\(.*?\)|\[.*?\]|\|.*$|#.*$|official\s*music\s*video|official\s*lyric\s*video|official\s*video|lyric\s*video|visualizer|4k|\bmv\b|\blyrics\b|\baudio\b|ft\..*$)", "", RegexOptions.IgnoreCase).Trim();
+                cleanTrack = Regex.Replace(cleanTrack, @"\s{2,}", " ").Trim(' ', '-', '\u2013', '\u2014');
+                string cleanArtist = Regex.Replace(artist ?? "", @"(\s*-\s*Topic$|\bOfficial\b|\bChannel\b|\bMusic\b|\bVEVO\b)", "", RegexOptions.IgnoreCase).Trim();
 
-                HttpWebRequest req = (HttpWebRequest)WebRequest.Create(url);
-                req.UserAgent = "Kumo/1.0 (+https://github.com)";
-                req.Timeout = 5000;
-
-                using (HttpWebResponse resp = (HttpWebResponse)req.GetResponse())
-                using (StreamReader sr = new StreamReader(resp.GetResponseStream(), Encoding.UTF8))
+                string q1 = (cleanArtist + " " + cleanTrack).Trim();
+                if (TryQueryLrclibSingle(q1)) return;
+                if (!string.IsNullOrEmpty(cleanTrack) && !string.Equals(q1, cleanTrack, StringComparison.OrdinalIgnoreCase))
                 {
-                    string json = sr.ReadToEnd();
-                    Match mSynced = Regex.Match(json, "\"syncedLyrics\"\\s*:\\s*\"((?:\\\\.|[^\"\\\\])*)\"");
-                    if (mSynced.Success && !string.IsNullOrEmpty(mSynced.Groups[1].Value))
-                    {
-                        string rawLrc = Regex.Unescape(mSynced.Groups[1].Value);
-                        ParseLrc(rawLrc);
-                        if (_syncedLyrics.Count > 0)
-                        {
-                            LyricsStatus = "Synced";
-                            UpdateActiveLyricLine();
-                            return;
-                        }
-                    }
-
-                    Match mPlain = Regex.Match(json, "\"plainLyrics\"\\s*:\\s*\"((?:\\\\.|[^\"\\\\])*)\"");
-                    if (mPlain.Success && !string.IsNullOrEmpty(mPlain.Groups[1].Value))
-                    {
-                        string rawPlain = Regex.Unescape(mPlain.Groups[1].Value);
-                        string[] lines = rawPlain.Split(new char[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
-                        double dur = _durationSec > 20.0 ? _durationSec : (lines.Length * 4.0);
-                        double stepSec = Math.Max(2.5, dur / Math.Max(1, lines.Length));
-                        lock (_lock)
-                        {
-                            _syncedLyrics.Clear();
-                            double t = 0;
-                            foreach (string ln in lines)
-                            {
-                                _syncedLyrics.Add(new LyricLine { TimeSec = t, Text = ln.Trim() });
-                                t += stepSec;
-                            }
-                            LyricsStatus = "Plain";
-                        }
-                        UpdateActiveLyricLine();
-                        return;
-                    }
+                    if (TryQueryLrclibSingle(cleanTrack)) return;
                 }
 
                 lock (_lock)

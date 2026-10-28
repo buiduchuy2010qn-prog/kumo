@@ -22,7 +22,17 @@ namespace Kumo
         public const int HTCAPTION = 0x0002;
         public const uint SMTO_ABORTIFHUNG = 0x0002;
         public static readonly IntPtr HWND_BROADCAST = new IntPtr(0xFFFF);
-        public static readonly uint WM_OPEN_SETTINGS = RegisterWindowMessage("Kumo.OpenSettingsMessage");
+        public const int WM_DPICHANGED = 0x02E0;
+        private static uint _wmOpenSettings;
+        public static uint WM_OPEN_SETTINGS
+        {
+            get
+            {
+                if (_wmOpenSettings == 0)
+                    _wmOpenSettings = RegisterWindowMessage("Kumo.OpenSettingsMessage");
+                return _wmOpenSettings;
+            }
+        }
 
         public const byte AC_SRC_OVER = 0x00;
         public const byte AC_SRC_ALPHA = 0x01;
@@ -272,18 +282,76 @@ namespace Kumo
         public static extern void DragFinish(IntPtr hDrop);
 
         [DllImport("user32.dll")]
+        public static extern bool SetProcessDpiAwarenessContext(IntPtr dpiContext);
+
+        [DllImport("user32.dll")]
         public static extern bool SetProcessDPIAware();
 
         [DllImport("shcore.dll")]
         public static extern int SetProcessDpiAwareness(int value);
 
+        [DllImport("user32.dll")]
+        public static extern uint GetDpiForWindow(IntPtr hwnd);
+
+        [DllImport("user32.dll")]
+        public static extern IntPtr MonitorFromPoint(POINT pt, uint dwFlags);
+
+        [DllImport("shcore.dll")]
+        public static extern int GetDpiForMonitor(IntPtr hmonitor, int dpiType, out uint dpiX, out uint dpiY);
+
+        [DllImport("gdi32.dll")]
+        public static extern int GetDeviceCaps(IntPtr hdc, int nIndex);
+
         public static void EnableHighDpi()
         {
-            try { SetProcessDpiAwareness(2); } // PROCESS_PER_MONITOR_DPI_AWARE
-            catch
+            bool ok = false;
+            try { ok = SetProcessDpiAwarenessContext(new IntPtr(-4)); } catch { }
+            if (!ok)
+            {
+                try { ok = (SetProcessDpiAwareness(2) == 0); } catch { }
+            }
+            if (!ok)
             {
                 try { SetProcessDPIAware(); } catch { }
             }
+        }
+
+        public static float GetMonitorDpi(IntPtr hwnd, System.Drawing.Rectangle bounds)
+        {
+            if (hwnd != IntPtr.Zero)
+            {
+                try
+                {
+                    uint wDpi = GetDpiForWindow(hwnd);
+                    if (wDpi >= 72 && wDpi <= 480) return (float)wDpi;
+                }
+                catch { }
+            }
+            try
+            {
+                POINT pt = new POINT(bounds.Left + bounds.Width / 2, bounds.Top + Math.Max(4, bounds.Height / 2));
+                IntPtr hMon = MonitorFromPoint(pt, 2);
+                if (hMon != IntPtr.Zero)
+                {
+                    uint dx, dy;
+                    if (GetDpiForMonitor(hMon, 0, out dx, out dy) == 0 && dx >= 72 && dx <= 480)
+                        return (float)dx;
+                }
+            }
+            catch { }
+            IntPtr hdc = IntPtr.Zero;
+            try
+            {
+                hdc = GetDC(IntPtr.Zero);
+                if (hdc != IntPtr.Zero)
+                {
+                    int caps = GetDeviceCaps(hdc, 88);
+                    if (caps >= 72 && caps <= 480) return (float)caps;
+                }
+            }
+            catch { }
+            finally { if (hdc != IntPtr.Zero) ReleaseDC(IntPtr.Zero, hdc); }
+            return 96.0f;
         }
 
         public const byte VK_MEDIA_NEXT_TRACK = 0xB0;
