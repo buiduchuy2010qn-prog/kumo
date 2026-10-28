@@ -150,6 +150,16 @@ namespace Kumo
         private bool _suppressStationaryExpand = false;
         private bool _wasInsidePill = false;
 
+        // v1.1.23: real equalizer, desktop CPU ring, lock keys, mic hotkey
+        private bool _hasBattery = true;
+        private readonly float[] _eqLevels = new float[5];
+        private float _eqGain = 0.12f;
+        private bool _lockBaselineReady = false;
+        private bool _capsOn, _numOn, _capsRawLast, _numRawLast, _capsWasDown, _numWasDown;
+        private const int HOTKEY_MIC_ID = 0x4B4D;
+        private bool _micHotkeyRegistered = false;
+        private bool _forceAudioDevOsd = false;
+
         // Pages: 0=Music, 1=Pomodoro, 2=Water, 3=Shelf, 4=TodoList, 5=SystemMonitor
         private int _pageIndex = 5;
         private const int TotalPages = 6;
@@ -266,12 +276,15 @@ namespace Kumo
             {
                 _cachedSelfHwnd = Handle;
                 try { NativeMethods.AddClipboardFormatListener(Handle); } catch { }
+                UpdateMicHotkey();
             };
             FormClosed += (s, e) =>
             {
                 _bgScanRunning = false;
                 if (_osd != null) _osd.OsdChanged -= OnSystemOsdChanged;
                 try { if (_cachedSelfHwnd != IntPtr.Zero) NativeMethods.RemoveClipboardFormatListener(_cachedSelfHwnd); } catch { }
+                try { if (_micHotkeyRegistered && _cachedSelfHwnd != IntPtr.Zero) NativeMethods.UnregisterHotKey(_cachedSelfHwnd, HOTKEY_MIC_ID); } catch { }
+                _micHotkeyRegistered = false;
                 ClearShelfThumbCache();
             };
             _winScanThread = new Thread(BackgroundWindowScanLoop)
@@ -290,17 +303,95 @@ namespace Kumo
         private void OnSystemOsdChanged(OsdKind kind, int percent, bool isMuted, int delta)
         {
             if (IsDisposed) return;
-            if (kind == OsdKind.AudioDevice && !_state.AudioDeviceOsdEnabled) return;
+            if (kind == OsdKind.AudioDevice && !_state.AudioDeviceOsdEnabled && !_forceAudioDevOsd) return;
+            if (kind == OsdKind.AudioDevice) _forceAudioDevOsd = false;
             if (kind == OsdKind.PrivacyAlert && !_state.PrivacyDotsEnabled) return;
+            if (kind == OsdKind.MicMute && !_state.MicHotkeyEnabled) return;
             double dur = 2.05;
             if (kind == OsdKind.AudioDevice) dur = 2.85;
             else if (kind == OsdKind.PrivacyAlert) dur = 2.55;
+            else if (kind == OsdKind.MicMute) dur = 1.9;
             try
             {
                 if (IsHandleCreated)
                     BeginInvoke(new MethodInvoker(delegate { TriggerOsdHud(kind, percent, isMuted, delta, dur); }));
             }
             catch { }
+        }
+
+        private void UpdateMicHotkey()
+        {
+            if (!IsHandleCreated) return;
+            bool want = _state.MicHotkeyEnabled && _osd != null;
+            if (_osd != null) _osd.MicWatchEnabled = _state.MicHotkeyEnabled;
+            try
+            {
+                if (want && !_micHotkeyRegistered)
+                {
+                    _micHotkeyRegistered = NativeMethods.RegisterHotKey(Handle, HOTKEY_MIC_ID,
+                        NativeMethods.MOD_CONTROL | NativeMethods.MOD_ALT | NativeMethods.MOD_NOREPEAT, (uint)Keys.M);
+                }
+                else if (!want && _micHotkeyRegistered)
+                {
+                    NativeMethods.UnregisterHotKey(Handle, HOTKEY_MIC_ID);
+                    _micHotkeyRegistered = false;
+                }
+            }
+            catch { }
+        }
+
+        // Caps Lock / Num Lock: GetKeyState toggle bit + global key-down edge (works even while Kumo has no focus)
+        private void PollLockKeys()
+        {
+            bool capsRaw = (NativeMethods.GetKeyState(0x14) & 1) != 0;
+            bool numRaw = (NativeMethods.GetKeyState(0x90) & 1) != 0;
+            bool capsDown = (NativeMethods.GetAsyncKeyState(0x14) & 0x8000) != 0;
+            bool numDown = (NativeMethods.GetAsyncKeyState(0x90) & 0x8000) != 0;
+
+            if (!_lockBaselineReady)
+            {
+                _lockBaselineReady = true;
+                _capsOn = capsRaw; _capsRawLast = capsRaw; _capsWasDown = capsDown;
+                _numOn = numRaw; _numRawLast = numRaw; _numWasDown = numDown;
+                return;
+            }
+
+            bool showCaps = false, showNum = false;
+            if (capsDown && !_capsWasDown)
+            {
+                _capsOn = !_capsOn;
+                showCaps = true;
+            }
+            _capsWasDown = capsDown;
+            if (capsRaw != _capsRawLast)
+            {
+                _capsRawLast = capsRaw;
+                if (capsRaw != _capsOn)
+                {
+                    _capsOn = capsRaw;
+                    showCaps = true;
+                }
+            }
+
+            if (numDown && !_numWasDown)
+            {
+                _numOn = !_numOn;
+                showNum = true;
+            }
+            _numWasDown = numDown;
+            if (numRaw != _numRawLast)
+            {
+                _numRawLast = numRaw;
+                if (numRaw != _numOn)
+                {
+                    _numOn = numRaw;
+                    showNum = true;
+                }
+            }
+
+            if (!_state.LockKeysOsdEnabled) return;
+            if (showCaps) TriggerOsdHud(OsdKind.CapsLock, 100, false, _capsOn ? 1 : 0, 1.45);
+            else if (showNum) TriggerOsdHud(OsdKind.NumLock, 100, false, _numOn ? 1 : 0, 1.45);
         }
 
         public void TriggerOsdHud(OsdKind kind, int percent, bool isMuted, int delta, double durationSec)
@@ -431,6 +522,7 @@ namespace Kumo
 
             _cachedScreenBounds = GetTargetScreen().Bounds;
             _isFullscreenHidden = _state.HideInFullscreen && _bgFullscreen;
+            UpdateMicHotkey();
             UpdateAutoMinimalState();
             UpdateTargetDimensions();
             _curW = Math.Min(_canvasW - U(50f), Math.Max(U(24f), _curW));
@@ -478,6 +570,12 @@ namespace Kumo
             if (m.Msg == NativeMethods.WM_CLIPBOARDUPDATE)
             {
                 TryCaptureClipboardScreenshotToShelf();
+                m.Result = IntPtr.Zero;
+                return;
+            }
+            if (m.Msg == NativeMethods.WM_HOTKEY && m.WParam.ToInt64() == HOTKEY_MIC_ID)
+            {
+                if (_osd != null && _state.MicHotkeyEnabled) _osd.ToggleMicMute();
                 m.Result = IntPtr.Zero;
                 return;
             }
@@ -533,8 +631,15 @@ namespace Kumo
                 if (NativeMethods.GetSystemPowerStatus(out sps))
                 {
                     bool hasPack = ((sps.BatteryFlag & 128) == 0);
+                    // Desktop PCs report "no system battery" (128) or "unknown" (255): show a live CPU ring instead of a fake 100% battery
+                    bool noBattery = !hasPack || sps.BatteryFlag == 255;
+                    if (noBattery != !_hasBattery)
+                    {
+                        _hasBattery = !noBattery;
+                        _needsRedraw = true;
+                    }
                     int pct = (hasPack && sps.BatteryLifePercent <= 100) ? (int)sps.BatteryLifePercent : 100;
-                    bool charging = (sps.ACLineStatus == 1) || ((sps.BatteryFlag & 8) != 0);
+                    bool charging = !noBattery && ((sps.ACLineStatus == 1) || ((sps.BatteryFlag & 8) != 0));
                     int kind = charging ? 1 : (pct <= 20 ? 2 : 0);
                     if (!_batteryBaselineReady)
                     {
@@ -553,7 +658,7 @@ namespace Kumo
                             _batteryFraction = Math.Max(0.06f, pct / 100.0f);
                             _needsRedraw = true;
                         }
-                        if (chgChanged || enteredLow || enteredCrit)
+                        if (_hasBattery && (chgChanged || enteredLow || enteredCrit))
                             TriggerOsdHud(OsdKind.Battery, pct, false, charging ? 1 : -1, 2.75);
                     }
                 }
@@ -656,7 +761,8 @@ namespace Kumo
             else if (IsOsdActive)
             {
                 bool compactBar = ((_osdKind == OsdKind.Volume && !_osdMuted) || _osdKind == OsdKind.Brightness);
-                _targetW = U(compactBar ? 228f : 292f); _targetH = U(32f); _targetR = U(15.5f); _targetE = U(10.5f);
+                bool tinyHud = (_osdKind == OsdKind.CapsLock || _osdKind == OsdKind.NumLock || _osdKind == OsdKind.MicMute);
+                _targetW = U(tinyHud ? 196f : (compactBar ? 228f : 292f)); _targetH = U(32f); _targetR = U(15.5f); _targetE = U(10.5f);
             }
             else if (IsDownloadActive && !_alwaysMinimal)
             {
@@ -693,6 +799,7 @@ RefreshBatteryLevel();
                 {
                     _state.PomodoroSecondsLeft--;
                     if (_isExpanded && _pageIndex == 1) _needsRedraw = true;
+                    else if (!_isExpanded && !_isMicroPill) _needsRedraw = true; // live countdown on the collapsed pill
                 }
                 else
                 {
@@ -737,7 +844,7 @@ RefreshBatteryLevel();
                 {
                     _needsRedraw = true;
                 }
-                else if (!_isMicroPill && (sec == 0 || _media.HasMedia))
+                else if (!_isMicroPill && (sec == 0 || _media.HasMedia || (!_hasBattery && sec % 2 == 0)))
                 {
                     _needsRedraw = true;
                 }
@@ -968,6 +1075,9 @@ RefreshBatteryLevel();
                     _needsRedraw = true;
                 }
             }
+
+            PollLockKeys();
+            UpdateLiveEqualizer(dt);
 
             if (!_isExpanded && !_isFullscreenHidden)
             {
@@ -1648,7 +1758,12 @@ RefreshBatteryLevel();
             GraphicsState stClock = g.Save();
             g.TranslateTransform(0f, -(1.0f - cEase) * U(2.5f));
 
-            if ((_media.HasMedia && _media.IsPlaying) && _batteryStateKind != 2)
+            bool pomoLive = _state.PomodoroRunning;
+            if (pomoLive)
+            {
+                DrawPomodoroMiniRing(g, x0 + U(19.0f), midY);
+            }
+            else if ((_media.HasMedia && _media.IsPlaying) && _batteryStateKind != 2)
             {
                 RectangleF miniArt = new RectangleF(x0 + U(10.5f), midY - U(8.5f), U(17f), U(17f));
                 DrawAlbumArtThumb(g, miniArt, U(4.8f));
@@ -1674,7 +1789,8 @@ RefreshBatteryLevel();
                 rightCursor -= pSpan * pAlpha;
             }
 
-            string nowClock = DateTime.Now.ToString("HH:mm");
+            string nowClock = pomoLive ? FormatMMSS(_state.PomodoroSecondsLeft) : DateTime.Now.ToString("HH:mm");
+            Color clkCol = pomoLive ? PomoAccent : InkPri;
             SizeF clkSz = g.MeasureString(nowClock, _fIdleTime);
             bool showColLyrics = IsCollapsedLyricsActive && ((rightCursor - leftContentX) >= (clkSz.Width + U(68f)));
 
@@ -1691,7 +1807,7 @@ RefreshBatteryLevel();
                 {
                     g.FillRectangle(divB, divX, (float)Math.Round(midY - U(5.5f)), Math.Max(1f, U(1f)), (float)Math.Round(U(11f)));
                 }
-                DrawCenteredText(g, nowClock, _fIdleTime, InkPri, clkCx, midY);
+                DrawCenteredText(g, nowClock, _fIdleTime, clkCol, clkCx, midY);
 
                 float availW = Math.Max(U(42f), (divX - U(6.5f)) - leftContentX);
                 RectangleF lyrViewport = new RectangleF(leftContentX, 0f, availW, h);
@@ -1704,10 +1820,32 @@ RefreshBatteryLevel();
                 float clkCx = (maxCx > minCx)
                     ? Math.Max(minCx, Math.Min(maxCx, x0 + w * 0.5f))
                     : (leftContentX + rightCursor) * 0.5f;
-                DrawCenteredText(g, nowClock, _fIdleTime, InkPri, clkCx, midY);
+                DrawCenteredText(g, nowClock, _fIdleTime, clkCol, clkCx, midY);
             }
 
             g.Restore(stClock);
+
+            // Thin 2 dp song progress line along the bottom edge while music plays
+            if (_media.HasMedia && _media.IsPlaying)
+            {
+                double pDur = _media.DurationSec;
+                if (pDur > 0.5)
+                {
+                    float pFrac = (float)Math.Max(0.0, Math.Min(1.0, _media.GetLivePositionSec() / pDur));
+                    float lx0 = x0 + U(17f);
+                    float lw = Math.Max(U(20f), w - U(34f));
+                    RectangleF pTrack = new RectangleF(lx0, h - U(3.0f), lw, U(2.0f));
+                    int pa = (int)(255f * cEase);
+                    FillPill(g, pTrack, Color.FromArgb((int)(46 * cEase), 255, 255, 255));
+                    if (pFrac > 0.004f)
+                    {
+                        Color dom = _media.DominantColor;
+                        Color pc = Color.FromArgb(Math.Max(0, Math.Min(255, pa)),
+                            Math.Min(255, dom.R + 70), Math.Min(255, dom.G + 70), Math.Min(255, dom.B + 70));
+                        FillPill(g, new RectangleF(pTrack.X, pTrack.Y, Math.Max(pTrack.Height, pTrack.Width * pFrac), pTrack.Height), pc);
+                    }
+                }
+            }
 
             if (cEase < 0.99f)
             {
@@ -1853,6 +1991,13 @@ RefreshBatteryLevel();
             else
             {
                 fullBat = string.Format(CultureInfo.InvariantCulture, "{0}% \u00B7 {1}", _batteryPercent, _state.T("Pin bth", "Normal"));
+                batCol = Nw(215);
+            }
+            if (!_hasBattery)
+            {
+                int cpuNow = (int)Math.Round(Math.Max(0f, Math.Min(100f, _hw.CpuUsagePercent)));
+                shortBat = string.Format(CultureInfo.InvariantCulture, "CPU {0}%", cpuNow);
+                fullBat = string.Format(CultureInfo.InvariantCulture, "CPU {0}% \u00B7 {1:0.0} GHz", cpuNow, _hw.CpuSpeedGhz);
                 batCol = Nw(215);
             }
 
@@ -2941,8 +3086,104 @@ RefreshBatteryLevel();
         }
 
         // ==================== SHARED NUSA VECTOR WIDGETS ====================
+        private Color PomoAccent
+        {
+            get { return (_state.PomodoroMode == 0) ? Color.FromArgb(255, 255, 99, 88) : Color.FromArgb(255, 52, 211, 153); }
+        }
+
+        private void DrawPomodoroMiniRing(Graphics g, float cx, float cy)
+        {
+            int modeTotalMin = (_state.PomodoroMode == 0) ? _state.FocusMinutes : (_state.PomodoroMode == 1 ? _state.ShortBreakMinutes : _state.LongBreakMinutes);
+            float totalSec = Math.Max(1, modeTotalMin * 60);
+            float frac = Math.Max(0.03f, Math.Min(1f, _state.PomodoroSecondsLeft / totalSec));
+            Color c = PomoAccent;
+            float r = U(7.8f);
+            RectangleF arcRect = new RectangleF(cx - r + U(1.4f), cy - r + U(1.4f), (r - U(1.4f)) * 2f, (r - U(1.4f)) * 2f);
+            using (Pen bg = new Pen(Color.FromArgb(72, c.R, c.G, c.B), U(2.25f)))
+            using (Pen fg = new Pen(c, U(2.25f)))
+            {
+                fg.StartCap = LineCap.Round; fg.EndCap = LineCap.Round;
+                g.DrawEllipse(bg, arcRect);
+                g.DrawArc(fg, arcRect, -90f, 360f * frac);
+            }
+            float pulse = 0.65f + 0.35f * (float)Math.Abs(Math.Sin(_frameClock.Elapsed.TotalSeconds * 2.2));
+            float dr = U(2.1f);
+            using (SolidBrush db = new SolidBrush(Color.FromArgb((int)(255 * pulse), c.R, c.G, c.B)))
+            {
+                g.FillEllipse(db, cx - dr, cy - dr, dr * 2f, dr * 2f);
+            }
+        }
+
+        private void DrawCpuRing(Graphics g, float cx, float cy)
+        {
+            float cpu = (_hw != null) ? Math.Max(0f, Math.Min(100f, _hw.CpuUsagePercent)) : 0f;
+            Color c = (cpu >= 85f) ? Color.FromArgb(248, 113, 113) : ((cpu >= 60f) ? Color.FromArgb(251, 191, 36) : Color.FromArgb(56, 189, 248));
+            float r = U(7.8f);
+            RectangleF arcRect = new RectangleF(cx - r + U(1.4f), cy - r + U(1.4f), (r - U(1.4f)) * 2f, (r - U(1.4f)) * 2f);
+            using (Pen bg = new Pen(Color.FromArgb(72, c.R, c.G, c.B), U(2.25f)))
+            using (Pen fg = new Pen(Color.FromArgb(255, c.R, c.G, c.B), U(2.25f)))
+            {
+                fg.StartCap = LineCap.Round; fg.EndCap = LineCap.Round;
+                g.DrawEllipse(bg, arcRect);
+                g.DrawArc(fg, arcRect, -90f, Math.Max(14f, 360f * cpu / 100f));
+            }
+            // Tiny chip glyph in the middle
+            RectangleF chip = new RectangleF(cx - U(2.6f), cy - U(2.6f), U(5.2f), U(5.2f));
+            using (SolidBrush cb = new SolidBrush(Color.FromArgb(230, c.R, c.G, c.B)))
+            {
+                g.FillRectangle(cb, chip);
+            }
+        }
+
+        private void DrawKeyCapVector(Graphics g, float cx, float cy, string glyph, bool on, int alpha)
+        {
+            Color ink = on
+                ? (IsLight ? Color.FromArgb(alpha, 5, 150, 105) : Color.FromArgb(alpha, 74, 222, 128))
+                : Color.FromArgb(Math.Max(0, (int)(alpha * 0.75f)), InkPri.R, InkPri.G, InkPri.B);
+            RectangleF cap = new RectangleF(cx - U(7f), cy - U(7f), U(14f), U(14f));
+            using (GraphicsPath p = CreateRoundRect(cap, U(3.4f)))
+            using (Pen pen = new Pen(ink, U(1.4f)))
+            {
+                if (on)
+                {
+                    using (SolidBrush fb = new SolidBrush(Color.FromArgb(Math.Max(0, (int)(alpha * 0.22f)), ink.R, ink.G, ink.B))) g.FillPath(fb, p);
+                }
+                g.DrawPath(pen, p);
+            }
+            DrawCenteredText(g, glyph, _fShelfSub, ink, cx, cy);
+        }
+
+        private void DrawMicVector(Graphics g, float cx, float cy, bool muted, int alpha)
+        {
+            Color c = muted
+                ? Color.FromArgb(alpha, 248, 113, 113)
+                : (IsLight ? Color.FromArgb(alpha, 5, 150, 105) : Color.FromArgb(alpha, 74, 222, 128));
+            RectangleF capsule = new RectangleF(cx - U(2.8f), cy - U(6.6f), U(5.6f), U(8.6f));
+            using (SolidBrush sb = new SolidBrush(c)) FillPillBrush(g, capsule, sb);
+            using (Pen p = new Pen(c, U(1.4f)))
+            {
+                p.StartCap = LineCap.Round; p.EndCap = LineCap.Round;
+                g.DrawArc(p, cx - U(5f), cy - U(4.6f), U(10f), U(8.4f), 20f, 140f);
+                g.DrawLine(p, cx, cy + U(3.9f), cx, cy + U(6.4f));
+                g.DrawLine(p, cx - U(2.6f), cy + U(6.6f), cx + U(2.6f), cy + U(6.6f));
+                if (muted)
+                {
+                    using (Pen sp = new Pen(Color.FromArgb(alpha, 255, 255, 255), U(1.6f)))
+                    {
+                        sp.StartCap = LineCap.Round; sp.EndCap = LineCap.Round;
+                        g.DrawLine(sp, cx - U(6f), cy - U(6.5f), cx + U(6f), cy + U(6.5f));
+                    }
+                }
+            }
+        }
+
         private void DrawBatteryRing(Graphics g, float cx, float cy)
         {
+            if (!_hasBattery)
+            {
+                DrawCpuRing(g, cx, cy);
+                return;
+            }
             float r = U(7.8f);
             RectangleF arcRect = new RectangleF(cx - r + U(1.4f), cy - r + U(1.4f), (r - U(1.4f)) * 2f, (r - U(1.4f)) * 2f);
             Color c = (_batteryStateKind == 1)
@@ -3227,6 +3468,19 @@ RefreshBatteryLevel();
                 text = string.Format(CultureInfo.InvariantCulture, "{0}%", _osdPercent);
                 bgTint = Color.FromArgb((int)(68 * alpha01), 245, 158, 11);
             }
+            else if (_osdKind == OsdKind.CapsLock || _osdKind == OsdKind.NumLock)
+            {
+                bool on = (_osdDelta > 0);
+                string nm = (_osdKind == OsdKind.CapsLock) ? "Caps" : "Num";
+                text = nm + " " + (on ? _state.T("B\u1EADt", "On") : _state.T("T\u1EAFt", "Off"));
+                bgTint = on ? Color.FromArgb((int)(70 * alpha01), 16, 185, 129) : (IsLight ? Color.FromArgb((int)(42 * alpha01), 15, 23, 42) : Color.FromArgb((int)(46 * alpha01), 255, 255, 255));
+            }
+            else if (_osdKind == OsdKind.MicMute)
+            {
+                bool hasMic = (_osdDelta != 0);
+                text = !hasMic ? "Mic \u2014" : (_osdMuted ? _state.T("Mic t\u1EAFt", "Mic off") : _state.T("Mic b\u1EADt", "Mic on"));
+                bgTint = (!hasMic || _osdMuted) ? Color.FromArgb((int)(78 * alpha01), 239, 68, 68) : Color.FromArgb((int)(70 * alpha01), 16, 185, 129);
+            }
             else if (_osdKind == OsdKind.MediaToggle)
             {
                 text = (_osdDelta > 0) ? _state.T("Ph\u00E1t", "Play") : _state.T("D\u1EEBng", "Pause");
@@ -3265,6 +3519,8 @@ RefreshBatteryLevel();
             else if (_osdKind == OsdKind.Screenshot) DrawScreenshotVector(g, icx, cy, a);
             else if (_osdKind == OsdKind.PrivacyAlert) DrawPrivacySensorVector(g, icx, cy, (_osdDelta == 2 || _osdDelta == 3), a);
             else if (_osdKind == OsdKind.MediaToggle) DrawMediaToggleVector(g, icx, cy, _osdDelta > 0, a);
+            else if (_osdKind == OsdKind.CapsLock || _osdKind == OsdKind.NumLock) DrawKeyCapVector(g, icx, cy, (_osdKind == OsdKind.CapsLock) ? "A" : "1", _osdDelta > 0, a);
+            else if (_osdKind == OsdKind.MicMute) DrawMicVector(g, icx, cy, _osdDelta == 0 || _osdMuted, a);
             else
             {
                 Color spkCol = _osdMuted ? Color.FromArgb(248, 113, 113) : (IsLight ? Color.FromArgb(15, 23, 42) : Color.FromArgb(255, 255, 255));
@@ -3341,6 +3597,42 @@ RefreshBatteryLevel();
                 showBar = false;
                 barStart = Color.Empty; barEnd = Color.Empty;
                 labelCol = Color.FromArgb(a, InkPri.R, InkPri.G, InkPri.B);
+            }
+            else if (_osdKind == OsdKind.CapsLock || _osdKind == OsdKind.NumLock)
+            {
+                bool on = (_osdDelta > 0);
+                bool caps = (_osdKind == OsdKind.CapsLock);
+                DrawKeyCapVector(g, iconCx, cy, caps ? "A" : "1", on, a);
+                label = caps ? "Caps Lock" : "Num Lock";
+                rightTxt = on ? _state.T("B\u1EADt", "On") : _state.T("T\u1EAFt", "Off");
+                showBar = false;
+                barStart = Color.Empty; barEnd = Color.Empty;
+                labelCol = Color.FromArgb(a, InkPri.R, InkPri.G, InkPri.B);
+            }
+            else if (_osdKind == OsdKind.MicMute)
+            {
+                bool hasMic = (_osdDelta != 0);
+                DrawMicVector(g, iconCx, cy, !hasMic || _osdMuted, a);
+                if (!hasMic)
+                {
+                    label = _state.T("Kh\u00F4ng th\u1EA5y micro", "No microphone");
+                    rightTxt = "\u2014";
+                    labelCol = Color.FromArgb(a, InkPri.R, InkPri.G, InkPri.B);
+                }
+                else if (_osdMuted)
+                {
+                    label = _state.T("\u0110\u00E3 t\u1EAFt micro", "Mic muted");
+                    rightTxt = _state.T("T\u1EAFt", "Off");
+                    labelCol = IsLight ? Color.FromArgb(a, 220, 38, 38) : Color.FromArgb(a, 248, 113, 113);
+                }
+                else
+                {
+                    label = _state.T("\u0110\u00E3 b\u1EADt micro", "Mic on");
+                    rightTxt = _state.T("B\u1EADt", "On");
+                    labelCol = IsLight ? Color.FromArgb(a, 5, 150, 105) : Color.FromArgb(a, 74, 222, 128);
+                }
+                showBar = false;
+                barStart = Color.Empty; barEnd = Color.Empty;
             }
             else if (_osdKind == OsdKind.Brightness)
             {
@@ -3699,9 +3991,42 @@ RefreshBatteryLevel();
             catch { }
         }
 
+        // Real equalizer: reads the live WASAPI output peak (L/R) only while music plays & bars are visible
+        private void UpdateLiveEqualizer(float dt)
+        {
+            if (_osd == null) return;
+            bool playing = (_media.HasMedia && _media.IsPlaying) || IsCollapsedLyricsActive;
+            bool eqVisible = _state.EqualizerEnabled && !_isFullscreenHidden && (_isExpanded || !_isMicroPill);
+            bool want = playing && eqVisible;
+            if (_osd.MeterWanted != want) _osd.MeterWanted = want;
+            if (!want || !_osd.MeterAvailable)
+            {
+                for (int i = 0; i < 5; i++) _eqLevels[i] = Math.Max(0f, _eqLevels[i] - dt * 3f);
+                return;
+            }
+
+            float mono, l, r;
+            _osd.GetPeaks(out mono, out l, out r);
+            // Auto-gain so the bars still dance nicely at low system volume
+            _eqGain = Math.Max(mono, Math.Max(0.06f, _eqGain * (1f - dt * 0.35f)));
+            float nm = Math.Min(1f, mono / _eqGain);
+            float nl = Math.Min(1f, l / _eqGain);
+            float nr = Math.Min(1f, r / _eqGain);
+            double sec = _frameClock.Elapsed.TotalSeconds;
+            for (int i = 0; i < 5; i++)
+            {
+                float src = (i == 0) ? nl : (i == 1) ? (nl * 0.6f + nm * 0.4f) : (i == 2) ? nm : (i == 3) ? (nr * 0.6f + nm * 0.4f) : nr;
+                float wobble = 0.72f + 0.28f * (float)Math.Sin(sec * (7.1 + i * 2.3) + i * 1.7);
+                float target = (mono < 0.003f) ? 0f : (float)Math.Pow(src, 0.75) * wobble;
+                float spd = (target > _eqLevels[i]) ? 30f : 6.5f;
+                _eqLevels[i] += (target - _eqLevels[i]) * Math.Min(1f, dt * spd);
+            }
+        }
+
         private void DrawEqualizerBars(Graphics g, float cx, float cy)
         {
             bool active = ((_media.HasMedia && _media.IsPlaying) || IsCollapsedLyricsActive);
+            bool live = active && _osd != null && _osd.MeterAvailable && _osd.MeterWanted;
             double sec = _frameClock.Elapsed.TotalSeconds;
 
             float barW = U(2.2f);
@@ -3725,7 +4050,12 @@ RefreshBatteryLevel();
                 for (int i = 0; i < 5; i++)
                 {
                     float frac;
-                    if (active)
+                    if (live)
+                    {
+                        // Real WASAPI output level: bars jump with the actual beat and go calm when the song is quiet
+                        frac = 0.16f + 0.84f * Math.Max(0f, Math.Min(1f, _eqLevels[i]));
+                    }
+                    else if (active)
                     {
                         frac = 0.28f + 0.68f * (0.5f + 0.5f * (float)Math.Sin(sec * (5.2 + i * 1.35) + i * 1.1));
                     }
@@ -4235,6 +4565,12 @@ RefreshBatteryLevel();
 
             if (e.Button == MouseButtons.Right)
             {
+                if (_hoveredId == "media_vol" && _osd != null)
+                {
+                    _osd.ToggleMute();
+                    _needsRedraw = true;
+                    return;
+                }
                 _isExpanded = false;
                 _suppressHoverUntilLeave = true;
                 _isMicroPill = _alwaysMinimal || _autoMinimalObstruction;
@@ -4333,7 +4669,15 @@ RefreshBatteryLevel();
             }
             else if (id == "hdr_bat")
             {
-                TriggerOsdHud(OsdKind.Battery, _batteryPercent, false, 0, 2.5);
+                if (!_hasBattery)
+                {
+                    _pageIndex = 5;
+                    UpdateTargetDimensions();
+                }
+                else
+                {
+                    TriggerOsdHud(OsdKind.Battery, _batteryPercent, false, 0, 2.5);
+                }
             }
             else if (id == "hdr_privacy")
             {
@@ -4360,7 +4704,19 @@ RefreshBatteryLevel();
             }
             else if (id == "media_vol")
             {
-                if (_osd != null) _osd.ToggleMute();
+                // Click = switch output (Speakers <-> Headphones) when 2+ devices exist; otherwise mute. Right-click = mute.
+                if (_osd != null)
+                {
+                    if (_osd.ActiveOutputCount >= 2)
+                    {
+                        _forceAudioDevOsd = true;
+                        _osd.CycleAudioOutput();
+                    }
+                    else
+                    {
+                        _osd.ToggleMute();
+                    }
+                }
             }
             else if (id == "hdr_eq")
             {
@@ -4669,7 +5025,7 @@ RefreshBatteryLevel();
 
         private void OnNotchDragEnter(object sender, DragEventArgs e)
         {
-            if (e.Data.GetDataPresent(DataFormats.FileDrop))
+            if (e.Data.GetDataPresent(DataFormats.FileDrop) || HasBrowserDropPayload(e.Data))
             {
                 e.Effect = DragDropEffects.Copy;
                 _isDragHover = true;
@@ -4705,6 +5061,191 @@ RefreshBatteryLevel();
                     _needsRedraw = true;
                 }
             }
+            else
+            {
+                // Images / links dragged straight out of Chrome, Edge, Firefox...
+                List<string> saved = ImportBrowserDrop(e.Data);
+                if (saved.Count > 0)
+                {
+                    foreach (string f in saved)
+                    {
+                        _state.ShelfFiles.Remove(f);
+                        _state.ShelfFiles.Insert(0, f);
+                    }
+                    _pageIndex = 3;
+                    _state.SaveAll();
+                    _needsRedraw = true;
+                }
+            }
+        }
+
+        private static bool HasBrowserDropPayload(IDataObject d)
+        {
+            try
+            {
+                if (d.GetDataPresent("FileGroupDescriptorW") || d.GetDataPresent(DataFormats.Bitmap) || d.GetDataPresent(DataFormats.Dib) ||
+                    d.GetDataPresent("UniformResourceLocatorW") || d.GetDataPresent("UniformResourceLocator"))
+                    return true;
+                if (d.GetDataPresent(DataFormats.UnicodeText))
+                {
+                    string t = d.GetData(DataFormats.UnicodeText) as string;
+                    return LooksLikeUrl(t);
+                }
+            }
+            catch { }
+            return false;
+        }
+
+        private static bool LooksLikeUrl(string t)
+        {
+            if (string.IsNullOrEmpty(t)) return false;
+            t = t.Trim();
+            return (t.StartsWith("http://", StringComparison.OrdinalIgnoreCase) || t.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+                && t.IndexOf(' ') < 0 && t.IndexOf('\n') < 0 && t.Length < 4096;
+        }
+
+        private static string SanitizeDropName(string name, string fallback)
+        {
+            string n = (name ?? "").Trim();
+            foreach (char c in Path.GetInvalidFileNameChars()) n = n.Replace(c, '_');
+            n = n.Trim(' ', '.');
+            if (n.Length > 90)
+            {
+                string ext = "";
+                try { ext = Path.GetExtension(n) ?? ""; } catch { ext = ""; }
+                if (ext.Length > 8) ext = "";
+                n = n.Substring(0, 90 - ext.Length).TrimEnd(' ', '.') + ext;
+            }
+            return string.IsNullOrEmpty(n) ? fallback : n;
+        }
+
+        private static string UniqueDropPath(string dir, string fileName)
+        {
+            string p = Path.Combine(dir, fileName);
+            if (!File.Exists(p)) return p;
+            string stem = Path.GetFileNameWithoutExtension(fileName);
+            string ext = Path.GetExtension(fileName);
+            for (int i = 2; i < 500; i++)
+            {
+                p = Path.Combine(dir, stem + " (" + i + ")" + ext);
+                if (!File.Exists(p)) return p;
+            }
+            return Path.Combine(dir, stem + "_" + DateTime.Now.Ticks + ext);
+        }
+
+        private static string[] ReadFileGroupDescriptorNames(IDataObject data)
+        {
+            try
+            {
+                MemoryStream ms = data.GetData("FileGroupDescriptorW") as MemoryStream;
+                if (ms == null) return new string[0];
+                byte[] buf = ms.ToArray();
+                if (buf.Length < 4) return new string[0];
+                int count = BitConverter.ToInt32(buf, 0);
+                const int descSize = 592, nameOffset = 72;
+                List<string> names = new List<string>();
+                for (int i = 0; i < count && i < 16; i++)
+                {
+                    int start = 4 + i * descSize + nameOffset;
+                    if (start + 520 > buf.Length) break;
+                    string nm = System.Text.Encoding.Unicode.GetString(buf, start, 520);
+                    int z = nm.IndexOf('\0');
+                    if (z >= 0) nm = nm.Substring(0, z);
+                    names.Add(nm);
+                }
+                return names.ToArray();
+            }
+            catch { return new string[0]; }
+        }
+
+        private static string GetDroppedUrl(IDataObject data)
+        {
+            try
+            {
+                MemoryStream w = data.GetData("UniformResourceLocatorW") as MemoryStream;
+                if (w != null)
+                {
+                    string u = System.Text.Encoding.Unicode.GetString(w.ToArray()).TrimEnd('\0').Trim();
+                    if (LooksLikeUrl(u)) return u;
+                }
+                MemoryStream a = data.GetData("UniformResourceLocator") as MemoryStream;
+                if (a != null)
+                {
+                    string u = System.Text.Encoding.Default.GetString(a.ToArray()).TrimEnd('\0').Trim();
+                    if (LooksLikeUrl(u)) return u;
+                }
+                string t = data.GetData(DataFormats.UnicodeText) as string;
+                if (LooksLikeUrl(t)) return t.Trim();
+            }
+            catch { }
+            return null;
+        }
+
+        private List<string> ImportBrowserDrop(IDataObject data)
+        {
+            List<string> saved = new List<string>();
+            string dir = Path.Combine(_state.DataDir, "Dropped");
+            try { Directory.CreateDirectory(dir); } catch { return saved; }
+            string stamp = DateTime.Now.ToString("yyyyMMdd_HHmmss", CultureInfo.InvariantCulture);
+
+            // 1. Virtual files (Chrome/Edge expose dragged images & links as FileGroupDescriptorW + FileContents)
+            string[] names = ReadFileGroupDescriptorNames(data);
+            for (int i = 0; i < names.Length && i < 8; i++)
+            {
+                try
+                {
+                    byte[] bytes = ShelfDropHelper.GetFileContents(data, i);
+                    if ((bytes == null || bytes.Length == 0) && i == 0)
+                    {
+                        MemoryStream fc = data.GetData("FileContents") as MemoryStream;
+                        if (fc != null) bytes = fc.ToArray();
+                    }
+                    if (bytes == null || bytes.Length == 0 || bytes.Length > 25 * 1024 * 1024) continue;
+                    string fname = SanitizeDropName(names[i], "Drop_" + stamp + ".bin");
+                    string path = UniqueDropPath(dir, fname);
+                    File.WriteAllBytes(path, bytes);
+                    saved.Add(path);
+                }
+                catch { }
+            }
+            if (saved.Count > 0) return saved;
+
+            // 2. Raw bitmap (e.g. image copied out of some apps)
+            try
+            {
+                if (data.GetDataPresent(DataFormats.Bitmap))
+                {
+                    Image img = data.GetData(DataFormats.Bitmap, true) as Image;
+                    if (img != null)
+                    {
+                        using (img)
+                        {
+                            string path = UniqueDropPath(dir, "Image_" + stamp + ".png");
+                            img.Save(path, ImageFormat.Png);
+                            saved.Add(path);
+                        }
+                    }
+                }
+            }
+            catch { }
+            if (saved.Count > 0) return saved;
+
+            // 3. Plain link -> Internet shortcut (.url) that opens in the browser on double-click
+            string url = GetDroppedUrl(data);
+            if (!string.IsNullOrEmpty(url))
+            {
+                try
+                {
+                    string host = "Link";
+                    try { host = new Uri(url).Host; } catch { }
+                    if (host.StartsWith("www.", StringComparison.OrdinalIgnoreCase)) host = host.Substring(4);
+                    string path = UniqueDropPath(dir, SanitizeDropName(host, "Link") + ".url");
+                    File.WriteAllText(path, "[InternetShortcut]\r\nURL=" + url + "\r\n", System.Text.Encoding.ASCII);
+                    saved.Add(path);
+                }
+                catch { }
+            }
+            return saved;
         }
 
         private void ClearShelfThumbCache()
@@ -4884,6 +5425,86 @@ RefreshBatteryLevel();
                 }
             }
             catch { }
+        }
+    }
+
+    // Reads virtual files (CFSTR_FILECONTENTS) by index straight from the OLE data object — needed for Chrome/Edge image & link drags
+    internal static class ShelfDropHelper
+    {
+        public static byte[] GetFileContents(System.Windows.Forms.IDataObject data, int index)
+        {
+            byte[] r = GetFileContentsAt(data, index);
+            if ((r == null || r.Length == 0) && index == 0) r = GetFileContentsAt(data, -1);
+            return r;
+        }
+
+        private static byte[] GetFileContentsAt(System.Windows.Forms.IDataObject data, int index)
+        {
+            System.Runtime.InteropServices.ComTypes.IDataObject com = data as System.Runtime.InteropServices.ComTypes.IDataObject;
+            if (com == null) return null;
+            System.Runtime.InteropServices.ComTypes.FORMATETC fmt = new System.Runtime.InteropServices.ComTypes.FORMATETC();
+            fmt.cfFormat = unchecked((short)DataFormats.GetFormat("FileContents").Id);
+            fmt.dwAspect = System.Runtime.InteropServices.ComTypes.DVASPECT.DVASPECT_CONTENT;
+            fmt.lindex = index;
+            fmt.ptd = IntPtr.Zero;
+            fmt.tymed = System.Runtime.InteropServices.ComTypes.TYMED.TYMED_ISTREAM | System.Runtime.InteropServices.ComTypes.TYMED.TYMED_HGLOBAL;
+
+            System.Runtime.InteropServices.ComTypes.STGMEDIUM med;
+            try { com.GetData(ref fmt, out med); }
+            catch { return null; }
+
+            const int maxBytes = 25 * 1024 * 1024;
+            try
+            {
+                if (med.tymed == System.Runtime.InteropServices.ComTypes.TYMED.TYMED_HGLOBAL && med.unionmember != IntPtr.Zero)
+                {
+                    long size = (long)NativeMethods.GlobalSize(med.unionmember).ToUInt64();
+                    if (size <= 0 || size > maxBytes) return null;
+                    IntPtr p = NativeMethods.GlobalLock(med.unionmember);
+                    if (p == IntPtr.Zero) return null;
+                    try
+                    {
+                        byte[] buf = new byte[size];
+                        System.Runtime.InteropServices.Marshal.Copy(p, buf, 0, (int)size);
+                        return buf;
+                    }
+                    finally { NativeMethods.GlobalUnlock(med.unionmember); }
+                }
+                if (med.tymed == System.Runtime.InteropServices.ComTypes.TYMED.TYMED_ISTREAM && med.unionmember != IntPtr.Zero)
+                {
+                    System.Runtime.InteropServices.ComTypes.IStream stm =
+                        (System.Runtime.InteropServices.ComTypes.IStream)System.Runtime.InteropServices.Marshal.GetObjectForIUnknown(med.unionmember);
+                    IntPtr pcb = System.Runtime.InteropServices.Marshal.AllocCoTaskMem(4);
+                    try
+                    {
+                        using (MemoryStream ms = new MemoryStream())
+                        {
+                            byte[] chunk = new byte[65536];
+                            while (true)
+                            {
+                                System.Runtime.InteropServices.Marshal.WriteInt32(pcb, 0);
+                                stm.Read(chunk, chunk.Length, pcb);
+                                int n = System.Runtime.InteropServices.Marshal.ReadInt32(pcb);
+                                if (n <= 0) break;
+                                ms.Write(chunk, 0, n);
+                                if (ms.Length > maxBytes) return null;
+                            }
+                            return ms.ToArray();
+                        }
+                    }
+                    finally
+                    {
+                        System.Runtime.InteropServices.Marshal.FreeCoTaskMem(pcb);
+                        try { System.Runtime.InteropServices.Marshal.ReleaseComObject(stm); } catch { }
+                    }
+                }
+            }
+            catch { }
+            finally
+            {
+                try { NativeMethods.ReleaseStgMedium(ref med); } catch { }
+            }
+            return null;
         }
     }
 

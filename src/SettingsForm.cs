@@ -778,6 +778,16 @@ namespace Kumo
                 _state.T("Hiện chấm xanh (Camera) và cam (Mic) kèm tên ứng dụng đang thu hình/ghi âm.", "Show green (Camera) and amber (Mic) privacy dots with the active app name."),
                 _state.PrivacyDotsEnabled);
 
+            y = DrawToggleCard(g, x, y, w, "tog_lock_keys",
+                _state.T("Báo Caps Lock / Num Lock", "Caps Lock / Num Lock indicator"),
+                _state.T("Hiện thanh báo gọn trên tai thỏ mỗi khi bật/tắt Caps Lock hoặc Num Lock.", "Show a compact notch HUD whenever Caps Lock or Num Lock is toggled."),
+                _state.LockKeysOsdEnabled);
+
+            y = DrawToggleCard(g, x, y, w, "tog_mic_hotkey",
+                _state.T("Phím tắt tắt/bật Mic (Ctrl + Alt + M)", "Mic mute hotkey (Ctrl + Alt + M)"),
+                _state.T("Tắt/bật micro mặc định ở mọi ứng dụng khi họp và hiện trạng thái mic trên tai thỏ.", "Mute/unmute the default microphone system-wide and show the mic state on the notch."),
+                _state.MicHotkeyEnabled);
+
             y = DrawToggleCard(g, x, y, w, "tog_sounds",
                 _state.T("Âm báo nhắc nhở (Reminder sounds)", "Reminder sounds"),
                 _state.T("Phát âm báo nhẹ khi kết thúc phiên tập trung Pomodoro.", "Play subtle chimes when Pomodoro focus or break timers complete."),
@@ -1534,6 +1544,16 @@ namespace Kumo
             else if (id == "tog_privacy_dots")
             {
                 _state.PrivacyDotsEnabled = !_state.PrivacyDotsEnabled;
+                SaveAndApply();
+            }
+            else if (id == "tog_lock_keys")
+            {
+                _state.LockKeysOsdEnabled = !_state.LockKeysOsdEnabled;
+                SaveAndApply();
+            }
+            else if (id == "tog_mic_hotkey")
+            {
+                _state.MicHotkeyEnabled = !_state.MicHotkeyEnabled;
                 SaveAndApply();
             }
             else if (id == "tog_sounds")

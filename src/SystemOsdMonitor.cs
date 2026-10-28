@@ -19,7 +19,10 @@ namespace Kumo
         AudioDevice = 4,
         MediaToggle = 5,
         Screenshot = 6,
-        PrivacyAlert = 7
+        PrivacyAlert = 7,
+        CapsLock = 8,
+        NumLock = 9,
+        MicMute = 10
     }
 
     public delegate void OsdChangedHandler(OsdKind kind, int percent, bool isMuted, int delta);
@@ -32,8 +35,44 @@ namespace Kumo
         [ComImport, Guid("A95664D2-9614-4F35-A746-DE8DB63617E6"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
         private interface IMMDeviceEnumerator
         {
-            int EnumAudioEndpoints(int dataFlow, int dwStateMask, out IntPtr ppDevices);
+            [PreserveSig] int EnumAudioEndpoints(int dataFlow, int dwStateMask, out IMMDeviceCollection ppDevices);
             int GetDefaultAudioEndpoint(int dataFlow, int role, out IMMDevice ppEndpoint);
+        }
+
+        [ComImport, Guid("0BD7A1BE-7A1A-44DB-8397-CC5392387B5E"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+        private interface IMMDeviceCollection
+        {
+            [PreserveSig] int GetCount(out uint pcDevices);
+            [PreserveSig] int Item(uint nDevice, out IMMDevice ppDevice);
+        }
+
+        [ComImport, Guid("C02216F6-8C67-4B5B-9D00-D008E73E0064"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+        private interface IAudioMeterInformation
+        {
+            [PreserveSig] int GetPeakValue(out float pfPeak);
+            [PreserveSig] int GetMeteringChannelCount(out uint pnChannelCount);
+            [PreserveSig] int GetChannelsPeakValues(uint u32ChannelCount, [Out, MarshalAs(UnmanagedType.LPArray, SizeParamIndex = 0)] float[] afPeakValues);
+        }
+
+        // Undocumented but stable since Windows 7: switches the default playback device (same API as EarTrumpet / SoundSwitch)
+        [ComImport, Guid("870af99c-171d-4f9e-af0d-e63df40c2bc9")]
+        private class CPolicyConfigClient { }
+
+        [ComImport, Guid("f8679f50-850a-41cf-9c72-430f290290c8"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+        private interface IPolicyConfig
+        {
+            [PreserveSig] int GetMixFormat([MarshalAs(UnmanagedType.LPWStr)] string id, IntPtr ppFormat);
+            [PreserveSig] int GetDeviceFormat([MarshalAs(UnmanagedType.LPWStr)] string id, int bDefault, IntPtr ppFormat);
+            [PreserveSig] int ResetDeviceFormat([MarshalAs(UnmanagedType.LPWStr)] string id);
+            [PreserveSig] int SetDeviceFormat([MarshalAs(UnmanagedType.LPWStr)] string id, IntPtr pEndpointFormat, IntPtr mixFormat);
+            [PreserveSig] int GetProcessingPeriod([MarshalAs(UnmanagedType.LPWStr)] string id, int bDefault, IntPtr pmftDefault, IntPtr pmftMinimum);
+            [PreserveSig] int SetProcessingPeriod([MarshalAs(UnmanagedType.LPWStr)] string id, IntPtr pmftPeriod);
+            [PreserveSig] int GetShareMode([MarshalAs(UnmanagedType.LPWStr)] string id, IntPtr pMode);
+            [PreserveSig] int SetShareMode([MarshalAs(UnmanagedType.LPWStr)] string id, IntPtr mode);
+            [PreserveSig] int GetPropertyValue([MarshalAs(UnmanagedType.LPWStr)] string id, IntPtr key, IntPtr pv);
+            [PreserveSig] int SetPropertyValue([MarshalAs(UnmanagedType.LPWStr)] string id, IntPtr key, IntPtr pv);
+            [PreserveSig] int SetDefaultEndpoint([MarshalAs(UnmanagedType.LPWStr)] string id, int role);
+            [PreserveSig] int SetEndpointVisibility([MarshalAs(UnmanagedType.LPWStr)] string id, int bVisible);
         }
 
         [ComImport, Guid("D666063F-1587-4E43-81F1-B948E807363F"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
@@ -121,13 +160,39 @@ namespace Kumo
         private bool _volReady;
         private int _lastVol;
         private bool _lastMute;
-        private string _lastEndpointId = "";
+        private volatile string _lastEndpointId = "";
         private bool _endpointBaselineReady = false;
         private bool _privacyBaselineReady = false;
 
         private bool _briReady;
         private int _lastBri;
         private ManagementEventWatcher _briWatcher;
+
+        // ===== Live WASAPI output peak meter (real equalizer) =====
+        private static Guid IID_IAudioMeterInformation = new Guid("C02216F6-8C67-4B5B-9D00-D008E73E0064");
+        public volatile bool MeterWanted;
+        public volatile bool MeterAvailable;
+        private float _peakLevel, _peakLeft, _peakRight;
+        private readonly object _peakLock = new object();
+        private Thread _meterThread;
+
+        public void GetPeaks(out float mono, out float left, out float right)
+        {
+            lock (_peakLock) { mono = _peakLevel; left = _peakLeft; right = _peakRight; }
+        }
+
+        // ===== Default microphone mute (Ctrl+Alt+M) =====
+        private IAudioEndpointVolume _micVol;
+        private string _micEpId = "";
+        private bool _micBaselineReady;
+        private bool _lastMicMute;
+        public bool IsMicMuted { get; private set; }
+        public bool HasMicDevice { get; private set; }
+        public volatile bool MicWatchEnabled = true;
+
+        // ===== Quick output switching =====
+        public int ActiveOutputCount { get; private set; }
+        private volatile bool _forceEndpointProbe;
 
         public SystemOsdMonitor()
         {
@@ -149,6 +214,14 @@ namespace Kumo
             _worker.Name = "KumoSystemOsd";
             _worker.SetApartmentState(ApartmentState.MTA);
             _worker.Start();
+
+            ActiveOutputCount = 1;
+            _meterThread = new Thread(MeterLoop);
+            _meterThread.IsBackground = true;
+            _meterThread.Priority = ThreadPriority.BelowNormal;
+            _meterThread.Name = "KumoPeakMeter";
+            _meterThread.SetApartmentState(ApartmentState.MTA);
+            _meterThread.Start();
         }
 
         private static void ParseEndpointDisplayName(string rawName, out string cleanLabel, out bool isHeadphone)
@@ -273,6 +346,294 @@ namespace Kumo
                 try { Marshal.ReleaseComObject(_epVol); } catch { }
                 _epVol = null;
             }
+        }
+
+        // ==================== LIVE PEAK METER (REAL EQUALIZER) ====================
+        private IAudioMeterInformation ActivateDefaultMeter()
+        {
+            IMMDeviceEnumerator enumerator = null;
+            IMMDevice device = null;
+            try
+            {
+                enumerator = (IMMDeviceEnumerator)(new MMDeviceEnumeratorComObject());
+                int hr = enumerator.GetDefaultAudioEndpoint(0, 1, out device);
+                if (hr != 0 || device == null) hr = enumerator.GetDefaultAudioEndpoint(0, 0, out device);
+                if (hr != 0 || device == null) return null;
+                object obj;
+                Guid iid = IID_IAudioMeterInformation;
+                if (device.Activate(ref iid, 23, IntPtr.Zero, out obj) == 0 && obj != null)
+                    return (IAudioMeterInformation)obj;
+            }
+            catch { }
+            finally
+            {
+                if (device != null) { try { Marshal.ReleaseComObject(device); } catch { } }
+                if (enumerator != null) { try { Marshal.ReleaseComObject(enumerator); } catch { } }
+            }
+            return null;
+        }
+
+        private void MeterLoop()
+        {
+            IAudioMeterInformation meter = null;
+            string meterEp = null;
+            float[] chBuf = new float[2];
+            int failStreak = 0;
+            while (_running)
+            {
+                if (!MeterWanted)
+                {
+                    if (meter != null) { try { Marshal.ReleaseComObject(meter); } catch { } meter = null; }
+                    lock (_peakLock) { _peakLevel = 0f; _peakLeft = 0f; _peakRight = 0f; }
+                    Thread.Sleep(220);
+                    continue;
+                }
+
+                try
+                {
+                    string curEp = _lastEndpointId ?? "";
+                    if (meter != null && !string.Equals(curEp, meterEp, StringComparison.OrdinalIgnoreCase))
+                    {
+                        try { Marshal.ReleaseComObject(meter); } catch { }
+                        meter = null;
+                    }
+                    if (meter == null)
+                    {
+                        meter = ActivateDefaultMeter();
+                        meterEp = curEp;
+                        if (meter == null)
+                        {
+                            MeterAvailable = false;
+                            failStreak++;
+                            Thread.Sleep(Math.Min(4000, 400 * failStreak));
+                            continue;
+                        }
+                        failStreak = 0;
+                    }
+
+                    float pk;
+                    if (meter.GetPeakValue(out pk) != 0) throw new InvalidOperationException("meter");
+                    float l = pk, r = pk;
+                    uint n;
+                    if (meter.GetMeteringChannelCount(out n) == 0 && n >= 2 && n <= 32)
+                    {
+                        if (chBuf.Length != (int)n) chBuf = new float[n];
+                        if (meter.GetChannelsPeakValues(n, chBuf) == 0) { l = chBuf[0]; r = chBuf[1]; }
+                    }
+                    lock (_peakLock)
+                    {
+                        _peakLevel = Math.Max(0f, Math.Min(1f, pk));
+                        _peakLeft = Math.Max(0f, Math.Min(1f, l));
+                        _peakRight = Math.Max(0f, Math.Min(1f, r));
+                    }
+                    MeterAvailable = true;
+                }
+                catch
+                {
+                    if (meter != null) { try { Marshal.ReleaseComObject(meter); } catch { } meter = null; }
+                    MeterAvailable = false;
+                    Thread.Sleep(300);
+                }
+                Thread.Sleep(28);
+            }
+            if (meter != null) { try { Marshal.ReleaseComObject(meter); } catch { } }
+        }
+
+        // ==================== MICROPHONE MUTE ====================
+        private DateTime _micRetryAfterUtc = DateTime.MinValue;
+
+        private IAudioEndpointVolume EnsureMicEndpoint()
+        {
+            if (_micVol != null) return _micVol;
+            if (DateTime.UtcNow < _micRetryAfterUtc) return null;
+            IMMDeviceEnumerator enumerator = null;
+            IMMDevice device = null;
+            try
+            {
+                enumerator = (IMMDeviceEnumerator)(new MMDeviceEnumeratorComObject());
+                int hr = -1;
+                try { hr = enumerator.GetDefaultAudioEndpoint(1, 2, out device); } catch { device = null; }
+                if (hr != 0 || device == null) hr = enumerator.GetDefaultAudioEndpoint(1, 0, out device);
+                if (hr == 0 && device != null)
+                {
+                    string id;
+                    if (device.GetId(out id) == 0 && !string.Equals(id ?? "", _micEpId, StringComparison.OrdinalIgnoreCase))
+                    {
+                        _micEpId = id ?? "";
+                        _micBaselineReady = false;
+                    }
+                    object obj;
+                    Guid iid = IID_IAudioEndpointVolume;
+                    if (device.Activate(ref iid, 23, IntPtr.Zero, out obj) == 0 && obj != null)
+                        _micVol = (IAudioEndpointVolume)obj;
+                }
+            }
+            catch { _micVol = null; }
+            finally
+            {
+                if (device != null) { try { Marshal.ReleaseComObject(device); } catch { } }
+                if (enumerator != null) { try { Marshal.ReleaseComObject(enumerator); } catch { } }
+            }
+            HasMicDevice = (_micVol != null);
+            if (_micVol == null) _micRetryAfterUtc = DateTime.UtcNow.AddSeconds(8);
+            return _micVol;
+        }
+
+        private void ReleaseMic()
+        {
+            if (_micVol != null)
+            {
+                try { Marshal.ReleaseComObject(_micVol); } catch { }
+                _micVol = null;
+            }
+        }
+
+        public void ToggleMicMute()
+        {
+            ThreadPool.QueueUserWorkItem(delegate
+            {
+                bool ok = false;
+                bool newMute = false;
+                lock (_audioLock)
+                {
+                    try
+                    {
+                        _micRetryAfterUtc = DateTime.MinValue;
+                        IAudioEndpointVolume mic = EnsureMicEndpoint();
+                        bool cur;
+                        if (mic != null && mic.GetMute(out cur) == 0)
+                        {
+                            Guid ctx = Guid.Empty;
+                            mic.SetMute(!cur, ref ctx);
+                            newMute = !cur;
+                            ok = true;
+                            _lastMicMute = newMute;
+                            _micBaselineReady = true;
+                            IsMicMuted = newMute;
+                        }
+                    }
+                    catch { ReleaseMic(); }
+                }
+                OsdChangedHandler h = OsdChanged;
+                if (h != null)
+                {
+                    try { h(OsdKind.MicMute, ok ? 100 : 0, newMute, ok ? (newMute ? -1 : 1) : 0); } catch { }
+                }
+            });
+        }
+
+        private void PollMicMute(int tick)
+        {
+            bool fire = false;
+            bool muted = false;
+            lock (_audioLock)
+            {
+                try
+                {
+                    if (tick % 120 == 0) ReleaseMic();
+                    IAudioEndpointVolume mic = EnsureMicEndpoint();
+                    if (mic != null)
+                    {
+                        if (mic.GetMute(out muted) == 0)
+                        {
+                            if (!_micBaselineReady)
+                            {
+                                _micBaselineReady = true;
+                                _lastMicMute = muted;
+                                IsMicMuted = muted;
+                            }
+                            else if (muted != _lastMicMute)
+                            {
+                                _lastMicMute = muted;
+                                IsMicMuted = muted;
+                                fire = true;
+                            }
+                        }
+                        else ReleaseMic();
+                    }
+                }
+                catch { ReleaseMic(); }
+            }
+            if (fire)
+            {
+                OsdChangedHandler h = OsdChanged;
+                if (h != null) { try { h(OsdKind.MicMute, 100, muted, muted ? -1 : 1); } catch { } }
+            }
+        }
+
+        // ==================== QUICK OUTPUT SWITCH (SPEAKERS <-> HEADPHONES) ====================
+        private int EnumerateActiveRenderIds(List<string> ids)
+        {
+            IMMDeviceEnumerator enumerator = null;
+            IMMDeviceCollection col = null;
+            try
+            {
+                enumerator = (IMMDeviceEnumerator)(new MMDeviceEnumeratorComObject());
+                if (enumerator.EnumAudioEndpoints(0, 1, out col) != 0 || col == null) return 0;
+                uint n;
+                if (col.GetCount(out n) != 0) return 0;
+                for (uint i = 0; i < n && i < 32; i++)
+                {
+                    IMMDevice d = null;
+                    try
+                    {
+                        if (col.Item(i, out d) == 0 && d != null)
+                        {
+                            string id;
+                            if (d.GetId(out id) == 0 && !string.IsNullOrEmpty(id)) ids.Add(id);
+                        }
+                    }
+                    catch { }
+                    finally
+                    {
+                        if (d != null) { try { Marshal.ReleaseComObject(d); } catch { } }
+                    }
+                }
+                return ids.Count;
+            }
+            catch { return 0; }
+            finally
+            {
+                if (col != null) { try { Marshal.ReleaseComObject(col); } catch { } }
+                if (enumerator != null) { try { Marshal.ReleaseComObject(enumerator); } catch { } }
+            }
+        }
+
+        public void CycleAudioOutput()
+        {
+            ThreadPool.QueueUserWorkItem(delegate
+            {
+                try
+                {
+                    List<string> ids = new List<string>();
+                    EnumerateActiveRenderIds(ids);
+                    ActiveOutputCount = Math.Max(1, ids.Count);
+                    if (ids.Count < 2) return;
+
+                    string curId, curName; bool curHp;
+                    if (!ProbeDefaultAudioEndpoint(out curId, out curName, out curHp)) curId = _lastEndpointId ?? "";
+                    int idx = -1;
+                    for (int i = 0; i < ids.Count; i++)
+                    {
+                        if (string.Equals(ids[i], curId, StringComparison.OrdinalIgnoreCase)) { idx = i; break; }
+                    }
+                    string next = ids[(idx + 1) % ids.Count];
+
+                    IPolicyConfig pc = (IPolicyConfig)(new CPolicyConfigClient());
+                    try
+                    {
+                        pc.SetDefaultEndpoint(next, 0);
+                        pc.SetDefaultEndpoint(next, 1);
+                        pc.SetDefaultEndpoint(next, 2);
+                    }
+                    finally
+                    {
+                        try { Marshal.ReleaseComObject(pc); } catch { }
+                    }
+                    _forceEndpointProbe = true;
+                }
+                catch { }
+            });
         }
 
         public void ToggleMute()
@@ -592,8 +953,16 @@ namespace Kumo
                 try
                 {
                     bool endpointSwitched = false;
-                    if (tick == 1 || tick % 11 == 0)
+                    bool forcedProbe = _forceEndpointProbe;
+                    if (tick == 1 || tick % 11 == 0 || forcedProbe)
                     {
+                        _forceEndpointProbe = false;
+                        if (tick == 1 || tick % 44 == 0 || forcedProbe)
+                        {
+                            List<string> outIds = new List<string>();
+                            int cnt = EnumerateActiveRenderIds(outIds);
+                            if (cnt > 0) ActiveOutputCount = cnt;
+                        }
                         string epId;
                         string epName;
                         bool isHp;
@@ -654,6 +1023,11 @@ namespace Kumo
                         PollPrivacySensors();
                     }
 
+                    if (MicWatchEnabled && (tick == 3 || tick % 4 == 0))
+                    {
+                        PollMicMute(tick);
+                    }
+
                     if (SupportsBrightness && (tick % 6 == 0))
                     {
                         int curB = QueryWmiBrightness();
@@ -669,7 +1043,7 @@ namespace Kumo
         {
             _running = false;
             try { if (_briWatcher != null) { _briWatcher.Stop(); _briWatcher.Dispose(); _briWatcher = null; } } catch { }
-            lock (_audioLock) { ReleaseEndpoint(); }
+            lock (_audioLock) { ReleaseEndpoint(); ReleaseMic(); }
         }
     }
 }

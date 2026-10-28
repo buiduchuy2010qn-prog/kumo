@@ -178,7 +178,7 @@
       const r = await fetch("https://api.github.com/repos/buiduchuy2010qn-prog/kumo/releases/latest");
       if (!r.ok) return;
       const d = await r.json();
-      const tag = d.tag_name || "v1.1.22";
+      const tag = d.tag_name || "v1.1.23";
       const exe = (d.assets || []).find(a => a.name && a.name.toLowerCase().endsWith(".exe"));
       const url = exe ? exe.browser_download_url : "https://github.com/buiduchuy2010qn-prog/kumo/releases/latest";
       $$("[data-dl-link]").forEach(el => { el.href = url; });

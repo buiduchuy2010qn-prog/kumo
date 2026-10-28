@@ -54,6 +54,8 @@ namespace Kumo
         public bool AudioDeviceOsdEnabled = true;
         public bool PrivacyDotsEnabled = true;
         public bool AutoPinScreenshots = true;
+        public bool LockKeysOsdEnabled = true;   // Caps Lock / Num Lock HUD
+        public bool MicHotkeyEnabled = true;     // Ctrl+Alt+M mic mute + mic state HUD
 
         // ==================== ACTIVE UI NAVIGATION ====================
         public int ActiveTab = 0;
@@ -178,6 +180,8 @@ namespace Kumo
             AudioDeviceOsdEnabled = true;
             PrivacyDotsEnabled = true;
             AutoPinScreenshots = true;
+            LockKeysOsdEnabled = true;
+            MicHotkeyEnabled = true;
             FocusMinutes = 25;
             ShortBreakMinutes = 5;
             LongBreakMinutes = 15;
@@ -254,6 +258,8 @@ namespace Kumo
                         else if (k == "audio_dev_osd") AudioDeviceOsdEnabled = (v == "1");
                         else if (k == "privacy_dots") PrivacyDotsEnabled = (v == "1");
                         else if (k == "auto_pin_snips") AutoPinScreenshots = (v == "1");
+                        else if (k == "lock_keys_osd") LockKeysOsdEnabled = (v == "1");
+                        else if (k == "mic_hotkey") MicHotkeyEnabled = (v == "1");
                         else if (k == "water_remind") WaterRemindersEnabled = (v == "1");
                         else if (k == "water_goal") int.TryParse(v, out WaterGoalMl);
                         else if (k == "water_drank") int.TryParse(v, out WaterDrankMl);
@@ -385,6 +391,8 @@ namespace Kumo
                 sb.AppendLine("audio_dev_osd=" + (AudioDeviceOsdEnabled ? "1" : "0"));
                 sb.AppendLine("privacy_dots=" + (PrivacyDotsEnabled ? "1" : "0"));
                 sb.AppendLine("auto_pin_snips=" + (AutoPinScreenshots ? "1" : "0"));
+                sb.AppendLine("lock_keys_osd=" + (LockKeysOsdEnabled ? "1" : "0"));
+                sb.AppendLine("mic_hotkey=" + (MicHotkeyEnabled ? "1" : "0"));
                 sb.AppendLine("water_remind=" + (WaterRemindersEnabled ? "1" : "0"));
                 sb.AppendLine("water_goal=" + WaterGoalMl);
                 sb.AppendLine("water_drank=" + WaterDrankMl);
