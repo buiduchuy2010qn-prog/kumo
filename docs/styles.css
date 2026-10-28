@@ -826,3 +826,17 @@ footer {
   color: transparent !important;
 }
 .lyr-line.past { color: #cbd5e1; }
+/* Always-visible HH:mm clock beside equalizer in collapsed lyrics pill */
+.kn-notch.collapsed-lyrics { width: 426px; }
+.kn-col-clock {
+  display: none;
+  flex-shrink: 0;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: #f8fafc;
+  padding-left: 8px;
+  margin-left: 4px;
+  border-left: 1px solid rgba(255, 255, 255, 0.24);
+  font-variant-numeric: tabular-nums;
+}
+.kn-notch.collapsed-lyrics .kn-col-clock { display: inline-block; }

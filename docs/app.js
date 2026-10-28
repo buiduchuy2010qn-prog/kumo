@@ -178,7 +178,7 @@
       const r = await fetch("https://api.github.com/repos/buiduchuy2010qn-prog/kumo/releases/latest");
       if (!r.ok) return;
       const d = await r.json();
-      const tag = d.tag_name || "v1.1.14";
+      const tag = d.tag_name || "v1.1.15";
       const exe = (d.assets || []).find(a => a.name && a.name.toLowerCase().endsWith(".exe"));
       const url = exe ? exe.browser_download_url : "https://github.com/buiduchuy2010qn-prog/kumo/releases/latest";
       $$("[data-dl-link]").forEach(el => { el.href = url; });
@@ -266,7 +266,7 @@
 
     // Collapsed center text (full uncut lyric or clock)
     const vp = $("#knColViewport");
-    const ct = $("#knColText");
+    const ct = $("#knColText"); const cc = $("#knColClock"); if (cc) cc.textContent = hhmm;
     if (showColLyrics) {
       ct.textContent = curLyric().text; ct.classList.add("karaoke-sweep");
       requestAnimationFrame(() => {
@@ -570,7 +570,7 @@
       const t1 = (idx + 1 < tr.lyrics.length) ? tr.lyrics[idx + 1].t : 20;
       const frac = Math.max(0, Math.min(1, (exactLoop - t0) / Math.max(0.5, (t1 - t0) * 0.88)));
       const kp = (frac * 100).toFixed(1) + "%";
-      const ct = $("#knColText");
+      const ct = $("#knColText"); const cc = $("#knColClock"); if (cc) cc.textContent = hhmm;
       if (ct && ct.classList.contains("karaoke-sweep")) ct.style.setProperty("--kp", kp);
       const curEl = $(".lyr-line.current");
       if (curEl) curEl.style.setProperty("--kp", kp);
