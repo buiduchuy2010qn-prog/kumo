@@ -637,8 +637,8 @@ namespace Kumo
             DrawCenterText(
                 g,
                 _state.MascotEnabled
-                    ? _state.T("Mascot đang bật · Tự chào khi quay lại", "Mascot Active · Auto-greets on return")
-                    : _state.T("Mascot đang tắt · Chỉ hiện đồng hồ", "Mascot Off · Clock only"),
+                    ? _state.T("Mascot bật · Tự chào khi quay lại", "Mascot On · Auto-greets on return")
+                    : _state.T("Mascot tắt · Chỉ hiện đồng hồ", "Mascot Off · Clock only"),
                 _fSmall,
                 ColTextSec,
                 new RectangleF(petCard.X + U(6f), petCard.Y + U(48f), petCard.Width - U(12f), U(24f)));
@@ -742,7 +742,7 @@ namespace Kumo
 
             y = DrawToggleCard(g, x, y, w, "tog_auto_min",
                 _state.T("Tự thu nhỏ thông minh khi vướng tab (Auto-Minimal)", "Smart Auto-Minimal on titlebar tabs"),
-                _state.T("Tự thu về 44×4 dp khi mở nhiều tab Chrome chạm giữa màn hình để không che nút đóng tab.", "Auto-shrinks to 44×4 dp when Chrome tabs reach the center so close buttons stay uncovered."),
+                _state.T("Tự thu về 44×4 dp khi mở nhiều tab chạm giữa màn hình để không che nút đóng tab.", "Auto-shrinks to 44×4 dp when browser tabs reach the center so close buttons stay uncovered."),
                 _state.AutoMinimalEnabled);
 
             y = DrawToggleCard(g, x, y, w, "tog_always_min",
@@ -765,17 +765,17 @@ namespace Kumo
 
             y = DrawToggleCard(g, x, y, w, "tog_dl_hud",
                 _state.T("Thanh trạng thái tải tệp & Store (Download bar)", "Live file & Store download bar"),
-                _state.T("Tự động hiện thanh tiến trình khi tải tệp trên trình duyệt (Chrome, Edge, Cốc Cốc, Firefox...) hoặc tải app từ Microsoft Store.", "Show live download progress on the notch for web browsers and Microsoft Store apps."),
+                _state.T("Hiện tiến trình trực tiếp khi tải tệp từ trình duyệt hoặc ứng dụng Microsoft Store.", "Show live download progress for web browsers and Microsoft Store apps."),
                 _state.DownloadHudEnabled);
 
             y = DrawToggleCard(g, x, y, w, "tog_audio_osd",
                 _state.T("Thông báo Tai nghe Bluetooth & Đổi loa (Audio switch)", "Bluetooth headphones & audio switch alert"),
-                _state.T("Tự động bung thông báo trên tai thỏ khi kết nối tai nghe Bluetooth, cắm tai nghe dây hoặc đổi thiết bị phát âm thanh.", "Pop up a Dynamic Island alert when connecting headphones or switching audio output."),
+                _state.T("Hiện thông báo gọn khi kết nối tai nghe Bluetooth, tai nghe dây hoặc đổi loa phát.", "Show a sleek alert when connecting headphones or switching audio output."),
                 _state.AudioDeviceOsdEnabled);
 
             y = DrawToggleCard(g, x, y, w, "tog_privacy_dots",
                 _state.T("Chấm báo hiệu Camera & Mic đang bật (Privacy dots)", "Camera & Microphone privacy indicator dots"),
-                _state.T("Hiện chấm xanh lá (Camera) và chấm cam (Mic) trên mép tai thỏ kèm tên ứng dụng đang thu âm/ghi hình.", "Show green (Camera) and amber (Mic) privacy dots with the active app name."),
+                _state.T("Hiện chấm xanh (Camera) và cam (Mic) kèm tên ứng dụng đang thu hình/ghi âm.", "Show green (Camera) and amber (Mic) privacy dots with the active app name."),
                 _state.PrivacyDotsEnabled);
 
             y = DrawToggleCard(g, x, y, w, "tog_sounds",
@@ -841,7 +841,7 @@ namespace Kumo
 
             y = DrawSegmentedCard(g, x, y, w, "seg_open_",
                 _state.T("Cách mở tai thỏ (Open the notch)", "Open the notch"),
-                _state.T("Lăn chuột chỉnh âm lượng · Shift + Lăn chuột chỉnh độ sáng · Chuột giữa Dừng/Phát nhạc nhanh.", "Scroll wheel adjusts volume · Shift + Scroll adjusts brightness · Middle-click toggles Play/Pause."),
+                _state.T("Khi đóng: Lăn chuột chỉnh âm lượng · Shift+Lăn chỉnh sáng · Chuột giữa Phát/Dừng.", "When closed: Scroll adjusts volume · Shift+Scroll brightness · Middle-click Play/Pause."),
                 new string[] { _state.T("Đưa chuột (Hover)", "Hover"), _state.T("Nhấp chuột (Click)", "Click") },
                 _state.OpenByClick ? 1 : 0);
 
@@ -1045,7 +1045,10 @@ namespace Kumo
                     }
 
                     Font tf = item.Done ? new Font(_fRowTitle, FontStyle.Strikeout) : _fRowTitle;
+                    GraphicsState stTodoTxt = g.Save();
+                    g.SetClip(new RectangleF(x + U(40f), y + U(4f), Math.Max(U(80f), w - U(86f)), U(34f)), CombineMode.Intersect);
                     DrawLeftText(g, item.Text, tf, item.Done ? ColTextMuted : ColTextPri, x + U(42f), y + U(21f));
+                    g.Restore(stTodoTxt);
                     if (item.Done) tf.Dispose();
 
                     // Delete 'X' button
@@ -1070,7 +1073,7 @@ namespace Kumo
 
             y = DrawToggleCard(g, x, y, w, "tog_auto_snips",
                 _state.T("Tự ghim ảnh chụp màn hình vào Kệ (Win + Shift + S)", "Auto-pin screenshots to Shelf (Win + Shift + S)"),
-                _state.T("Tự động lưu ảnh vừa chụp màn hình vào Kệ tệp có ảnh xem trước để kéo-thả ngay sang Zalo, Messenger, Discord.", "Automatically pin new screenshots to Shelf with live thumbnails for instant drag-and-drop."),
+                _state.T("Tự lưu ảnh vừa chụp vào Kệ tệp kèm ảnh xem trước để kéo-thả nhanh.", "Auto-pin new screenshots to Shelf with thumbnails for instant drag-and-drop."),
                 _state.AutoPinScreenshots);
 
             y = DrawToggleCard(g, x, y, w, "tog_shelf_clear",
@@ -1187,16 +1190,22 @@ namespace Kumo
 
             RectangleF actCard = new RectangleF(x, y, w, U(66f));
             DrawCardShell(g, actCard);
+            GraphicsState stAct = g.Save();
+            g.SetClip(new RectangleF(x + U(12f), y + U(4f), Math.Max(U(80f), w - U(178f)), U(58f)), CombineMode.Intersect);
             DrawLeftText(g, _state.T("Thư mục lưu cấu hình & dữ liệu", "Configuration & Data Folder"), _fRowTitle, ColTextPri, x + U(16f), y + U(22f));
             DrawLeftText(g, _state.DataDir, _fSmall, ColTextMuted, x + U(16f), y + U(44f));
+            g.Restore(stAct);
             DrawActionPill(g, "open_datadir", new RectangleF(x + w - U(156f), y + U(16f), U(140f), U(34f)),
                 _state.T("Mở thư mục dữ liệu", "Open Data Folder"), false);
             y += U(76f);
 
             RectangleF rstCard = new RectangleF(x, y, w, U(64f));
             DrawCardShell(g, rstCard);
+            GraphicsState stRst = g.Save();
+            g.SetClip(new RectangleF(x + U(12f), y + U(4f), Math.Max(U(80f), w - U(198f)), U(56f)), CombineMode.Intersect);
             DrawLeftText(g, _state.T("Khôi phục cài đặt gốc", "Reset all settings to defaults"), _fRowTitle, ColTextPri, x + U(16f), y + U(22f));
             DrawLeftText(g, _state.T("Đưa kích thước, chuyển động, Pomodoro và nhắc nước về mặc định.", "Restore size, motion, Pomodoro, and water settings back to default."), _fRowDesc, ColTextSec, x + U(16f), y + U(43f));
+            g.Restore(stRst);
             DrawActionPill(g, "reset_defaults", new RectangleF(x + w - U(176f), y + U(15f), U(160f), U(34f)),
                 _resetConfirmPending
                     ? _state.T("Nhấn lần nữa để đặt lại!", "Click again to reset!")
@@ -1244,8 +1253,11 @@ namespace Kumo
                 g.DrawPath(p, gp);
             }
 
+            GraphicsState txtClip = g.Save();
+            g.SetClip(new RectangleF(x + U(12f), y + U(4f), Math.Max(U(80f), w - U(84f)), h - U(8f)), CombineMode.Intersect);
             DrawLeftText(g, title, _fRowTitle, ColTextPri, x + U(16f), y + U(22f));
             DrawLeftText(g, desc, _fRowDesc, ColTextSec, x + U(16f), y + U(43f));
+            g.Restore(txtClip);
 
             // Smooth iOS/Nusa pill Toggle Switch (46 x 25 dp)
             RectangleF sw = new RectangleF(x + w - U(62f), y + (h - U(25f)) * 0.5f, U(46f), U(25f));
