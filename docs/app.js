@@ -1,606 +1,560 @@
 (function () {
   "use strict";
 
+  const $ = (s) => document.querySelector(s);
+  const $$ = (s) => Array.from(document.querySelectorAll(s));
+
+  // Generate 3 realistic album / MV cover artworks on HTML5 Canvas (zero fake emoji boxes!)
+  function makeCoverArt(kind, w, h) {
+    const c = document.createElement("canvas");
+    c.width = w; c.height = h;
+    const g = c.getContext("2d");
+
+    if (kind === 0) {
+      // "Tìm em" — sunlit Mediterranean courtyard & coastal arch
+      const bg = g.createLinearGradient(0, 0, w, h);
+      bg.addColorStop(0, "#164e63");
+      bg.addColorStop(0.55, "#0e7490");
+      bg.addColorStop(1, "#0f172a");
+      g.fillStyle = bg; g.fillRect(0, 0, w, h);
+
+      // Warm limestone wall & sunlit arch
+      g.fillStyle = "#e7dfd3";
+      g.fillRect(w * 0.08, h * 0.08, w * 0.84, h * 0.84);
+      g.fillStyle = "#cbbba8";
+      g.fillRect(w * 0.56, h * 0.08, w * 0.36, h * 0.84);
+
+      // Arch doorway opening to turquoise sea
+      g.save();
+      g.beginPath();
+      g.arc(w * 0.42, h * 0.46, w * 0.16, Math.PI, 0, false);
+      g.lineTo(w * 0.58, h * 0.86);
+      g.lineTo(w * 0.26, h * 0.86);
+      g.closePath();
+      g.clip();
+      const sea = g.createLinearGradient(0, h * 0.25, 0, h * 0.86);
+      sea.addColorStop(0, "#7dd3fc");
+      sea.addColorStop(0.55, "#0284c7");
+      sea.addColorStop(1, "#334155");
+      g.fillStyle = sea; g.fillRect(w * 0.24, h * 0.25, w * 0.36, h * 0.65);
+      // Couple silhouette in doorway
+      g.fillStyle = "#1e293b";
+      g.beginPath(); g.arc(w * 0.41, h * 0.56, w * 0.032, 0, Math.PI * 2); g.fill();
+      g.fillRect(w * 0.385, h * 0.59, w * 0.055, h * 0.22);
+      g.restore();
+
+      // Warm bougainvillea accents
+      g.fillStyle = "#be185d";
+      for (let i = 0; i < 9; i++) {
+        g.beginPath();
+        g.arc(w * (0.68 + (i % 3) * 0.06), h * (0.58 + Math.floor(i / 3) * 0.08), w * 0.022, 0, Math.PI * 2);
+        g.fill();
+      }
+    } else if (kind === 1) {
+      // "Vết thương" — twilight ocean horizon & two silhouettes
+      const sky = g.createLinearGradient(0, 0, 0, h);
+      sky.addColorStop(0, "#1e3a5f");
+      sky.addColorStop(0.52, "#64748b");
+      sky.addColorStop(0.75, "#d97706");
+      sky.addColorStop(1, "#0f172a");
+      g.fillStyle = sky; g.fillRect(0, 0, w, h);
+
+      g.fillStyle = "rgba(15, 23, 42, 0.88)";
+      g.beginPath(); g.arc(w * 0.36, h * 0.52, w * 0.075, 0, Math.PI * 2); g.fill();
+      g.fillRect(w * 0.27, h * 0.60, w * 0.19, h * 0.40);
+      g.fillStyle = "rgba(30, 41, 59, 0.82)";
+      g.beginPath(); g.arc(w * 0.64, h * 0.56, w * 0.068, 0, Math.PI * 2); g.fill();
+      g.fillRect(w * 0.56, h * 0.63, w * 0.17, h * 0.37);
+    } else {
+      // "Đám mây nhỏ" — crisp twilight sky & glowing cloud
+      const sky = g.createLinearGradient(0, 0, w, h);
+      sky.addColorStop(0, "#0c4a6e");
+      sky.addColorStop(0.6, "#0284c7");
+      sky.addColorStop(1, "#38bdf8");
+      g.fillStyle = sky; g.fillRect(0, 0, w, h);
+
+      g.fillStyle = "rgba(255,255,255,0.94)";
+      const circles = [[0.38, 0.56, 0.13], [0.50, 0.47, 0.17], [0.63, 0.56, 0.12], [0.50, 0.59, 0.14]];
+      circles.forEach(([cx, cy, r]) => {
+        g.beginPath(); g.arc(w * cx, h * cy, w * r, 0, Math.PI * 2); g.fill();
+      });
+    }
+    return c.toDataURL("image/png");
+  }
+
   const TRACKS = [
     {
-      title: "Mình Là Người Yêu Nhau",
-      artist: "Indie Acoustic · YouTube Music",
-      artGrad: "linear-gradient(135deg, #f43f5e, #6366f1)",
-      dur: 218,
+      title: "Hngle - Tìm em ft. Bảo Anh",
+      ytTitle: "Hngle - Tìm em ft. Bảo Anh | Official Music Video",
+      artist: "HNGLE / hưng lê",
+      views: "86 Tr lượt xem",
+      url: "https://www.youtube.com/watch?v=gJAbDSse5WM",
+      eqCol: "#38bdf8",
+      dur: 271,
+      thumb: makeCoverArt(0, 160, 160),
+      banner: makeCoverArt(0, 640, 360),
       lyrics: [
-        { t: 0,  text: "♪ Dạo bước dưới hiên mây chiều dịu êm" },
-        { t: 5,  text: "Giai điệu ngân vang ngay trên đỉnh màn hình" },
-        { t: 10, text: "Thu nhỏ tai thỏ vẫn hiện từng câu hát" },
-        { t: 15, text: "Chẳng vướng khung tab, chẳng làm chói đôi mắt" },
-        { t: 20, text: "Mình cùng lắng nghe từng nhịp thở bình yên" }
+        { t: 0,  text: "Ngồi ngẩn ngơ anh hát vu vơ bên hiên chiều" },
+        { t: 5,  text: "Có đôi lần khẽ cười vì anh nhớ em" },
+        { t: 10, text: "Từ giọng nói như rót mật ngọt vào tai anh" },
+        { t: 15, text: "Nhiều khi anh cứ ngỡ là nắng đang về đây" }
       ]
     },
     {
-      title: "Đám Mây Nhỏ (Kumo Lo-Fi)",
-      artist: "Kumo Studio · Spotify",
-      artGrad: "linear-gradient(135deg, #0ea5e9, #10b981)",
-      dur: 184,
+      title: "fishy - VẾT THƯƠNG",
+      ytTitle: "fishy - VẾT THƯƠNG - OFFICIAL MUSIC VIDEO",
+      artist: "fishy",
+      views: "14 Tr lượt xem",
+      url: "https://www.youtube.com/watch?v=vet-thuong-mv",
+      eqCol: "#f59e0b",
+      dur: 258,
+      thumb: makeCoverArt(1, 160, 160),
+      banner: makeCoverArt(1, 640, 360),
       lyrics: [
-        { t: 0,  text: "♪ Một đám mây đen khẽ đậu cạnh trên cùng" },
-        { t: 5,  text: "Giữ trọn lời ca và nhịp tim hệ thống" },
-        { t: 10, text: "Tăng nhẹ âm lượng — thanh trắng tinh hiện lên" },
-        { t: 15, text: "Tập trung làm việc qua từng phiên Pomodoro" }
+        { t: 0,  text: "Em đâu biết đâu, em đâu biết đâu lòng anh" },
+        { t: 5,  text: "Vì vết thương chỉ là bên ngoài mà thôi" },
+        { t: 10, text: "Nỗi đau mới thêm dài theo từng chiều mưa" },
+        { t: 15, text: "Quá khứ kia em đã từng chôn giấu thật sâu" }
       ]
     },
     {
-      title: "Hoàng Hôn Thành Phố",
-      artist: "Chill Vibes · SoundCloud",
-      artGrad: "linear-gradient(135deg, #f59e0b, #ec4899)",
-      dur: 205,
+      title: "Đám Mây Nhỏ (Kumo Acoustic)",
+      ytTitle: "Đám Mây Nhỏ — Chill Lo-Fi Session for Focus",
+      artist: "Kumo Studio",
+      views: "1,2 Tr lượt xem",
+      url: "https://www.youtube.com/watch?v=kumo-lofi-chill",
+      eqCol: "#34d399",
+      dur: 196,
+      thumb: makeCoverArt(2, 160, 160),
+      banner: makeCoverArt(2, 640, 360),
       lyrics: [
-        { t: 0,  text: "♪ Ánh chiều buông nhẹ qua khung cửa sổ" },
-        { t: 5,  text: "Nhấp ngụm nước mát cho ngày dài tỉnh táo" },
-        { t: 10, text: "Kéo thả tài liệu vào ngăn kệ tạm thời" },
-        { t: 15, text: "Mọi thứ gọn gàng trong một cú lướt chuột" }
+        { t: 0,  text: "Một đám mây đen khẽ đậu ngay cạnh trên cùng" },
+        { t: 5,  text: "Thu nhỏ vẫn hiện trọn vẹn từng lời bài hát" },
+        { t: 10, text: "Tự động thu mảnh khi cửa sổ chạm thanh tab" },
+        { t: 15, text: "Giữ nhịp làm việc êm ái suốt cả ngày dài" }
       ]
     }
   ];
 
   const state = {
     lang: "vi",
-    expanded: true,
-    pinnedCollapsed: false,
+    modeKey: "normal",
+    expanded: false,
+    pinnedCollapsed: true,
     autoMinimal: false,
     mascotOn: false,
-    page: 5, // Start on Kumo's signature System Monitor!
+    page: 0,
     trackIdx: 0,
-    playing: true,
-    posSec: 6,
-    lyricsSplit: true,
+    playing: false, // Normal idle bar on initial load!
+    lyricsSplit: false,
+    posSec: 35,
     muted: false,
-    volume: 64,
+    volume: 68,
     brightness: 80,
-    batPct: 78,
-    batCharging: true,
-    sysMetric: 0, // 0=CPU, 1=SSD, 2=WiFi, 3=GPU
-    pomoSec: 25 * 60,
+    sysMetric: 0,
+    pomoSec: 1500,
     pomoRun: false,
-    pomoMode: 0,
     waterMl: 1500,
     waterGoal: 2000,
-    shelf: ["BaoCao_Q4.pdf", "Kumo_UI.fig"],
+    shelf: ["BaoCao_Q4.pdf", "Slide_Demo.pptx"],
     todos: [
-      { text: "Hoàn thiện giao diện sáng dịu mắt", done: true },
-      { text: "Tối ưu độ nét ClearType 125% DPI", done: true },
-      { text: "Thử tính năng lời nhạc khi thu nhỏ", done: false }
+      { text: "Kiểm tra lời nhạc không cắt chữ", done: true },
+      { text: "Thử thanh tải tệp Chrome & Store", done: false }
     ],
-    osdTimer: null
+    osdTimer: null,
+    dlInterval: null
   };
-
-  const $ = (sel) => document.querySelector(sel);
-  const $$ = (sel) => Array.from(document.querySelectorAll(sel));
-
-  // ===== 1. Fetch Live Latest Release from GitHub API =====
-  async function syncLatestRelease() {
-    try {
-      const r = await fetch("https://api.github.com/repos/buiduchuy2010qn-prog/kumo/releases/latest");
-      if (!r.ok) return;
-      const data = await r.json();
-      const tag = data.tag_name || "v1.1.13";
-      const exeAsset = (data.assets || []).find(a => a.name && a.name.toLowerCase().endsWith(".exe"));
-      const dlUrl = exeAsset ? exeAsset.browser_download_url : `https://github.com/buiduchuy2010qn-prog/kumo/releases/latest`;
-      const exeName = exeAsset ? exeAsset.name : `KumoSetup-${tag}.exe`;
-      const sizeKb = exeAsset ? Math.round(exeAsset.size / 1024) + " KB" : "~203 KB";
-
-      $$("[data-dl-link]").forEach(el => { el.href = dlUrl; });
-      $$("[data-ver-tag]").forEach(el => { el.textContent = tag; });
-      $$("[data-exe-name]").forEach(el => { el.textContent = exeName; });
-      $$("[data-exe-size]").forEach(el => { el.textContent = sizeKb; });
-    } catch (_) {}
-  }
-
-  // ===== 2. Render Notch State =====
   const PAGE_TITLES = [
     ["Now ", "Playing", "#38bdf8"],
     ["Focus ", "Timer", "#fb7185"],
     ["Water ", "Reminder", "#38bdf8"],
     ["File ", "Shelf", "#a78bfa"],
     ["Quick ", "To-Do", "#34d399"],
-    ["System ", "Monitor", "#19b8ff"]
+    ["System ", "Monitor", "#38bdf8"]
   ];
 
-  function currentLyricLine() {
+  async function syncRelease() {
+    try {
+      const r = await fetch("https://api.github.com/repos/buiduchuy2010qn-prog/kumo/releases/latest");
+      if (!r.ok) return;
+      const d = await r.json();
+      const tag = d.tag_name || "v1.1.13";
+      const exe = (d.assets || []).find(a => a.name && a.name.toLowerCase().endsWith(".exe"));
+      const url = exe ? exe.browser_download_url : "https://github.com/buiduchuy2010qn-prog/kumo/releases/latest";
+      $$("[data-dl-link]").forEach(el => { el.href = url; });
+      $$("[data-ver-tag]").forEach(el => { el.textContent = tag; });
+      if (exe) {
+        $$("[data-exe-name]").forEach(el => { el.textContent = exe.name; });
+        $$("[data-exe-size]").forEach(el => { el.textContent = Math.round(exe.size / 1024) + " KB"; });
+      }
+    } catch (_) {}
+  }
+
+  function fmt(sec) {
+    return String(Math.floor(sec / 60)).padStart(2, "0") + ":" + String(Math.floor(sec % 60)).padStart(2, "0");
+  }
+
+  function curLyric() {
     const tr = TRACKS[state.trackIdx];
-    const loopT = state.posSec % 20;
+    const loop = state.posSec % 20;
     let idx = 0;
     for (let i = 0; i < tr.lyrics.length; i++) {
-      if (tr.lyrics[i].t <= loopT) idx = i;
+      if (tr.lyrics[i].t <= loop) idx = i;
     }
     return { idx, list: tr.lyrics, text: tr.lyrics[idx].text };
   }
 
-  function renderNotch() {
+  function renderPlaylist() {
+    const box = $("#ytPlaylist");
+    if (!box) return;
+    box.innerHTML = TRACKS.map((t, i) => `
+      <div class="yt-item ${i === state.trackIdx ? "active" : ""}" data-sel-track="${i}">
+        <img src="${t.banner}" alt="${t.title}" />
+        <div class="yt-item-meta">
+          <strong>${t.title}</strong>
+          <span>${t.artist} · ${fmt(t.dur)}</span>
+        </div>
+      </div>
+    `).join("");
+  }
+
+  function renderAll() {
     const notch = $("#kumoNotch");
     if (!notch) return;
+    const tr = TRACKS[state.trackIdx];
+    const now = new Date();
+    const hhmm = String(now.getHours()).padStart(2, "0") + ":" + String(now.getMinutes()).padStart(2, "0");
 
-    notch.classList.remove("state-micro", "state-lyrics-pill", "state-expanded", "wide-lyrics");
-    const mascotEl = $("#knMascotPill");
-    if (mascotEl) mascotEl.classList.toggle("show", !state.expanded && !state.autoMinimal && state.mascotOn && !state.lyricsSplit);
+    // Taskbar clock
+    $("#tbTime").textContent = hhmm;
+    $("#tbDate").textContent = `${String(now.getDate()).padStart(2,"0")}/${String(now.getMonth()+1).padStart(2,"0")}/${now.getFullYear()}`;
 
+    // Mode toolbar active pill
+    const mapBtn = { normal: "#modeNormal", colMusic: "#modeColMusic", colLyrics: "#modeColLyrics", expLyrics: "#modeExpLyrics", expSys: "#modeExpSys" };
+    Object.keys(mapBtn).forEach(k => { const b = $(mapBtn[k]); if (b) b.classList.toggle("active", state.modeKey === k); });
+
+    // Notch shell classes & dynamic width (ZERO cut-off!)
+    const inOsd = notch.classList.contains("state-osd");
+    notch.classList.remove("state-micro", "state-expanded", "wide-lyrics");
+    notch.style.width = "";
+
+    const showColLyrics = !state.expanded && !state.autoMinimal && state.lyricsSplit && state.playing;
     if (state.expanded) {
       notch.classList.add("state-expanded");
       if (state.page === 0 && state.lyricsSplit) notch.classList.add("wide-lyrics");
-    } else if (state.autoMinimal) {
+    } else if (state.autoMinimal && !inOsd) {
       notch.classList.add("state-micro");
-    } else if (state.lyricsSplit && state.playing) {
-      notch.classList.add("state-lyrics-pill");
+    } else if (!inOsd && showColLyrics) {
+      const ltxt = curLyric().text;
+      const dynW = Math.min(480, Math.max(255, Math.round(92 + ltxt.length * 7.6)));
+      notch.style.width = dynW + "px";
     }
 
-    // Collapsed center text (Clock vs Live Synced Lyrics!)
-    const colText = $("#knColCenter");
-    const miniArt = $("#knMiniArt");
-    const eqs = $$(".kn-eq");
-    const tr = TRACKS[state.trackIdx];
-    if (miniArt) miniArt.style.background = tr.artGrad;
-    eqs.forEach(eq => eq.classList.toggle("paused", !state.playing));
+    $("#knMascot").classList.toggle("show", !state.expanded && !state.autoMinimal && state.mascotOn && !showColLyrics && !inOsd);
 
-    if (colText) {
-      if (state.lyricsSplit && state.playing) {
-        colText.textContent = currentLyricLine().text;
-      } else {
-        const now = new Date();
-        colText.textContent = String(now.getHours()).padStart(2, "0") + ":" + String(now.getMinutes()).padStart(2, "0");
-      }
+    // Collapsed left slot: Real Album Cover Image vs Normal Battery Ring!
+    const hasActiveArt = state.playing || showColLyrics;
+    $("#knLeftSlot").classList.toggle("has-art", hasActiveArt);
+    $("#knMiniCover").src = tr.thumb;
+    $("#musCoverImg").src = tr.thumb;
+
+    const eqCol = tr.eqCol;
+    $$(".kn-eq").forEach(eq => {
+      eq.style.setProperty("--eq-col", eqCol);
+      eq.classList.toggle("idle", !state.playing && !showColLyrics);
+    });
+
+    // Collapsed center text (full uncut lyric or clock)
+    const vp = $("#knColViewport");
+    const ct = $("#knColText");
+    if (showColLyrics) {
+      ct.textContent = curLyric().text;
+      requestAnimationFrame(() => {
+        const overflow = ct.scrollWidth - vp.clientWidth;
+        if (overflow > 3) {
+          vp.classList.add("scrolling");
+          vp.style.setProperty("--pan-x", -(overflow + 8) + "px");
+        } else {
+          vp.classList.remove("scrolling");
+        }
+      });
+    } else {
+      vp.classList.remove("scrolling");
+      ct.textContent = hhmm;
     }
 
-    // Header
+    // Expanded Header & Pages
     const [p1, p2, pCol] = PAGE_TITLES[state.page];
     $("#knTitle1").textContent = p1;
-    const t2 = $("#knTitle2");
-    t2.textContent = p2;
-    t2.style.color = pCol;
-
-    const batEl = $("#knBatHdr");
-    if (state.batCharging) {
-      batEl.textContent = `⚡ ${state.batPct}% · ` + (state.lang === "vi" ? "Đang sạc" : "Charging");
-      batEl.style.color = "#4ade80";
-    } else if (state.batPct <= 20) {
-      batEl.textContent = `! ${state.batPct}% · ` + (state.lang === "vi" ? "Pin yếu" : "Low Bat");
-      batEl.style.color = "#fb7185";
-    } else {
-      batEl.textContent = `● ${state.batPct}% · ` + (state.lang === "vi" ? "Pin bth" : "Normal");
-      batEl.style.color = "#e2e8f0";
-    }
-
-    const now = new Date();
+    $("#knTitle2").textContent = p2;
+    $("#knTitle2").style.color = pCol;
     const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
     $("#knDateHdr").textContent = `${String(now.getDate()).padStart(2,"0")} ${months[now.getMonth()]}`;
-    $("#knTimeHdr").textContent = `${String(now.getHours()).padStart(2,"0")}:${String(now.getMinutes()).padStart(2,"0")}`;
+    $("#knTimeHdr").textContent = hhmm;
 
-    // Pages active & dots
-    $$(".kn-page").forEach((el, idx) => el.classList.toggle("active", idx === state.page));
-    $$("#knDots i").forEach((el, idx) => el.classList.toggle("on", idx === state.page));
-    $$("[data-goto-page]").forEach(btn => btn.classList.toggle("active", Number(btn.dataset.gotoPage) === state.page && state.expanded));
+    $$(".kn-page").forEach((el, i) => el.classList.toggle("active", i === state.page));
+    $$("#knDots i").forEach((el, i) => el.classList.toggle("on", i === state.page));
 
-    // Page 0: Music + Lyrics
-    $("#musArt").style.background = tr.artGrad;
+    // Page 0: Music + Uncut 4-Line Lyrics
     $("#musTitle").textContent = tr.title;
-    $("#musArtist").textContent = tr.artist;
-    const pct = Math.min(100, (state.posSec / tr.dur) * 100);
-    $("#musFill").style.width = pct.toFixed(1) + "%";
-    const fmt = (s) => `${String(Math.floor(s/60)).padStart(2,"0")}:${String(Math.floor(s%60)).padStart(2,"0")}`;
+    $("#musArtist").textContent = tr.artist + " · YouTube";
     $("#musCur").textContent = fmt(state.posSec);
     $("#musRem").textContent = "-" + fmt(Math.max(0, tr.dur - state.posSec));
+    $("#musFill").style.width = Math.min(100, (state.posSec / tr.dur) * 100).toFixed(1) + "%";
     $("#btnPlay").textContent = state.playing ? "⏸" : "▶";
     $("#btnLyrics").classList.toggle("lyr-on", state.lyricsSplit);
-    $("#btnMute").textContent = (state.muted || state.volume === 0) ? "🔇" : "🔊";
+    $("#btnMute").textContent = state.muted ? "🔇" : "🔊";
 
-    const lyrInfo = currentLyricLine();
-    const pane = $("#musLyricsPane");
-    if (pane) {
-      pane.innerHTML = lyrInfo.list.slice(0, 4).map((item, i) =>
-        `<div class="lyr-line ${i === (lyrInfo.idx % 4) ? "current" : ""}">${item.text}</div>`
-      ).join("");
-    }
-    // Page 1: Pomodoro
+    const li = curLyric();
+    $("#musLyricsPane").innerHTML = li.list.map((item, idx) =>
+      `<div class="lyr-line ${idx === li.idx ? "current" : ""}">${item.text}</div>`
+    ).join("");
+
+    // Sync Windows 11 Chrome YouTube Window
+    $("#wcTabTitle").textContent = tr.title + " - YouTube";
+    $("#wcUrlInput").value = tr.url;
+    $("#ytVideoImg").src = tr.banner;
+    $("#ytMainTitle").textContent = tr.ytTitle;
+    $("#ytMainChan").textContent = `${tr.artist} · ${tr.views}`;
+    $("#ytTimeBadge").textContent = `${fmt(state.posSec)} / ${fmt(tr.dur)}`;
+    $("#ytPlayBadge").textContent = state.playing
+      ? (state.lang === "vi" ? "▶ Đang phát trên YouTube · Đồng bộ Kumo" : "▶ Playing on YouTube · Synced")
+      : (state.lang === "vi" ? "⏸ Đang tạm dừng (Bấm để phát)" : "⏸ Paused (Click to play)");
+    $$("[data-pick-track]").forEach(b => b.classList.toggle("active", Number(b.dataset.pickTrack) === state.trackIdx));
+    renderPlaylist();
+
+    // Pomodoro / Water / Shelf / Todo / System
     $("#pomoTime").textContent = fmt(state.pomoSec);
     $("#btnPomoRun").textContent = state.pomoRun ? "⏸ Pause" : "▶ Start";
-
-    // Page 2: Water
-    const wL = (state.waterMl / 1000).toFixed(1);
-    const gL = (state.waterGoal / 1000).toFixed(1);
-    $("#waterReadout").textContent = `${wL} / ${gL} L`;
     const wPct = Math.min(100, Math.round((state.waterMl / state.waterGoal) * 100));
-    $("#waterPct").textContent = `${wPct}% mục tiêu hôm nay`;
-    $("#waterBarFill").style.width = `${wPct}%`;
-    const todayBar = $("#waterTodayBar");
-    if (todayBar) todayBar.style.height = `${Math.max(12, Math.min(52, Math.round(wPct * 0.5)))}px`;
+    $("#waterReadout").textContent = `${(state.waterMl/1000).toFixed(1)} / ${(state.waterGoal/1000).toFixed(1)} L`;
+    $("#waterBarFill").style.width = wPct + "%";
+    $("#shelfDrop").innerHTML = state.shelf.map(f => `<span style="background:rgba(255,255,255,0.14);padding:4px 8px;border-radius:6px;">📄 ${f}</span>`).join("");
+    $("#todoHero").textContent = `${state.todos.filter(t => t.done).length}/${state.todos.length}`;
+    $("#todoList").innerHTML = state.todos.map((t, i) =>
+      `<div data-tog-todo="${i}" style="cursor:pointer;background:rgba(255,255,255,0.1);padding:3px 8px;border-radius:5px;${t.done ? "text-decoration:line-through;opacity:0.65;" : ""}">${t.done ? "✓ " : "○ "}${t.text}</div>`
+    ).join("");
 
-    // Page 3: Shelf
-    const shelfBox = $("#shelfDrop");
-    if (shelfBox) {
-      if (state.shelf.length === 0) {
-        shelfBox.innerHTML = `<span style="color:#cbd5e1;font-size:12px;">${state.lang === "vi" ? "Kệ trống — bấm + Thêm tệp mẫu" : "Shelf empty — click + Sample file"}</span>`;
-      } else {
-        shelfBox.innerHTML = state.shelf.map((f, idx) =>
-          `<span class="file-chip">📄 ${f} <b data-del-shelf="${idx}" style="cursor:pointer;color:#fda4af;">×</b></span>`
-        ).join("");
-      }
-    }
-
-    // Page 4: Todo
-    const doneCnt = state.todos.filter(t => t.done).length;
-    $("#todoHero").textContent = `${doneCnt}/${state.todos.length}`;
-    const todoBox = $("#todoList");
-    if (todoBox) {
-      todoBox.innerHTML = state.todos.slice(0, 3).map((t, idx) =>
-        `<div class="todo-item ${t.done ? "done" : ""}" data-toggle-todo="${idx}">
-          <span>${t.done ? "✓ " : "○ "}${t.text}</span>
-          <b data-del-todo="${idx}" style="color:#fda4af;padding-left:6px;">×</b>
-        </div>`
-      ).join("");
-    }
-
-    // Page 5: System Monitor (Kumo Signature!)
-    const cpu = 9 + (state.posSec % 7);
-    const ssdKb = 48 + (state.posSec % 5) * 19;
-    const netDown = (12.4 + (state.posSec % 4) * 1.3).toFixed(1);
-    const gpu = 2 + (state.posSec % 4);
-    $("#mValSsd").textContent = `1% · ${ssdKb} KB/s`;
-    $("#mValNet").textContent = `↓${netDown} ↑2.4 Mbps`;
-    $("#mValGpu").textContent = `${gpu}% · 3D`;
-    $$(".m-row").forEach(r => r.classList.toggle("sel", Number(r.dataset.m) === state.sysMetric));
-
+    const cpu = 10 + (state.posSec % 6);
     if (state.sysMetric === 1) {
-      $("#sysBig").textContent = "1%";
-      $("#sysUnit").textContent = "SSD · Active";
-      $("#sysSub").textContent = `R: ${ssdKb} KB/s · W: 24 KB/s`;
-      $("#sysBarFill").style.width = "10%";
+      $("#sysBig").textContent = "1%"; $("#sysUnit").textContent = "SSD · Active";
+      $("#sysSub").textContent = "Read 84 KB/s · Write 18 KB/s";
     } else if (state.sysMetric === 2) {
-      $("#sysBig").textContent = netDown;
-      $("#sysUnit").textContent = "Mbps · Wi-Fi";
-      $("#sysSub").textContent = `↓ ${netDown} Mbps · ↑ 2.4 Mbps`;
-      $("#sysBarFill").style.width = "34%";
-    } else if (state.sysMetric === 3) {
-      $("#sysBig").textContent = `${gpu}%`;
-      $("#sysUnit").textContent = "GPU 0 · 3D";
-      $("#sysSub").textContent = "Intel Iris Xe / RTX Graphics";
-      $("#sysBarFill").style.width = `${Math.max(8, gpu * 3)}%`;
+      $("#sysBig").textContent = "14.2"; $("#sysUnit").textContent = "Mbps · Wi-Fi";
+      $("#sysSub").textContent = "↓ 14.2 Mbps · ↑ 2.6 Mbps";
     } else {
-      $("#sysBig").textContent = `${cpu}%`;
-      $("#sysUnit").textContent = "CPU · 4.33 GHz";
+      $("#sysBig").textContent = cpu + "%"; $("#sysUnit").textContent = "CPU · 4.32 GHz";
       $("#sysSub").textContent = "RAM 38% · 6.1/16.0 GB";
-      $("#sysBarFill").style.width = `${Math.max(12, cpu)}%`;
     }
-    $("#btnMascotToggle").textContent = state.mascotOn ? "^ ^ Mascot: ON" : "^ ^ Mascot";
+    $$(".m-row").forEach(r => r.classList.toggle("sel", Number(r.dataset.m) === state.sysMetric));
   }
 
-  // ===== 3. Trigger Live Hardware OSD HUD =====
-  function triggerOsd(kind, delta) {
+  function showOsd(icoTxt, icoCol, lblTxt, lblCol, fillBg, pct, valTxt, durMs) {
     const notch = $("#kumoNotch");
     const osd = $("#knOsd");
-    const ico = $("#osdIco");
-    const lbl = $("#osdLbl");
-    const fill = $("#osdFill");
-    const val = $("#osdVal");
-
-    if (kind === "vol") {
-      if (delta === 0) {
-        state.muted = !state.muted;
-      } else {
-        state.muted = false;
-        state.volume = Math.max(0, Math.min(100, state.volume + delta));
-      }
-      if (state.muted || state.volume === 0) {
-        ico.textContent = "🔇";
-        ico.style.color = "#f87171";
-        lbl.textContent = state.lang === "vi" ? "Đã tắt tiếng" : "Muted";
-        lbl.style.color = "#f87171";
-        fill.style.background = "#f87171";
-        fill.style.width = "0%";
-        val.textContent = state.lang === "vi" ? "Tắt" : "Mute";
-      } else {
-        // PURE WHITE VOLUME OSD (#FFFFFF) per v1.1.13!
-        const arrow = delta > 0 ? " ▲" : (delta < 0 ? " ▼" : "");
-        ico.textContent = "🔊";
-        ico.style.color = "#ffffff";
-        lbl.textContent = (state.lang === "vi" ? "Âm lượng" : "Volume") + arrow;
-        lbl.style.color = "#ffffff";
-        fill.style.background = "#ffffff";
-        fill.style.width = state.volume + "%";
-        val.textContent = state.volume + "%";
-      }
-    } else if (kind === "bri") {
-      state.brightness = state.brightness >= 100 ? 40 : Math.min(100, state.brightness + 20);
-      ico.textContent = "☀️";
-      ico.style.color = "#fbbf24";
-      lbl.textContent = (state.lang === "vi" ? "Độ sáng ▲" : "Brightness ▲");
-      lbl.style.color = "#ffffff";
-      fill.style.background = "linear-gradient(90deg, #f59e0b, #fde047)";
-      fill.style.width = state.brightness + "%";
-      val.textContent = state.brightness + "%";
-    } else if (kind === "bat_chg") {
-      state.batCharging = true;
-      state.batPct = 82;
-      ico.textContent = "⚡";
-      ico.style.color = "#4ade80";
-      lbl.textContent = state.lang === "vi" ? "Đang sạc pin ⚡" : "Charging ⚡";
-      lbl.style.color = "#4ade80";
-      fill.style.background = "linear-gradient(90deg, #22c55e, #4ade80)";
-      fill.style.width = "82%";
-      val.textContent = "82%";
-    } else if (kind === "bat_low") {
-      state.batCharging = false;
-      state.batPct = 15;
-      ico.textContent = "🪫";
-      ico.style.color = "#fb7185";
-      lbl.textContent = state.lang === "vi" ? "Pin yếu!" : "Low Battery!";
-      lbl.style.color = "#fb7185";
-      fill.style.background = "linear-gradient(90deg, #ef4444, #fb7185)";
-      fill.style.width = "15%";
-      val.textContent = "15%";
-    }
-
     clearInterval(state.dlInterval);
     clearTimeout(state.osdTimer);
+    $("#osdIco").textContent = icoTxt; $("#osdIco").style.color = icoCol;
+    $("#osdLbl").textContent = lblTxt; $("#osdLbl").style.color = lblCol;
+    $("#osdFill").style.background = fillBg; $("#osdFill").style.width = pct + "%";
+    $("#osdVal").textContent = valTxt;
+
     if (state.expanded) {
-      osd.classList.add("banner-on");
-      notch.classList.remove("state-osd");
+      osd.classList.add("banner-on"); notch.classList.remove("state-osd");
     } else {
-      osd.classList.remove("banner-on");
-      notch.classList.remove("state-micro", "state-lyrics-pill");
-      notch.classList.add("state-osd");
+      osd.classList.remove("banner-on"); notch.style.width = ""; notch.classList.add("state-osd");
     }
-    renderNotch();
-
     state.osdTimer = setTimeout(() => {
-      osd.classList.remove("banner-on");
-      notch.classList.remove("state-osd");
-      renderNotch();
-    }, 2200);
+      osd.classList.remove("banner-on"); notch.classList.remove("state-osd"); renderAll();
+    }, durMs || 2200);
   }
 
-  function triggerDownloadSim(isStore) {
-    const notch = $("#kumoNotch");
-    const osd = $("#knOsd");
-    const ico = $("#osdIco");
-    const lbl = $("#osdLbl");
-    const fill = $("#osdFill");
-    const val = $("#osdVal");
-
+  function simulateDownload(isStore) {
     clearInterval(state.dlInterval);
     clearTimeout(state.osdTimer);
-    let pct = 8;
-
-    const applyFrame = (done) => {
-      if (done) {
-        ico.textContent = "\u2713";
-        ico.style.color = "#4ade80";
-        lbl.textContent = (state.lang === "vi" ? "Tải xong \u00B7 " : "Saved \u00B7 ") + (isStore ? "Spotify Music" : "KumoSetup..13.exe");
-        lbl.style.color = "#4ade80";
-        fill.style.background = "linear-gradient(90deg, #10b981, #4ade80)";
-        fill.style.width = "100%";
-        val.textContent = isStore ? "100%" : "210 KB";
-      } else if (isStore) {
-        ico.textContent = "\uD83D\uDECD";
-        ico.style.color = "#38bdf8";
-        lbl.textContent = "Store \u00B7 Spotify Music";
-        lbl.style.color = "#ffffff";
-        fill.style.background = "linear-gradient(90deg, #0ea5e9, #67e8f9)";
-        fill.style.width = pct + "%";
-        val.textContent = pct + "%";
-      } else {
-        ico.textContent = "\u2B07";
-        ico.style.color = "#22d3ee";
-        lbl.textContent = (state.lang === "vi" ? "Đang tải \u00B7 " : "DL \u00B7 ") + "KumoSetup..13.exe";
-        lbl.style.color = "#ffffff";
-        fill.style.background = "linear-gradient(90deg, #0ea5e9, #bae6fd)";
-        fill.style.width = pct + "%";
-        val.textContent = "18.4 MB/s";
-      }
-
-      if (state.expanded) {
-        osd.classList.add("banner-on");
-        notch.classList.remove("state-osd");
-      } else {
-        osd.classList.remove("banner-on");
-        notch.classList.remove("state-micro", "state-lyrics-pill");
-        notch.classList.add("state-osd");
-      }
-    };
-
     state.expanded = false;
     state.pinnedCollapsed = true;
-    renderNotch();
-    applyFrame(false);
+    renderAll();
 
-    state.dlInterval = setInterval(() => {
-      pct = Math.min(100, pct + 19);
+    let pct = 12;
+    const step = () => {
       if (pct >= 100) {
         clearInterval(state.dlInterval);
-        applyFrame(true);
-        state.osdTimer = setTimeout(() => {
-          osd.classList.remove("banner-on");
-          notch.classList.remove("state-osd");
-          renderNotch();
-        }, 2600);
-      } else {
-        applyFrame(false);
+        showOsd("✓", "#4ade80",
+          (state.lang === "vi" ? "Tải xong · " : "Saved · ") + (isStore ? "Spotify Music" : "KumoSetup..13.exe"),
+          "#4ade80", "linear-gradient(90deg,#10b981,#4ade80)", 100, isStore ? "100%" : "210 KB", 2600);
+        return;
       }
-    }, 340);
+      if (isStore) {
+        showOsd("🛍", "#38bdf8", "Store · Spotify Music", "#fff", "linear-gradient(90deg,#0ea5e9,#67e8f9)", pct, pct + "%", 5000);
+      } else {
+        showOsd("⬇", "#22d3ee", (state.lang === "vi" ? "Đang tải · " : "DL · ") + "KumoSetup..13.exe", "#fff", "linear-gradient(90deg,#0ea5e9,#bae6fd)", pct, "21.4 MB/s", 5000);
+      }
+      pct = Math.min(100, pct + 22);
+    };
+    step();
+    state.dlInterval = setInterval(step, 360);
   }
 
-  // ===== 4. Wire Interactive Controls =====
-  function initInteractions() {
+  function setPreset(key) {
+    state.modeKey = key;
+    state.autoMinimal = false;
+    $("#winChrome").classList.remove("maximized");
+    if (key === "normal") {
+      state.expanded = false; state.pinnedCollapsed = true; state.playing = false; state.lyricsSplit = false;
+    } else if (key === "colMusic") {
+      state.expanded = false; state.pinnedCollapsed = true; state.playing = true; state.lyricsSplit = false;
+    } else if (key === "colLyrics") {
+      state.expanded = false; state.pinnedCollapsed = true; state.playing = true; state.lyricsSplit = true;
+    } else if (key === "expLyrics") {
+      state.expanded = true; state.pinnedCollapsed = false; state.playing = true; state.lyricsSplit = true; state.page = 0;
+    } else if (key === "expSys") {
+      state.expanded = true; state.pinnedCollapsed = false; state.page = 5;
+    }
+    renderAll();
+  }
+
+  function init() {
+    $("#modeNormal").addEventListener("click", () => setPreset("normal"));
+    $("#modeColMusic").addEventListener("click", () => setPreset("colMusic"));
+    $("#modeColLyrics").addEventListener("click", () => setPreset("colLyrics"));
+    $("#modeExpLyrics").addEventListener("click", () => setPreset("expLyrics"));
+    $("#modeExpSys").addEventListener("click", () => setPreset("expSys"));
+
+    $("#trigDlBrowser").addEventListener("click", () => simulateDownload(false));
+    $("#wcDlBtn").addEventListener("click", () => simulateDownload(false));
+    $("#trigDlStore").addEventListener("click", () => simulateDownload(true));
+    $("#tbStore").addEventListener("click", () => simulateDownload(true));
+
+    $("#trigVol").addEventListener("click", () => {
+      state.muted = false; state.volume = Math.min(100, state.volume + 8);
+      showOsd("🔊", "#fff", (state.lang === "vi" ? "Âm lượng ▲" : "Volume ▲"), "#fff", "#ffffff", state.volume, state.volume + "%");
+    });
+    $("#tbVolTray").addEventListener("click", () => $("#trigVol").click());
+    $("#trigBri").addEventListener("click", () => {
+      state.brightness = state.brightness >= 100 ? 50 : state.brightness + 25;
+      showOsd("☀", "#fbbf24", (state.lang === "vi" ? "Độ sáng ▲" : "Brightness ▲"), "#fff", "linear-gradient(90deg,#f59e0b,#fde047)", state.brightness, state.brightness + "%");
+    });
+
+    const toggleSet = () => $("#kumoSettingsWin").classList.toggle("open");
+    $("#trigSettings").addEventListener("click", toggleSet);
+    $("#knOpenSettings").addEventListener("click", (e) => { e.stopPropagation(); toggleSet(); });
+    $("#tbKumo").addEventListener("click", toggleSet);
+    $("#deskKumo").addEventListener("click", toggleSet);
+    $("#kswClose").addEventListener("click", () => $("#kumoSettingsWin").classList.remove("open"));
+    $$(".ksw-tog").forEach(t => t.addEventListener("click", () => t.classList.toggle("off")));
+
+    $("#trigWall").addEventListener("click", () => {
+      const sc = $("#win11Screen");
+      sc.dataset.wall = sc.dataset.wall === "dark" ? "light" : "dark";
+    });
+
+    // Notch hover / click
     const notch = $("#kumoNotch");
-    notch.addEventListener("mouseenter", () => {
-      if (!state.pinnedCollapsed) { state.expanded = true; renderNotch(); }
+    notch.addEventListener("click", () => {
+      if (!state.expanded) { state.expanded = true; state.pinnedCollapsed = false; renderAll(); }
     });
-    notch.addEventListener("click", (e) => {
-      if (!state.expanded) {
-        state.pinnedCollapsed = false;
-        state.expanded = true;
-        renderNotch();
-      }
-    });
-    $("#desktopViewport").addEventListener("click", (e) => {
-      if (e.target.closest("#kumoNotch") || e.target.closest("#simSettingsModal")) return;
-      state.expanded = false;
-      renderNotch();
+    $("#win11Screen").addEventListener("click", (e) => {
+      if (e.target.closest("#kumoNotch") || e.target.closest("#kumoSettingsWin")) return;
+      if (state.expanded) { state.expanded = false; renderAll(); }
     });
 
-    $("#btnPrevPage").addEventListener("click", (e) => { e.stopPropagation(); state.page = (state.page + 5) % 6; renderNotch(); });
-    $("#btnNextPage").addEventListener("click", (e) => { e.stopPropagation(); state.page = (state.page + 1) % 6; renderNotch(); });
-    $$("#knDots i").forEach((dot, idx) => dot.addEventListener("click", (e) => { e.stopPropagation(); state.page = idx; renderNotch(); }));
+    // Notch internal controls
+    $("#btnPrevPage").addEventListener("click", (e) => { e.stopPropagation(); state.page = (state.page + 5) % 6; renderAll(); });
+    $("#btnNextPage").addEventListener("click", (e) => { e.stopPropagation(); state.page = (state.page + 1) % 6; renderAll(); });
+    $$("#knDots i").forEach((d, i) => d.addEventListener("click", (e) => { e.stopPropagation(); state.page = i; renderAll(); }));
 
-    $$("[data-goto-page]").forEach(btn => btn.addEventListener("click", () => {
-      state.pinnedCollapsed = false;
-      state.autoMinimal = false;
-      $("#simBrowser").classList.remove("maximized");
-      state.expanded = true;
-      state.page = Number(btn.dataset.gotoPage);
-      renderNotch();
-    }));
-
-    $("#btnCollapsePill").addEventListener("click", () => {
-      state.expanded = false;
-      state.autoMinimal = false;
-      state.pinnedCollapsed = true;
-      $("#simBrowser").classList.remove("maximized");
-      renderNotch();
+    $("#btnPlay").addEventListener("click", (e) => { e.stopPropagation(); state.playing = !state.playing; renderAll(); });
+    $("#btnPrevTrack").addEventListener("click", (e) => { e.stopPropagation(); state.trackIdx = (state.trackIdx + 2) % 3; state.posSec = 0; renderAll(); });
+    $("#btnNextTrack").addEventListener("click", (e) => { e.stopPropagation(); state.trackIdx = (state.trackIdx + 1) % 3; state.posSec = 0; renderAll(); });
+    $("#btnLyrics").addEventListener("click", (e) => { e.stopPropagation(); state.lyricsSplit = !state.lyricsSplit; renderAll(); });
+    $("#btnMute").addEventListener("click", (e) => {
+      e.stopPropagation(); state.muted = !state.muted;
+      showOsd(state.muted ? "🔇" : "🔊", state.muted ? "#f87171" : "#fff", state.muted ? "Đã tắt tiếng" : "Âm lượng", state.muted ? "#f87171" : "#fff", state.muted ? "#f87171" : "#fff", state.muted ? 0 : state.volume, state.muted ? "Tắt" : state.volume + "%");
+      renderAll();
     });
-
-    $("#btnLyricsCollapsedDemo").addEventListener("click", () => {
-      state.lyricsSplit = true;
-      state.playing = true;
-      state.autoMinimal = false;
-      state.expanded = false;
-      state.pinnedCollapsed = true;
-      $("#simBrowser").classList.remove("maximized");
-      renderNotch();
-    });
-
-    // Music buttons
-    $("#btnPlay").addEventListener("click", (e) => { e.stopPropagation(); state.playing = !state.playing; renderNotch(); });
-    $("#btnPrevTrack").addEventListener("click", (e) => { e.stopPropagation(); state.trackIdx = (state.trackIdx + TRACKS.length - 1) % TRACKS.length; state.posSec = 0; renderNotch(); });
-    $("#btnNextTrack").addEventListener("click", (e) => { e.stopPropagation(); state.trackIdx = (state.trackIdx + 1) % TRACKS.length; state.posSec = 0; renderNotch(); });
-    $("#btnLyrics").addEventListener("click", (e) => { e.stopPropagation(); state.lyricsSplit = !state.lyricsSplit; renderNotch(); });
-    $("#btnMute").addEventListener("click", (e) => { e.stopPropagation(); triggerOsd("vol", 0); });
     $("#musSeekBar").addEventListener("click", (e) => {
       e.stopPropagation();
       const r = e.currentTarget.getBoundingClientRect();
-      const f = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width));
-      state.posSec = Math.floor(f * TRACKS[state.trackIdx].dur);
-      renderNotch();
+      state.posSec = Math.floor(Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)) * TRACKS[state.trackIdx].dur);
+      renderAll();
     });
 
-    // System Monitor cards
-    $("#sysHeroBox").addEventListener("click", () => { state.sysMetric = 0; renderNotch(); });
-    $$(".m-row").forEach(r => r.addEventListener("click", (e) => { e.stopPropagation(); state.sysMetric = Number(r.dataset.m); renderNotch(); }));
-    $("#btnMascotToggle").addEventListener("click", (e) => {
-      e.stopPropagation();
-      state.mascotOn = !state.mascotOn;
-      if (state.mascotOn) { state.lyricsSplit = false; state.expanded = false; state.pinnedCollapsed = true; }
-      renderNotch();
+    // Windows 11 Chrome Window caption buttons
+    const wc = $("#winChrome");
+    $("#wcMax").addEventListener("click", () => {
+      const mx = !wc.classList.contains("maximized");
+      wc.classList.remove("minimized");
+      wc.classList.toggle("maximized", mx);
+      state.autoMinimal = mx;
+      if (mx) state.expanded = false;
+      renderAll();
+    });
+    $("#wcMin").addEventListener("click", () => { wc.classList.add("minimized"); state.autoMinimal = false; renderAll(); });
+    $("#wcClose").addEventListener("click", () => { wc.classList.add("minimized"); state.autoMinimal = false; renderAll(); });
+    $("#tbChrome").addEventListener("click", () => { wc.classList.remove("minimized"); renderAll(); });
+
+    // YouTube Search & Playlist inside Windows Chrome
+    const doSearch = () => {
+      const q = ($("#ytSearchInput").value || "").toLowerCase();
+      if (q.includes("vết") || q.includes("vet") || q.includes("fishy")) state.trackIdx = 1;
+      else if (q.includes("mây") || q.includes("may") || q.includes("kumo")) state.trackIdx = 2;
+      else state.trackIdx = 0;
+      state.playing = true; state.posSec = 2;
+      if (state.modeKey === "normal") state.modeKey = "colLyrics", state.lyricsSplit = true;
+      renderAll();
+    };
+    $("#ytSearchBtn").addEventListener("click", doSearch);
+    $("#ytSearchInput").addEventListener("keydown", (e) => { if (e.key === "Enter") doSearch(); });
+    $$("[data-pick-track]").forEach(b => b.addEventListener("click", () => {
+      state.trackIdx = Number(b.dataset.pickTrack); state.playing = true; state.posSec = 5;
+      if (state.modeKey === "normal") { state.modeKey = "colLyrics"; state.lyricsSplit = true; }
+      renderAll();
+    }));
+    $("#ytPlaylist").addEventListener("click", (e) => {
+      const it = e.target.closest("[data-sel-track]");
+      if (it) { state.trackIdx = Number(it.dataset.selTrack); state.playing = true; state.posSec = 5; renderAll(); }
+    });
+    $("#ytVideoBox").addEventListener("click", () => {
+      state.playing = !state.playing;
+      if (state.playing && state.modeKey === "normal") state.modeKey = "colMusic";
+      renderAll();
     });
 
-    // Pomodoro
-    $("#btnPomoRun").addEventListener("click", (e) => { e.stopPropagation(); state.pomoRun = !state.pomoRun; renderNotch(); });
-    $("#btnPomoMinus").addEventListener("click", (e) => { e.stopPropagation(); state.pomoSec = Math.max(60, state.pomoSec - 300); renderNotch(); });
-    $("#btnPomoPlus").addEventListener("click", (e) => { e.stopPropagation(); state.pomoSec = Math.min(5400, state.pomoSec + 300); renderNotch(); });
-    $("#btnPomoReset").addEventListener("click", (e) => { e.stopPropagation(); state.pomoRun = false; state.pomoSec = 1500; renderNotch(); });
-
-    // Water
-    $("#btnWaterAdd").addEventListener("click", (e) => { e.stopPropagation(); state.waterMl += 250; renderNotch(); });
-    $("#btnWaterSub").addEventListener("click", (e) => { e.stopPropagation(); state.waterMl = Math.max(0, state.waterMl - 250); renderNotch(); });
-
-    // Shelf
-    $("#btnShelfAdd").addEventListener("click", (e) => {
-      e.stopPropagation();
-      const samples = ["Slide_ThuyetTrinh.pptx", "Anh_Chup_ManHinh.png", "GhiChu_Hop.docx", "Source_Patch.zip"];
-      const pick = samples[state.shelf.length % samples.length];
-      if (state.shelf.length < 4) state.shelf.push(pick);
-      renderNotch();
-    });
-    $("#btnShelfClear").addEventListener("click", (e) => { e.stopPropagation(); state.shelf = []; renderNotch(); });
-    $("#shelfDrop").addEventListener("click", (e) => {
-      const idx = e.target.dataset.delShelf;
-      if (idx !== undefined) { e.stopPropagation(); state.shelf.splice(Number(idx), 1); renderNotch(); }
-    });
-
-    // Todo
-    $("#btnTodoAdd").addEventListener("click", (e) => {
-      e.stopPropagation();
-      const samples = ["Kiểm tra bản cài đè v1.1.13", "Uống đủ 2 lít nước hôm nay", "Đẩy code lên GitHub Actions"];
-      state.todos.unshift({ text: samples[state.todos.length % samples.length], done: false });
-      renderNotch();
-    });
+    // Other page buttons
+    $("#btnPomoRun").addEventListener("click", (e) => { e.stopPropagation(); state.pomoRun = !state.pomoRun; renderAll(); });
+    $("#btnPomoMinus").addEventListener("click", (e) => { e.stopPropagation(); state.pomoSec = Math.max(60, state.pomoSec - 300); renderAll(); });
+    $("#btnPomoPlus").addEventListener("click", (e) => { e.stopPropagation(); state.pomoSec += 300; renderAll(); });
+    $("#btnWaterAdd").addEventListener("click", (e) => { e.stopPropagation(); state.waterMl += 250; renderAll(); });
+    $("#btnWaterSub").addEventListener("click", (e) => { e.stopPropagation(); state.waterMl = Math.max(0, state.waterMl - 250); renderAll(); });
+    $("#btnShelfAdd").addEventListener("click", (e) => { e.stopPropagation(); if (state.shelf.length < 4) state.shelf.push("TaiLieu_" + (state.shelf.length + 1) + ".zip"); renderAll(); });
+    $("#btnTodoAdd").addEventListener("click", (e) => { e.stopPropagation(); state.todos.unshift({ text: "Việc mới #" + (state.todos.length + 1), done: false }); renderAll(); });
     $("#todoList").addEventListener("click", (e) => {
       e.stopPropagation();
-      if (e.target.dataset.delTodo !== undefined) {
-        state.todos.splice(Number(e.target.dataset.delTodo), 1);
-      } else {
-        const row = e.target.closest("[data-toggle-todo]");
-        if (row) {
-          const i = Number(row.dataset.toggleTodo);
-          state.todos[i].done = !state.todos[i].done;
-        }
-      }
-      renderNotch();
+      const row = e.target.closest("[data-tog-todo]");
+      if (row) { const i = Number(row.dataset.togTodo); state.todos[i].done = !state.todos[i].done; renderAll(); }
     });
+    $$(".m-row").forEach(r => r.addEventListener("click", (e) => { e.stopPropagation(); state.sysMetric = Number(r.dataset.m); renderAll(); }));
+    $("#btnMascotToggle").addEventListener("click", (e) => { e.stopPropagation(); state.mascotOn = !state.mascotOn; state.expanded = false; state.playing = false; renderAll(); });
 
-    // Trigger Deck buttons
-    $("#trigVolUp").addEventListener("click", () => triggerOsd("vol", +8));
-    $("#trigVolDown").addEventListener("click", () => triggerOsd("vol", -8));
-    $("#trigMute").addEventListener("click", () => triggerOsd("vol", 0));
-    $("#trigBri").addEventListener("click", () => triggerOsd("bri", +20));
-    $("#trigBatChg").addEventListener("click", () => triggerOsd("bat_chg", 0));
-    $("#trigBatLow").addEventListener("click", () => triggerOsd("bat_low", 0));
-    const btnDlFile = $("#trigDlFile");
-    if (btnDlFile) btnDlFile.addEventListener("click", () => triggerDownloadSim(false));
-    const btnDlStore = $("#trigDlStore");
-    if (btnDlStore) btnDlStore.addEventListener("click", () => triggerDownloadSim(true));
-
-    $("#trigAutoMin").addEventListener("click", () => {
-      state.autoMinimal = !state.autoMinimal;
-      if (state.autoMinimal) { state.expanded = false; state.pinnedCollapsed = true; }
-      $("#simBrowser").classList.toggle("maximized", state.autoMinimal);
-      renderNotch();
-    });
-
-    const toggleSettings = () => $("#simSettingsModal").classList.toggle("open");
-    $("#trigSettings").addEventListener("click", toggleSettings);
-    $("#knOpenSettings").addEventListener("click", (e) => { e.stopPropagation(); toggleSettings(); });
-    $("#ssmClose").addEventListener("click", () => $("#simSettingsModal").classList.remove("open"));
-    $("#tbKumoIco").addEventListener("click", toggleSettings);
-    $$(".ssm-toggle").forEach(t => t.addEventListener("click", () => t.classList.toggle("off")));
-
-    // Wallpaper switcher
-    $$("[data-set-wall]").forEach(btn => btn.addEventListener("click", () => {
-      $$("[data-set-wall]").forEach(b => b.classList.remove("active"));
-      btn.classList.add("active");
-      $("#desktopViewport").dataset.wall = btn.dataset.setWall;
-    }));
-
-    // VI / EN Language Switcher
+    // VI / EN switch
     $$("[data-lang-btn]").forEach(btn => btn.addEventListener("click", () => {
       state.lang = btn.dataset.langBtn;
       $$("[data-lang-btn]").forEach(b => b.classList.toggle("active", b.dataset.langBtn === state.lang));
-      $$("[data-vi]").forEach(el => {
-        el.textContent = state.lang === "vi" ? el.dataset.vi : (el.dataset.en || el.dataset.vi);
-      });
-      renderNotch();
+      $$("[data-vi]").forEach(el => { el.textContent = state.lang === "vi" ? el.dataset.vi : (el.dataset.en || el.dataset.vi); });
+      renderAll();
     }));
 
     setInterval(() => {
-      if (state.playing) {
-        state.posSec = (state.posSec + 1) % TRACKS[state.trackIdx].dur;
-      }
-      if (state.pomoRun && state.pomoSec > 0) {
-        state.pomoSec--;
-      }
-      renderNotch();
+      if (state.playing) state.posSec = (state.posSec + 1) % TRACKS[state.trackIdx].dur;
+      if (state.pomoRun && state.pomoSec > 0) state.pomoSec--;
+      renderAll();
     }, 1000);
   }
 
   document.addEventListener("DOMContentLoaded", () => {
-    initInteractions();
-    renderNotch();
-    syncLatestRelease();
+    init();
+    renderAll();
+    syncRelease();
   });
 })();

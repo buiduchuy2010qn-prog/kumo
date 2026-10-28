@@ -3,517 +3,404 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Kumo 雲 — Đám Mây Tai Thỏ Sống & Bảng Quản Lý Dịu Mắt cho Windows 10/11</title>
-  <meta name="description" content="Kumo biến cạnh trên màn hình Windows 10/11 thành Đám Mây Sống sắc nét (PerMonitorV2 ClearType): Lời nhạc đồng bộ ngay cả khi thu nhỏ, Theo dõi CPU/RAM/GPU thời gian thực, OSD Âm lượng trắng tinh, tự né Tab trình duyệt và cài đè 1 chạm." />
-  <meta property="og:title" content="Kumo 雲 — Living Cloud Island for Windows 10 & 11" />
-  <meta property="og:description" content="Tai thỏ Đen cổ điển sắc nét kết hợp Bảng quản lý Sáng dịu mắt. Hỗ trợ lời nhạc thu nhỏ, theo dõi phần cứng, Pomodoro, nhắc uống nước và kệ tệp." />
+  <title>Kumo — Tai thỏ cho Windows 10 &amp; 11 (Nhạc, Lời bài hát, Tải tệp, Hệ thống)</title>
+  <meta name="description" content="Kumo là ứng dụng tai thỏ (Dynamic Island) gọn nhẹ (~210 KB) cho Windows 10 và Windows 11. Xem giờ, hiện lời nhạc đồng bộ Spotify/YouTube cả khi thu nhỏ, thanh tiến trình tải tệp Chrome/Microsoft Store, theo dõi CPU/RAM và bảng cài đặt sáng dịu mắt." />
+  <meta name="keywords" content="tai thỏ cho Windows, tai thỏ Windows 11, tai thỏ Windows 10, Dynamic Island cho Windows, Kumo, Kumo Windows, Nusa Windows, rama2555/nusa, buiduchuy2010qn-prog/kumo, app hiện lời nhạc trên màn hình máy tính, thanh trạng thái tai thỏ PC laptop, tải KumoSetup" />
+  <meta name="author" content="buiduchuy2010qn-prog" />
+  <link rel="canonical" href="https://buiduchuy2010qn-prog.github.io/kumo/" />
+  <meta property="og:type" content="website" />
+  <meta property="og:title" content="Kumo — Tai thỏ gọn nhẹ cho Windows 10 &amp; 11" />
+  <meta property="og:description" content="Tai thỏ đen rõ nét kết hợp bảng quản lý nền sáng: hiện lời nhạc khi thu nhỏ, báo tải tệp trình duyệt &amp; Microsoft Store, theo dõi phần cứng, không che tab." />
   <meta property="og:image" content="https://buiduchuy2010qn-prog.github.io/kumo/logo.png" />
   <meta property="og:url" content="https://buiduchuy2010qn-prog.github.io/kumo/" />
+  <script type="application/ld+json">
+  {"@context":"https://schema.org","@type":"SoftwareApplication","name":"Kumo","operatingSystem":"Windows 10, Windows 11","applicationCategory":"UtilitiesApplication","url":"https://buiduchuy2010qn-prog.github.io/kumo/","downloadUrl":"https://github.com/buiduchuy2010qn-prog/kumo/releases/latest","softwareVersion":"1.1.13","author":{"@type":"Person","name":"buiduchuy2010qn-prog","url":"https://github.com/buiduchuy2010qn-prog"},"isBasedOn":"https://github.com/rama2555/nusa","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}
+  </script>
   <link rel="icon" type="image/png" href="./logo.png" />
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@600;700&family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="./styles.css" />
 </head>
 <body>
 
-  <!-- Floating Glass Header -->
-  <header class="site-header">
-    <div class="container">
-      <div class="nav-shell">
-        <a href="#" class="brand-link">
-          <img src="./logo.png" alt="Kumo Logo" />
-          <span>Kumo</span>
-          <span class="brand-tag" data-ver-tag>v1.1.13</span>
-        </a>
-        <nav class="nav-links">
-          <a href="#playground" data-vi="Trải nghiệm trực tiếp" data-en="Live Playground">Trải nghiệm trực tiếp</a>
-          <a href="#architecture" data-vi="Điểm khác biệt" data-en="Architecture">Điểm khác biệt</a>
-          <a href="#workflow" data-vi="Cài đặt & Cài đè" data-en="Overwrite Setup">Cài đặt & Cài đè</a>
-          <a href="#faq" data-vi="Hỏi đáp" data-en="FAQ">Hỏi đáp</a>
-        </nav>
-        <div class="nav-actions">
-          <div class="lang-pill" role="group" aria-label="Language">
-            <button type="button" class="active" data-lang-btn="vi">VI</button>
-            <button type="button" data-lang-btn="en">EN</button>
-          </div>
-          <a class="btn-sm-dl" data-dl-link href="https://github.com/buiduchuy2010qn-prog/kumo/releases/latest/download/KumoSetup-v1.1.13.exe">
-            <span>⬇</span>
-            <span data-vi="Tải miễn phí" data-en="Download">Tải miễn phí</span>
-          </a>
+  <header class="topbar">
+    <div class="wrap topbar-in">
+      <a href="#" class="brand">
+        <img src="./logo.png" alt="Kumo" />
+        <span>Kumo</span>
+        <span class="ver-pill" data-ver-tag>v1.1.13</span>
+      </a>
+      <nav class="topnav">
+        <a href="#demo" data-vi="Dùng thử trên Windows" data-en="Windows Demo">Dùng thử trên Windows</a>
+        <a href="#features" data-vi="Tính năng" data-en="Features">Tính năng</a>
+        <a href="#credits" data-vi="Giới thiệu &amp; Credits" data-en="About &amp; Credits">Giới thiệu &amp; Credits</a>
+        <a href="https://github.com/buiduchuy2010qn-prog/kumo" target="_blank" rel="noopener">GitHub ↗</a>
+      </nav>
+      <div class="top-right">
+        <div class="lang-switch">
+          <button type="button" class="active" data-lang-btn="vi">VI</button>
+          <button type="button" data-lang-btn="en">EN</button>
         </div>
+        <a class="btn-dl-sm" data-dl-link href="https://github.com/buiduchuy2010qn-prog/kumo/releases/latest/download/KumoSetup-v1.1.13.exe">
+          <span data-vi="Tải xuống (.exe)" data-en="Download (.exe)">Tải xuống (.exe)</span>
+        </a>
       </div>
     </div>
   </header>
 
-  <!-- Asymmetric Editorial Hero + Live Release Card -->
-  <section class="hero-sec">
-    <div class="container">
-      <div class="hero-grid">
+  <main class="wrap">
+    <section class="hero">
+      <div class="hero-row">
         <div>
-          <div class="eyebrow">
-            <span class="pulse"></span>
-            <span data-vi="BẢN GỐC NATIVE X64 CHO WINDOWS 10 & 11 · MÃ NGUỒN MỞ" data-en="NATIVE X64 FOR WINDOWS 10 & 11 · OPEN SOURCE">BẢN GỐC NATIVE X64 CHO WINDOWS 10 & 11 · MÃ NGUỒN MỞ</span>
-          </div>
-          <h1 class="hero-title">
-            <span data-vi="Đám Mây Sống tinh gọn" data-en="A Living Cloud Island">Đám Mây Sống tinh gọn</span><br />
-            <span class="grad" data-vi="ngay đỉnh màn hình Windows." data-en="crafted for your Windows top edge.">ngay đỉnh màn hình Windows.</span>
-          </h1>
-          <p class="hero-desc" data-vi="Kumo kết hợp chiếc Tai Thỏ Đen cổ điển sắc nét (chuẩn PerMonitorV2 ClearType không nhòe DPI) cùng Bảng Quản Lý Sáng Dịu Mắt. Hiện lời nhạc ngay cả khi thu nhỏ, theo dõi CPU/RAM/GPU trực tiếp và tự thu gọn khi cửa sổ chạm đỉnh." data-en="Kumo pairs a razor-sharp Classic Black Notch (PerMonitorV2 ClearType) with an Eye-Care Daylight Control Panel. View synced lyrics even while collapsed, monitor live CPU/RAM/GPU, and never block browser tabs.">
-            Kumo kết hợp chiếc Tai Thỏ Đen cổ điển sắc nét (chuẩn PerMonitorV2 ClearType không nhòe DPI) cùng Bảng Quản Lý Sáng Dịu Mắt. Hiện lời nhạc ngay cả khi thu nhỏ, theo dõi CPU/RAM/GPU trực tiếp và tự thu gọn khi cửa sổ chạm đỉnh.
+          <h1 data-vi="Tai thỏ nhỏ gọn cho màn hình Windows 10 &amp; 11." data-en="A compact notch for Windows 10 &amp; 11.">Tai thỏ nhỏ gọn cho màn hình Windows 10 &amp; 11.</h1>
+          <p data-vi="Xem giờ, hiện lời nhạc đồng bộ cả khi thu nhỏ, báo tiến trình tải tệp Chrome / Microsoft Store và theo dõi CPU/RAM — tự thu mảnh khi chạm tab trình duyệt." data-en="Clock, uncut synced lyrics even when collapsed, live browser &amp; Microsoft Store download bar, and CPU/RAM stats — auto-shrinking around maximized tabs.">
+            Xem giờ, hiện lời nhạc đồng bộ cả khi thu nhỏ, báo tiến trình tải tệp Chrome / Microsoft Store và theo dõi CPU/RAM — tự thu mảnh khi chạm tab trình duyệt.
           </p>
-          <div class="cta-row">
-            <a class="btn-primary" data-dl-link href="https://github.com/buiduchuy2010qn-prog/kumo/releases/latest/download/KumoSetup-v1.1.13.exe">
+        </div>
+        <div class="hero-cta">
+          <div class="cta-btns">
+            <a class="btn-main" data-dl-link href="https://github.com/buiduchuy2010qn-prog/kumo/releases/latest/download/KumoSetup-v1.1.13.exe">
               <span>⬇</span>
               <span data-exe-name>KumoSetup-v1.1.13.exe</span>
             </a>
-            <a class="btn-ghost" href="#playground" data-vi="Dùng thử ngay trên Web ↘" data-en="Try Interactive Demo ↘">Dùng thử ngay trên Web ↘</a>
-            <a class="btn-ghost" href="https://github.com/buiduchuy2010qn-prog/kumo" target="_blank" rel="noopener">GitHub ↗</a>
+            <a class="btn-sub" href="https://github.com/buiduchuy2010qn-prog/kumo" target="_blank" rel="noopener">GitHub</a>
           </div>
+          <span class="cta-meta"><span data-exe-size>210 KB</span> · Windows 10/11 x64 · <span data-vi="Cài đè giữ dữ liệu" data-en="In-place overwrite">Cài đè giữ dữ liệu</span></span>
         </div>
+      </div>
+    </section>
 
-        <aside class="release-meta-card">
-          <div class="rm-top">
-            <strong style="font-size:15px;" data-vi="Bản phát hành tự động mới nhất" data-en="Latest Automated Cloud Build">Bản phát hành tự động mới nhất</strong>
-            <span class="rm-badge" data-ver-tag>v1.1.13</span>
-          </div>
-          <div class="rm-stats">
-            <div class="rm-stat">
-              <strong data-exe-size>203 KB</strong>
-              <span data-vi="Siêu nhẹ (Native)" data-en="Ultra-lightweight">Siêu nhẹ (Native)</span>
-            </div>
-            <div class="rm-stat">
-              <strong>0% CPU</strong>
-              <span data-vi="Khi nghỉ nhàn rỗi" data-en="At idle rest">Khi nghỉ nhàn rỗi</span>
-            </div>
-            <div class="rm-stat">
-              <strong>100%</strong>
-              <span data-vi="Hỗ trợ Cài Đè" data-en="In-Place Overwrite">Hỗ trợ Cài Đè</span>
-            </div>
-          </div>
-          <p class="rm-note" data-vi="✓ Cài đặt trong 1 giây không cần quyền Admin · Giữ nguyên dữ liệu cá nhân khi nâng cấp · Hỗ trợ màn hình 100%–200% DPI sắc nét." data-en="✓ 1-second User-Scope setup without Admin UAC · Preserves all user data on overwrite · Native 100%–200% DPI ClearType.">
-            ✓ Cài đặt trong 1 giây không cần quyền Admin · Giữ nguyên dữ liệu cá nhân khi nâng cấp · Hỗ trợ màn hình 100%–200% DPI sắc nét.
-          </p>
-        </aside>
+    <section id="demo" class="demo-shell">
+      <div class="demo-toolbar">
+        <div class="dt-group">
+          <span class="dt-lbl" data-vi="Trạng thái:" data-en="State:">Trạng thái:</span>
+          <button class="tbtn active" id="modeNormal" data-vi="Thanh bình thường" data-en="Normal idle">Thanh bình thường</button>
+          <button class="tbtn" id="modeColMusic" data-vi="Thu nhỏ + Ảnh nhạc" data-en="Collapsed + Art">Thu nhỏ + Ảnh nhạc</button>
+          <button class="tbtn" id="modeColLyrics" data-vi="Thu nhỏ + Lời nhạc" data-en="Collapsed + Lyrics">Thu nhỏ + Lời nhạc</button>
+          <button class="tbtn" id="modeExpLyrics" data-vi="Mở rộng · Lời nhạc" data-en="Expanded · Lyrics">Mở rộng · Lời nhạc</button>
+          <button class="tbtn" id="modeExpSys" data-vi="Mở rộng · CPU/RAM" data-en="Expanded · System">Mở rộng · CPU/RAM</button>
+        </div>
+        <div class="dt-group">
+          <button class="tbtn" id="trigDlBrowser" data-vi="⬇ Tải tệp Chrome" data-en="⬇ Browser DL">⬇ Tải tệp Chrome</button>
+          <button class="tbtn" id="trigDlStore" data-vi="🛍 Tải App Store" data-en="🛍 Store DL">🛍 Tải App Store</button>
+          <button class="tbtn" id="trigVol" data-vi="Âm lượng +" data-en="Volume +">Âm lượng +</button>
+          <button class="tbtn" id="trigBri" data-vi="Độ sáng" data-en="Brightness">Độ sáng</button>
+          <button class="tbtn" id="trigSettings" data-vi="Bảng cài đặt trắng" data-en="Light Settings">Bảng cài đặt trắng</button>
+          <button class="tbtn" id="trigWall" data-vi="Đổi nền Win11" data-en="Wallpaper">Đổi nền Win11</button>
+        </div>
       </div>
 
-      <!-- INTERACTIVE WINDOWS 11 STUDIO SANDBOX -->
-      <div id="playground" class="studio-card">
-        <div class="studio-toolbar">
-          <div class="st-group">
-            <span class="st-label" data-vi="Chuyển nhanh 6 trang:" data-en="Switch 6 Pages:">Chuyển nhanh 6 trang:</span>
-            <button class="chip-btn active" data-goto-page="5">⚡ System</button>
-            <button class="chip-btn" data-goto-page="0">🎵 Music & Lyrics</button>
-            <button class="chip-btn" data-goto-page="1">🍅 Pomodoro</button>
-            <button class="chip-btn" data-goto-page="2">💧 Water</button>
-            <button class="chip-btn" data-goto-page="3">📂 Shelf</button>
-            <button class="chip-btn" data-goto-page="4">✅ To-Do</button>
-            <button class="chip-btn" id="btnLyricsCollapsedDemo" data-vi="💬 Thu nhỏ hiện Lời Nhạc" data-en="💬 Collapsed Lyrics">💬 Thu nhỏ hiện Lời Nhạc</button>
-            <button class="chip-btn" id="btnCollapsePill" data-vi="Thu gọn" data-en="Collapse">Thu gọn</button>
-          </div>
-          <div class="st-group">
-            <span class="st-label" data-vi="Nền:" data-en="Theme:">Nền:</span>
-            <button class="chip-btn" data-set-wall="daylight">🌤️ Sky</button>
-            <button class="chip-btn active" data-set-wall="cobalt">🌊 Win11</button>
-            <button class="chip-btn" data-set-wall="sunset">🌅 Sunset</button>
-          </div>
+      <div class="win11-screen" id="win11Screen" data-wall="dark">
+        <div class="win11-bloom"></div>
+        <div class="win11-icons">
+          <div class="d-icon"><svg viewBox="0 0 24 24" fill="none"><rect x="2" y="4" width="20" height="13" rx="2" fill="#38bdf8" stroke="#e0f2fe" stroke-width="1.3"/><path d="M8 20h8M12 17v3" stroke="#e2e8f0" stroke-width="1.6" stroke-linecap="round"/></svg><span>This PC</span></div>
+          <div class="d-icon"><svg viewBox="0 0 24 24" fill="none"><path d="M5 7h14l-1.2 13a1.5 1.5 0 0 1-1.5 1.3H7.7A1.5 1.5 0 0 1 6.2 20L5 7Z" fill="#94a3b8" fill-opacity="0.45" stroke="#e2e8f0" stroke-width="1.3"/><path d="M4 7h16M9 4h6" stroke="#f8fafc" stroke-width="1.4" stroke-linecap="round"/></svg><span>Recycle Bin</span></div>
+          <div class="d-icon" id="deskKumo"><img src="./logo.png" alt="Kumo" /><span>Kumo</span></div>
         </div>
-        <div class="desktop-viewport" id="desktopViewport" data-wall="cobalt">
-
-          <!-- THE LIVE PLAYABLE KUMO NOTCH -->
-          <div class="kumo-notch state-expanded" id="kumoNotch">
-            <div class="kn-clip">
-
-              <!-- Collapsed Glance / Live Synced Lyrics Pill -->
-              <div class="kn-collapsed">
-                <div class="kn-mini-art" id="knMiniArt"></div>
-                <div class="kn-col-center" id="knColCenter">12:55</div>
-                <div class="kn-eq"><span></span><span></span><span></span><span></span><span></span></div>
+        <div class="kumo-notch" id="kumoNotch">
+          <div class="kn-clip">
+            <div class="kn-collapsed">
+              <div class="kn-left-slot" id="knLeftSlot">
+                <svg class="kn-bat-ring" viewBox="0 0 20 20">
+                  <circle cx="10" cy="10" r="7.2" fill="none" stroke="rgba(255,255,255,0.22)" stroke-width="2.2"/>
+                  <circle cx="10" cy="10" r="7.2" fill="none" stroke="#4ade80" stroke-width="2.2" stroke-dasharray="36 46" stroke-linecap="round" transform="rotate(-90 10 10)"/>
+                  <path d="M10.6 6.2L7.8 10.3h2.3l-.7 3.5 2.8-4.1H9.9l.7-3.5z" fill="#4ade80"/>
+                </svg>
+                <img class="kn-mini-cover" id="knMiniCover" alt="Album cover" />
               </div>
-
-              <!-- Mascot Resting Eyes -->
-              <div class="kn-mascot-pill" id="knMascotPill">
-                <div class="kn-eye"></div>
-                <div class="kn-eye"></div>
+              <div class="kn-col-viewport" id="knColViewport">
+                <span class="kn-col-text" id="knColText">13:20</span>
               </div>
+              <div class="kn-eq idle" id="knColEq"><span></span><span></span><span></span><span></span><span></span></div>
+            </div>
 
-              <!-- Live Hardware OSD HUD (Pure White Volume / Amber Sun / Mint Battery) -->
-              <div class="kn-osd" id="knOsd">
-                <span class="osd-ico" id="osdIco">🔊</span>
-                <div class="osd-mid">
-                  <span class="osd-lbl" id="osdLbl">Âm lượng ▲</span>
-                  <div class="osd-track"><div class="osd-fill" id="osdFill" style="width:64%;"></div></div>
+            <div class="kn-mascot" id="knMascot"><div class="kn-eye"></div><div class="kn-eye"></div></div>
+
+            <div class="kn-osd" id="knOsd">
+              <span class="osd-ico" id="osdIco">🔊</span>
+              <div class="osd-mid">
+                <span class="osd-lbl" id="osdLbl">Âm lượng ▲</span>
+                <div class="osd-track"><div class="osd-fill" id="osdFill" style="width:68%;"></div></div>
+              </div>
+              <span class="osd-val" id="osdVal">68%</span>
+            </div>
+
+            <div class="kn-expanded">
+              <div class="kn-hdr">
+                <div class="kn-hdr-l">
+                  <div><span id="knTitle1">Now </span><span id="knTitle2" style="color:#38bdf8;">Playing</span></div>
+                  <span class="kn-bat-txt" id="knBatHdr">78% · Đang sạc</span>
                 </div>
-                <span class="osd-val" id="osdVal">64%</span>
+                <div class="kn-hdr-r">
+                  <span id="knDateHdr">28 Oct</span>
+                  <strong id="knTimeHdr">13:20</strong>
+                  <button class="kn-gear" id="knOpenSettings" title="Kumo Settings">⚙</button>
+                  <div class="kn-eq" id="knExpEq"><span></span><span></span><span></span><span></span><span></span></div>
+                </div>
               </div>
 
-              <!-- Expanded 6-Page Shell -->
-              <div class="kn-expanded">
-                <div class="kn-hdr">
-                  <div class="kn-hdr-left">
-                    <div><span id="knTitle1">System </span><span id="knTitle2" class="accent">Monitor</span></div>
-                    <span class="kn-bat" id="knBatHdr">⚡ 78% · Đang sạc</span>
+              <div class="kn-body">
+                <button class="kn-nav prev" id="btnPrevPage">‹</button>
+                <button class="kn-nav next" id="btnNextPage">›</button>
+
+                <div class="kn-page active" data-p="0">
+                  <div class="mus-main">
+                    <div class="mus-top">
+                      <img class="mus-cover-img" id="musCoverImg" alt="Cover" />
+                      <div class="mus-meta">
+                        <h5 id="musTitle">Hngle - Tìm em ft. Bảo Anh</h5>
+                        <p id="musArtist">HNGLE · YouTube</p>
+                      </div>
+                    </div>
+                    <div class="mus-seek">
+                      <span id="musCur">00:35</span>
+                      <div class="mus-bar" id="musSeekBar"><i id="musFill" style="width:24%;"></i></div>
+                      <span id="musRem">-03:56</span>
+                    </div>
+                    <div class="mus-ctls">
+                      <button class="ctl-btn lyr-on" id="btnLyrics">Lyrics</button>
+                      <button class="ctl-btn" id="btnPrevTrack">⏮</button>
+                      <button class="ctl-btn" id="btnPlay">⏸</button>
+                      <button class="ctl-btn" id="btnNextTrack">⏭</button>
+                      <button class="ctl-btn" id="btnMute">🔊</button>
+                    </div>
                   </div>
-                  <div class="kn-hdr-right">
-                    <span id="knDateHdr">28 Oct</span>
-                    <strong id="knTimeHdr">12:55</strong>
-                    <button class="kn-icon-btn" id="knOpenSettings" title="Mở Kumo Settings">⚙</button>
-                    <div class="kn-eq"><span></span><span></span><span></span><span></span><span></span></div>
-                  </div>
+                  <div class="mus-lyrics-pane" id="musLyricsPane"></div>
                 </div>
 
-                <div class="kn-body">
-                  <button class="kn-nav prev" id="btnPrevPage" aria-label="Trang trước">‹</button>
-                  <button class="kn-nav next" id="btnNextPage" aria-label="Trang sau">›</button>
-
-                  <!-- Page 0: Music & Synced Lyrics -->
-                  <div class="kn-page" data-p="0">
-                    <div class="mus-main">
-                      <div class="mus-top">
-                        <div class="mus-art" id="musArt">🎵</div>
-                        <div class="mus-meta">
-                          <h5 id="musTitle">Mình Là Người Yêu Nhau</h5>
-                          <p id="musArtist">Indie Acoustic · YouTube Music</p>
-                        </div>
-                      </div>
-                      <div class="mus-seek">
-                        <span id="musCur">00:06</span>
-                        <div class="mus-bar" id="musSeekBar"><i id="musFill"></i></div>
-                        <span id="musRem">-03:32</span>
-                      </div>
-                      <div class="mus-ctls">
-                        <button class="ctl-btn lyr-on" id="btnLyrics" title="Bật/Tắt Lời Nhạc (Cả khi thu nhỏ!)">💬 Lyrics</button>
-                        <button class="ctl-btn" id="btnPrevTrack">⏮</button>
-                        <button class="ctl-btn" id="btnPlay">⏸</button>
-                        <button class="ctl-btn" id="btnNextTrack">⏭</button>
-                        <button class="ctl-btn" id="btnMute" title="Bật/Tắt tiếng">🔊</button>
-                      </div>
-                    </div>
-                    <div class="mus-lyrics-pane" id="musLyricsPane"></div>
-                  </div>
-
-                  <!-- Page 1: Pomodoro -->
-                  <div class="kn-page" data-p="1">
-                    <div class="pomo-wrap">
-                      <div class="pomo-ring">🍅</div>
-                      <div class="pomo-ctrl">
-                        <div style="display:flex;align-items:center;justify-content:center;gap:10px;">
-                          <button class="pill-mini" id="btnPomoMinus">−5m</button>
-                          <div class="pomo-time" id="pomoTime">25:00</div>
-                          <button class="pill-mini" id="btnPomoPlus">+5m</button>
-                        </div>
-                        <div class="pomo-pills">
-                          <button class="pill-mini" id="btnPomoRun" style="background:#f43f5e;">▶ Start</button>
-                          <button class="pill-mini" id="btnPomoReset">↻ Reset</button>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  <!-- Page 2: Water Reminder -->
-                  <div class="kn-page" data-p="2">
-                    <div class="water-wrap">
-                      <div style="flex:1;">
-                        <div style="font-size:23px;font-weight:800;" id="waterReadout">1.5 / 2.0 L</div>
-                        <div style="font-size:11.5px;color:#cbd5e1;" id="waterPct">75% mục tiêu hôm nay</div>
-                        <div class="sys-bar" style="margin:6px 0;"><i id="waterBarFill" style="width:75%;background:linear-gradient(90deg,#38bdf8,#2563eb);"></i></div>
-                        <div style="display:flex;gap:6px;">
-                          <button class="pill-mini blue" id="btnWaterAdd">+ 250 ml</button>
-                          <button class="pill-mini" id="btnWaterSub">−</button>
-                        </div>
-                      </div>
-                      <div class="water-bars">
-                        <i style="height:26px;"></i><i style="height:38px;"></i><i style="height:32px;"></i>
-                        <i style="height:46px;"></i><i style="height:35px;"></i><i style="height:42px;"></i>
-                        <i id="waterTodayBar" style="height:38px;background:#4ade80;"></i>
-                      </div>
-                    </div>
-                  </div>
-
-                  <!-- Page 3: File Shelf -->
-                  <div class="kn-page" data-p="3">
-                    <div class="shelf-wrap" style="flex-direction:column;gap:6px;align-items:stretch;">
-                      <div style="display:flex;justify-content:flex-end;gap:6px;">
-                        <button class="pill-mini blue" id="btnShelfAdd">+ Thêm tệp mẫu</button>
-                        <button class="pill-mini" id="btnShelfClear">Xóa kệ</button>
-                      </div>
-                      <div class="shelf-drop" id="shelfDrop"></div>
-                    </div>
-                  </div>
-
-                  <!-- Page 4: Quick To-Do -->
-                  <div class="kn-page" data-p="4">
-                    <div class="todo-wrap">
-                      <div style="width:118px;">
-                        <div style="font-size:25px;font-weight:800;" id="todoHero">2/3</div>
-                        <div style="font-size:11px;color:#cbd5e1;margin-bottom:6px;">Hoàn thành</div>
-                        <button class="pill-mini" id="btnTodoAdd" style="background:#10b981;">+ Thêm việc</button>
-                      </div>
-                      <div class="todo-list" id="todoList"></div>
-                    </div>
-                  </div>
-
-                  <!-- Page 5: System Monitor (Kumo Signature!) -->
-                  <div class="kn-page active" data-p="5">
-                    <div class="sys-left">
-                      <div class="sys-hero" id="sysHeroBox" style="cursor:pointer;">
-                        <strong id="sysBig">11%</strong>
-                        <span id="sysUnit">CPU · 4.33 GHz</span>
-                      </div>
-                      <div class="sys-sub" id="sysSub">RAM 38% · 6.1/16.0 GB</div>
-                      <div class="sys-bar"><i id="sysBarFill" style="width:14%;"></i></div>
-                      <div class="sys-btns">
-                        <button class="pill-mini blue">⊞ Task Mgr</button>
-                        <button class="pill-mini" id="btnMascotToggle">^ ^ Mascot</button>
-                      </div>
-                    </div>
-                    <div class="sys-right">
-                      <div class="m-row" data-m="1"><span><i class="m-dot" style="background:#2ac6ff;"></i><strong>SSD</strong></span><span class="m-val" id="mValSsd">1% · 67 KB/s</span></div>
-                      <div class="m-row" data-m="2"><span><i class="m-dot" style="background:#6298ff;"></i><strong>Wi-Fi</strong></span><span class="m-val" id="mValNet">↓13.7 ↑2.4 Mbps</span></div>
-                      <div class="m-row" data-m="3"><span><i class="m-dot" style="background:#ac82ff;"></i><strong>GPU 0</strong></span><span class="m-val" id="mValGpu">3% · 3D</span></div>
+                <div class="kn-page" data-p="1">
+                  <div style="width:100%;display:flex;align-items:center;justify-content:space-around;">
+                    <div style="font-size:28px;font-weight:800;font-family:var(--mono);" id="pomoTime">25:00</div>
+                    <div style="display:flex;gap:6px;">
+                      <button class="pill-mini" id="btnPomoMinus">-5m</button>
+                      <button class="pill-mini blue" id="btnPomoRun">▶ Start</button>
+                      <button class="pill-mini" id="btnPomoPlus">+5m</button>
                     </div>
                   </div>
                 </div>
 
-                <div class="kn-dots" id="knDots">
-                  <i></i><i></i><i></i><i></i><i></i><i class="on"></i>
+                <div class="kn-page" data-p="2">
+                  <div style="width:100%;display:flex;align-items:center;justify-content:space-between;gap:14px;">
+                    <div style="flex:1;">
+                      <div style="font-size:21px;font-weight:800;" id="waterReadout">1.5 / 2.0 L</div>
+                      <div class="sys-bar" style="margin:6px 0;"><i id="waterBarFill" style="width:75%;"></i></div>
+                    </div>
+                    <div style="display:flex;gap:6px;">
+                      <button class="pill-mini blue" id="btnWaterAdd">+ 250 ml</button>
+                      <button class="pill-mini" id="btnWaterSub">−</button>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="kn-page" data-p="3">
+                  <div style="width:100%;display:flex;align-items:center;justify-content:space-between;gap:10px;">
+                    <div id="shelfDrop" style="display:flex;gap:6px;flex-wrap:wrap;font-size:12px;"></div>
+                    <button class="pill-mini blue" id="btnShelfAdd">+ Tệp</button>
+                  </div>
+                </div>
+
+                <div class="kn-page" data-p="4">
+                  <div style="width:100%;display:flex;align-items:center;justify-content:space-between;gap:12px;">
+                    <div>
+                      <div style="font-size:22px;font-weight:800;" id="todoHero">2/3</div>
+                      <button class="pill-mini blue" id="btnTodoAdd" style="margin-top:4px;">+ Việc</button>
+                    </div>
+                    <div id="todoList" style="flex:1;display:flex;flex-direction:column;gap:4px;font-size:11.5px;"></div>
+                  </div>
+                </div>
+
+                <div class="kn-page" data-p="5">
+                  <div class="sys-left">
+                    <div class="sys-hero" id="sysHeroBox" style="cursor:pointer;">
+                      <strong id="sysBig">12%</strong>
+                      <span id="sysUnit">CPU · 4.32 GHz</span>
+                    </div>
+                    <div class="sys-sub" id="sysSub">RAM 38% · 6.1/16.0 GB</div>
+                    <div class="sys-bar"><i id="sysBarFill" style="width:16%;"></i></div>
+                    <div style="display:flex;gap:6px;margin-top:2px;">
+                      <button class="pill-mini blue">Task Mgr</button>
+                      <button class="pill-mini" id="btnMascotToggle">Mascot</button>
+                    </div>
+                  </div>
+                  <div class="sys-right">
+                    <div class="m-row sel" data-m="0"><span>CPU / RAM</span><span>6.1 GB</span></div>
+                    <div class="m-row" data-m="1"><span>SSD</span><span id="mValSsd">1% · 84 KB/s</span></div>
+                    <div class="m-row" data-m="2"><span>Wi-Fi</span><span id="mValNet">↓ 14.2 Mbps</span></div>
+                  </div>
                 </div>
               </div>
+
+              <div class="kn-dots" id="knDots"><i class="on"></i><i></i><i></i><i></i><i></i><i></i></div>
             </div>
           </div>
-
-          <!-- Eye-Care Daylight White Settings Modal -->
-          <div class="sim-settings-modal" id="simSettingsModal">
-            <div class="ssm-hdr">
-              <span>☁️ Kumo — Bảng Quản Lý Dịu Mắt (Giao diện Sáng)</span>
-              <button class="chip-btn" id="ssmClose" style="padding:2px 9px;">✕</button>
-            </div>
-            <div class="ssm-grid">
-              <div class="ssm-side">
-                <span class="on">⚙ Cài đặt chung</span>
-                <span>🖥 Hiển thị & DPI</span>
-                <span>🎵 Nhạc & Lời bài hát</span>
-                <span>🚀 Cập nhật & Cài đè</span>
+        </div>
+        <div class="win-chrome" id="winChrome">
+          <div class="wc-titlebar">
+            <div class="wc-tabs">
+              <div class="wc-tab active">
+                <span style="color:#ff0000;font-size:11px;">▶</span>
+                <span class="wc-tab-txt" id="wcTabTitle">Hngle - Tìm em ft. Bảo Anh - YouTube</span>
               </div>
-              <div class="ssm-main">
-                <div class="ssm-row"><span>Tự khởi động cùng Windows</span><div class="ssm-toggle"></div></div>
-                <div class="ssm-row"><span>Tự thu gọn khi vướng Tab trình duyệt (Auto-Minimal)</span><div class="ssm-toggle"></div></div>
-                <div class="ssm-row"><span>Hiện đầy đủ lời nhạc đồng bộ (Cả khi thu nhỏ)</span><div class="ssm-toggle"></div></div>
-                <div class="ssm-row"><span>Thanh trạng thái tải tệp Trình duyệt & Microsoft Store</span><div class="ssm-toggle"></div></div>
-                <div class="ssm-row"><span>Giao diện Bảng quản lý Sáng dịu mắt (Tai thỏ Đen)</span><div class="ssm-toggle"></div></div>
+              <div class="wc-tab"><span>github.com/buiduchuy2010qn-prog/kumo</span></div>
+              <span class="wc-newtab">+</span>
+            </div>
+            <div class="wc-winbtns">
+              <button class="wc-wbtn" id="wcMin" title="Minimize">&#8212;</button>
+              <button class="wc-wbtn" id="wcMax" title="Maximize (Thử tự né Tab)">&#9633;</button>
+              <button class="wc-wbtn close" id="wcClose" title="Close">&#10005;</button>
+            </div>
+          </div>
+
+          <div class="wc-omnibar">
+            <div class="wc-nav-icos"><span>←</span><span>→</span><span>↻</span></div>
+            <div class="wc-url">
+              <span style="color:#6b7280;">🔒</span>
+              <input type="text" id="wcUrlInput" value="https://www.youtube.com/watch?v=gJAbDSse5WM" readonly />
+            </div>
+            <button class="wc-dl-btn" id="wcDlBtn">⬇ Tải tệp mẫu</button>
+          </div>
+
+          <div class="yt-page">
+            <div class="yt-topbar">
+              <span class="yt-logo"><i>▶</i> YouTube</span>
+              <div class="yt-search-row">
+                <div class="yt-search-box">
+                  <input type="text" id="ytSearchInput" placeholder="Tìm bài hát (Tìm em, Vết thương, Đám mây)..." />
+                  <span style="color:#6b7280;cursor:pointer;" id="ytSearchBtn">🔍</span>
+                </div>
+              </div>
+              <div class="yt-chips">
+                <button class="yt-chip active" data-pick-track="0">Tìm em</button>
+                <button class="yt-chip" data-pick-track="1">Vết thương</button>
+                <button class="yt-chip" data-pick-track="2">Đám mây nhỏ</button>
+              </div>
+            </div>
+
+            <div class="yt-grid">
+              <div class="yt-player-col">
+                <div class="yt-video" id="ytVideoBox" title="Bấm để Phát / Tạm dừng">
+                  <img id="ytVideoImg" alt="YouTube Video" />
+                  <div class="yt-vid-overlay">
+                    <span id="ytPlayBadge">▶ Bấm vào video hoặc chọn chế độ ở trên để phát nhạc</span>
+                    <span id="ytTimeBadge">00:35 / 04:31</span>
+                  </div>
+                </div>
+                <p class="yt-vid-title" id="ytMainTitle">Hngle - Tìm em ft. Bảo Anh | Official Music Video</p>
+                <div class="yt-chan-row">
+                  <span id="ytMainChan">HNGLE / hưng lê · 86 Tr lượt xem</span>
+                  <span class="yt-sub-pill">Đã đăng ký</span>
+                </div>
+              </div>
+              <div class="yt-list">
+                <div class="yt-list-hdr" data-vi="Danh sách phát tiếp theo" data-en="Up next">Danh sách phát tiếp theo</div>
+                <div id="ytPlaylist"></div>
               </div>
             </div>
           </div>
+        </div>
 
-          <!-- Simulated Browser Window on Desktop -->
-          <div class="sim-browser" id="simBrowser">
-            <div class="sb-tabbar">
-              <div class="sb-dots"><i></i><i></i><i></i></div>
-              <div class="sb-tab">🎵 Mình Là Người Yêu Nhau — YouTube</div>
-              <div class="sb-tab dim">☁️ Kumo Docs</div>
+        <div class="kumo-settings-win" id="kumoSettingsWin">
+          <div class="ksw-bar">
+            <span>Kumo Settings — Giao diện Sáng dịu mắt</span>
+            <button class="wc-wbtn close" id="kswClose" style="height:36px;">&#10005;</button>
+          </div>
+          <div class="ksw-body">
+            <div class="ksw-nav">
+              <span class="on">Cài đặt chung</span><span>Hiển thị &amp; DPI</span><span>Nhạc &amp; Lời bài hát</span><span>Cập nhật</span>
             </div>
-            <div class="sb-body">
-              <div class="sb-hint">
-                <h4 data-vi="Tương tác trực tiếp với chiếc Tai Thỏ Kumo ở cạnh trên!" data-en="Interact directly with the Kumo Notch at the top bezel!">Tương tác trực tiếp với chiếc Tai Thỏ Kumo ở cạnh trên!</h4>
-                <p data-vi="Rê chuột hoặc bấm vào tai thỏ để mở rộng, chuyển qua 6 trang tiện ích, bật 💬 Lyrics rồi bấm 'Thu nhỏ hiện Lời Nhạc', hoặc thử các nút phần cứng bên dưới." data-en="Hover or click the notch to expand, explore 6 live pages, toggle 💬 Lyrics and collapse to see live collapsed lyrics, or test hardware OSD triggers below.">
-                  Rê chuột hoặc bấm vào tai thỏ để mở rộng, chuyển qua 6 trang tiện ích, bật 💬 Lyrics rồi bấm "Thu nhỏ hiện Lời Nhạc", hoặc thử các nút phần cứng bên dưới.
-                </p>
-              </div>
+            <div class="ksw-rows">
+              <div class="ksw-row"><span>Tự thu mảnh khi cửa sổ chạm mép trên</span><div class="ksw-tog"></div></div>
+              <div class="ksw-row"><span>Hiện đầy đủ lời nhạc ngay khi thu nhỏ</span><div class="ksw-tog"></div></div>
+              <div class="ksw-row"><span>Thanh trạng thái tải tệp &amp; Microsoft Store</span><div class="ksw-tog"></div></div>
+              <div class="ksw-row"><span>Bảng quản lý Trắng · Tai thỏ Đen nguyên bản</span><div class="ksw-tog"></div></div>
             </div>
           </div>
-
-          <!-- Simulated Windows 11 Taskbar -->
-          <div class="sim-taskbar">
-            <span>🌤️ 27°C TP.HCM</span>
-            <div class="tb-apps">
-              <div class="tb-ico">⊞</div>
-              <div class="tb-ico">🌐</div>
-              <div class="tb-ico" id="tbKumoIco" title="Mở Kumo Settings">☁️</div>
-            </div>
-            <span>VIE · 12:55</span>
-          </div>
         </div>
 
-        <!-- Hardware OSD & Window Simulation Trigger Deck -->
-        <div class="trigger-deck">
-          <div class="st-group">
-            <span class="st-label" data-vi="Thử OSD phần cứng:" data-en="Test Hardware OSD:">Thử OSD phần cứng:</span>
-            <button class="chip-btn" id="trigVolUp" data-vi="🔊 Âm lượng + (Trắng)" data-en="🔊 Volume + (White)">🔊 Âm lượng + (Trắng)</button>
-            <button class="chip-btn" id="trigVolDown" data-vi="🔉 Âm lượng −" data-en="🔉 Volume −">🔉 Âm lượng −</button>
-            <button class="chip-btn" id="trigMute" data-vi="🔇 Tắt tiếng" data-en="🔇 Mute">🔇 Tắt tiếng</button>
-            <button class="chip-btn" id="trigBri" data-vi="☀️ Độ sáng" data-en="☀️ Brightness">☀️ Độ sáng</button>
-            <button class="chip-btn" id="trigBatChg" data-vi="⚡ Cắm sạc" data-en="⚡ Charging">⚡ Cắm sạc</button>
-            <button class="chip-btn" id="trigBatLow" data-vi="🪫 Pin yếu" data-en="🪫 Low Battery">🪫 Pin yếu</button>
+        <div class="win11-taskbar">
+          <div class="tb-weather">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="5" fill="#fbbf24"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3" stroke="#fbbf24" stroke-width="2" stroke-linecap="round"/></svg>
+            <span>28°C · Nắng nhẹ</span>
           </div>
-          <div class="st-group">
-            <button class="chip-btn" id="trigDlFile" data-vi="&#11015; Thử tải tệp Trình duyệt" data-en="&#11015; Test Browser Download">&#11015; Thử tải tệp Trình duyệt</button>
-            <button class="chip-btn" id="trigDlStore" data-vi="&#128717; Thử tải App Store" data-en="&#128717; Test Store Download">&#128717; Thử tải App Store</button>
-            <button class="chip-btn" id="trigAutoMin" data-vi="🪟 Thử phóng to cửa sổ (Tự né Tab)" data-en="🪟 Test Tab Anti-Collision">🪟 Thử phóng to cửa sổ (Tự né Tab)</button>
-            <button class="chip-btn" id="trigSettings" data-vi="🎛️ Mở Bảng Quản Lý Trắng" data-en="🎛️ White Settings Panel">🎛️ Mở Bảng Quản Lý Trắng</button>
+          <div class="tb-center">
+            <button class="tb-btn" title="Start"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="8" height="8" rx="1.2" fill="#38bdf8"/><rect x="13" y="3" width="8" height="8" rx="1.2" fill="#0ea5e9"/><rect x="3" y="13" width="8" height="8" rx="1.2" fill="#0ea5e9"/><rect x="13" y="13" width="8" height="8" rx="1.2" fill="#0284c7"/></svg></button>
+            <div class="tb-search-pill"><span>🔍</span><span data-vi="Tìm kiếm" data-en="Search">Tìm kiếm</span></div>
+            <button class="tb-btn" id="tbExplorer" title="File Explorer"><svg viewBox="0 0 24 24"><path d="M3 6.5A1.5 1.5 0 0 1 4.5 5h4.6l2 2H19.5A1.5 1.5 0 0 1 21 8.5v9a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 17.5v-11Z" fill="#fbbf24"/></svg></button>
+            <button class="tb-btn running" id="tbChrome" title="Google Chrome"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" fill="#ea4335"/><path d="M12 12l7.8-4.5A9 9 0 0 1 12 21l3.5-6.2" fill="#fbbc05"/><path d="M3.6 8.5A9 9 0 0 0 12 21l3.5-6.2L12 12" fill="#34a853"/><circle cx="12" cy="12" r="4" fill="#4285f4" stroke="#fff" stroke-width="1.5"/></svg></button>
+            <button class="tb-btn" id="tbStore" title="Microsoft Store (Bấm thử tải App)"><svg viewBox="0 0 24 24" fill="none"><rect x="4" y="7" width="16" height="13" rx="2" fill="#e2e8f0"/><path d="M9 7V5.5a3 3 0 0 1 6 0V7" stroke="#94a3b8" stroke-width="1.8"/><rect x="8.5" y="10.5" width="3" height="3" fill="#f97316"/><rect x="12.5" y="10.5" width="3" height="3" fill="#22c55e"/><rect x="8.5" y="14.5" width="3" height="3" fill="#0ea5e9"/><rect x="12.5" y="14.5" width="3" height="3" fill="#eab308"/></svg></button>
+            <button class="tb-btn running" id="tbKumo" title="Mở Kumo Settings"><img src="./logo.png" alt="Kumo" style="border-radius:4px;" /></button>
+          </div>
+          <div class="tb-tray">
+            <span>VIE</span>
+            <div class="tb-tray-icos" id="tbVolTray" title="Bấm thử OSD Âm lượng"><span>📶</span><span>🔊</span><span>🔋</span></div>
+            <div class="tb-clock"><div id="tbTime">13:20</div><div id="tbDate">28/10/2026</div></div>
           </div>
         </div>
       </div>
-    </div>
-  </section>
-  <!-- Bento Architecture Section -->
-  <section id="architecture" class="section-block">
-    <div class="container">
-      <div class="sec-head">
-        <div class="eyebrow" data-vi="KIẾN TRÚC ĐỘC BẢN CỦA KUMO" data-en="BESPOKE KUMO ARCHITECTURE">KIẾN TRÚC ĐỘC BẢN CỦA KUMO</div>
-        <h2 data-vi="Tai thỏ Đen sắc nét trên đỉnh. Bảng điều khiển Sáng dịu mắt trong tay." data-en="Obsidian clarity at the top edge. Eye-care daylight in your control panel.">Tai thỏ Đen sắc nét trên đỉnh. Bảng điều khiển Sáng dịu mắt trong tay.</h2>
-        <p data-vi="Thiết kế từ gốc cho màn hình laptop & PC Windows 10/11 độ phân giải cao, tập trung vào độ nét điểm ảnh thực, sự mượt mà và không làm gián đoạn công việc." data-en="Engineered from scratch for High-DPI Windows 10/11 displays with pixel-snapped clarity and zero workflow interruption.">
-          Thiết kế từ gốc cho màn hình laptop & PC Windows 10/11 độ phân giải cao, tập trung vào độ nét điểm ảnh thực, sự mượt mà và không làm gián đoạn công việc.
-        </p>
-      </div>
+    </section>
 
-      <div class="bento-grid">
-        <article class="bento-card wide">
-          <div class="b-ico">🔬</div>
-          <h3 data-vi="Độ sắc nét gốc PerMonitorV2 + ClearType" data-en="Native PerMonitorV2 + ClearType Crispness">Độ sắc nét gốc PerMonitorV2 + ClearType</h3>
-          <p data-vi="Nhúng trực tiếp Win32 Manifest chuẩn PerMonitorV2 kết hợp khử răng cưa subpixel phần cứng ClearTypeGridFit và căn tọa độ pixel nguyên — hiển thị sắc căng trên mọi mức thu phóng 100%, 125%, 150% hay 200%." data-en="Embedded Win32 PerMonitorV2 manifest paired with hardware ClearTypeGridFit subpixel rendering and integer pixel snapping across 100%–200% scaling.">
-            Nhúng trực tiếp Win32 Manifest chuẩn PerMonitorV2 kết hợp khử răng cưa subpixel phần cứng ClearTypeGridFit và căn tọa độ pixel nguyên — hiển thị sắc căng trên mọi mức thu phóng 100%, 125%, 150% hay 200%.
-          </p>
-        </article>
-
-        <article class="bento-card wide">
-          <div class="b-ico">💬</div>
-          <h3 data-vi="Hiện lời nhạc ngay cả khi tai thỏ thu nhỏ" data-en="Live Synced Lyrics Even When Collapsed">Hiện lời nhạc ngay cả khi tai thỏ thu nhỏ</h3>
-          <p data-vi="Chỉ cần bật nút Lyrics trên trang Nhạc: khi bạn rời chuột để tai thỏ thu gọn lại, từng câu hát từ Spotify, YouTube, Chrome hay Edge vẫn tự động đồng bộ và trôi mượt ngay cạnh ảnh bìa." data-en="Toggle Lyrics once: when the notch collapses back into a compact pill, live synced lyrics from Spotify, YouTube, or Edge keep flowing right beside the album art.">
-            Chỉ cần bật nút Lyrics trên trang Nhạc: khi bạn rời chuột để tai thỏ thu gọn lại, từng câu hát từ Spotify, YouTube, Chrome hay Edge vẫn tự động đồng bộ và trôi mượt ngay cạnh ảnh bìa.
-          </p>
-        </article>
-
-        <article class="bento-card">
-          <div class="b-ico">🪟</div>
-          <h3 data-vi="Tự né Tab trình duyệt" data-en="Zero Tab Obstruction">Tự né Tab trình duyệt</h3>
-          <p data-vi="Luồng quét nền thông minh nhận diện cửa sổ phóng to sát mép trên để thu gọn tai thỏ thành dải mảnh 4.5px, không bao giờ che khuất nút chuyển hay đóng Tab." data-en="Background window detection shrinks Kumo into a 4.5px micro-strip whenever maximized browser tabs touch the top edge.">
-            Luồng quét nền thông minh nhận diện cửa sổ phóng to sát mép trên để thu gọn tai thỏ thành dải mảnh 4.5px, không bao giờ che khuất nút chuyển hay đóng Tab.
-          </p>
-        </article>
-
-        <article class="bento-card">
-          <div class="b-ico">⚡</div>
-          <h3 data-vi="Theo dõi CPU · RAM · GPU thực" data-en="Task-Manager Hardware Telemetry">Theo dõi CPU · RAM · GPU thực</h3>
-          <p data-vi="Đọc trực tiếp xung nhịp GHz thực tế của CPU Hybrid, dung lượng RAM GB chuẩn xác, tốc độ đọc/ghi SSD, băng thông Wi-Fi thực và mức tải GPU 3D." data-en="Reads real hybrid CPU turbo GHz, exact RAM GB usage, SSD throughput, physical Wi-Fi bandwidth, and 3D GPU load.">
-            Đọc trực tiếp xung nhịp GHz thực tế của CPU Hybrid, dung lượng RAM GB chuẩn xác, tốc độ đọc/ghi SSD, băng thông Wi-Fi thực và mức tải GPU 3D.
-          </p>
-        </article>
-
-        <article class="bento-card">
-          <div class="b-ico">🔊</div>
-          <h3 data-vi="OSD Âm lượng Trắng & Độ sáng" data-en="Pure White Volume & Brightness HUD">OSD Âm lượng Trắng & Độ sáng</h3>
-          <p data-vi="Bắt sự kiện CoreAudio và WMI thời gian thực để hiển thị thanh Âm lượng màu trắng tinh khôi, Độ sáng mặt trời vàng và cảnh báo Pin 3 trạng thái." data-en="Real-time CoreAudio and WMI hooks display a crisp pure-white Volume bar, golden Brightness HUD, and 3-state Battery alerts.">
-            Bắt sự kiện CoreAudio và WMI thời gian thực để hiển thị thanh Âm lượng màu trắng tinh khôi, Độ sáng mặt trời vàng và cảnh báo Pin 3 trạng thái.
-          </p>
-        </article>
-      </div>
-    </div>
-  </section>
-
-  <!-- 3-Step Setup & In-Place Overwrite Workflow -->
-  <section id="workflow" class="section-block" style="padding-top:16px;">
-    <div class="container">
-      <div class="sec-head">
-        <div class="eyebrow" data-vi="CÀI ĐẶT & NÂNG CẤP KHÔNG GIÁN ĐOẠN" data-en="FRICTIONLESS INSTALL & OVERWRITE">CÀI ĐẶT & NÂNG CẤP KHÔNG GIÁN ĐOẠN</div>
-        <h2 data-vi="Gói gọn trong ~203 KB. Cài đè trực tiếp không mất dữ liệu." data-en="Packed into ~203 KB. Overwrite any running version in 1 second.">Gói gọn trong ~203 KB. Cài đè trực tiếp không mất dữ liệu.</h2>
-      </div>
-
-      <div class="steps-row">
-        <div class="step-box">
-          <span class="step-num">BƯỚC 01</span>
-          <h3 data-vi="Tải bộ cài kèm số phiên bản" data-en="Download Versioned Installer">Tải bộ cài kèm số phiên bản</h3>
-          <p data-vi="Mỗi bản phát hành tự động từ GitHub Actions đều đánh số rõ ràng ngay trên tên file (ví dụ KumoSetup-v1.1.13.exe) để bạn dễ dàng phân biệt bản mới - cũ." data-en="Every automated GitHub Actions build stamps the exact version right in the filename (e.g. KumoSetup-v1.1.13.exe).">
-            Mỗi bản phát hành tự động từ GitHub Actions đều đánh số rõ ràng ngay trên tên file (ví dụ <code>KumoSetup-v1.1.13.exe</code>) để bạn dễ dàng phân biệt bản mới - cũ.
-          </p>
+    <section id="features" class="sec">
+      <h2 class="sec-title" data-vi="Điểm chính trên Kumo" data-en="Key capabilities">Điểm chính trên Kumo</h2>
+      <div class="feat-table">
+        <div class="feat-cell">
+          <h3 data-vi="Lời nhạc trọn câu (Cả khi thu nhỏ)" data-en="Full uncut synced lyrics">Lời nhạc trọn câu (Cả khi thu nhỏ)</h3>
+          <p data-vi="Đồng bộ Spotify, YouTube, Edge/Chrome; tự cuộn mượt câu dài, không cắt mất chữ phía sau." data-en="Syncs with Spotify &amp; YouTube; smoothly pans long sentences without cutting off words.">Đồng bộ Spotify, YouTube, Edge/Chrome; tự cuộn mượt câu dài, không cắt mất chữ phía sau.</p>
         </div>
-
-        <div class="step-box">
-          <span class="step-num">BƯỚC 02</span>
-          <h3 data-vi="Cài đặt User-Scope trong 1 giây" data-en="1-Second User-Scope Setup">Cài đặt User-Scope trong 1 giây</h3>
-          <p data-vi="Không đòi quyền Administrator (UAC), không cài phần mềm rác hay runtime nặng. Tự tạo lối tắt Desktop & Start Menu để mở nhanh Bảng quản lý." data-en="Zero Admin UAC prompts and zero bloated runtimes. Installs cleanly to %LOCALAPPDATA%\Programs\Kumo.">
-            Không đòi quyền Administrator (UAC), không cài phần mềm rác hay runtime nặng. Tự tạo lối tắt Desktop & Start Menu để mở nhanh Bảng quản lý.
-          </p>
+        <div class="feat-cell">
+          <h3 data-vi="Thanh tải tệp &amp; Microsoft Store" data-en="Browser &amp; Store download bar">Thanh tải tệp &amp; Microsoft Store</h3>
+          <p data-vi="Tự hiện dung lượng, tốc độ MB/s khi tải file trên trình duyệt và % cài app từ Store." data-en="Shows live MB/s for browser downloads and exact % for Microsoft Store installs.">Tự hiện dung lượng, tốc độ MB/s khi tải file trên trình duyệt và % cài app từ Store.</p>
         </div>
-
-        <div class="step-box">
-          <span class="step-num">BƯỚC 03</span>
-          <h3 data-vi="Cài đè thông minh giữ 100% dữ liệu" data-en="Smart In-Place Overwrite">Cài đè thông minh giữ 100% dữ liệu</h3>
-          <p data-vi="Chạy bản KumoSetup mới đè thẳng lên bản cũ đang mở (hoặc bấm Cập nhật ngay trong Kumo Settings): tự đóng tiến trình cũ êm ái và giữ nguyên mọi cài đặt, việc cần làm, kệ tệp." data-en="Run any newer KumoSetup directly over a running version — gracefully replaces the binary while preserving 100% of your tasks, water log, and settings.">
-            Chạy bản KumoSetup mới đè thẳng lên bản cũ đang mở (hoặc bấm Cập nhật ngay trong Kumo Settings): tự đóng tiến trình cũ êm ái và giữ nguyên mọi cài đặt, việc cần làm, kệ tệp.
-          </p>
+        <div class="feat-cell">
+          <h3 data-vi="Tự né Tab trình duyệt" data-en="Auto-minimal around tabs">Tự né Tab trình duyệt</h3>
+          <p data-vi="Phóng to Chrome/Edge sát mép trên, tai thỏ tự thu còn dải 4.5px để không vướng thao tác." data-en="Shrinks to a 4.5px strip whenever maximized browser tabs touch the top bezel.">Phóng to Chrome/Edge sát mép trên, tai thỏ tự thu còn dải 4.5px để không vướng thao tác.</p>
+        </div>
+        <div class="feat-cell">
+          <h3 data-vi="Tai thỏ Đen · Bảng quản lý Trắng" data-en="Black notch · Daylight panel">Tai thỏ Đen · Bảng quản lý Trắng</h3>
+          <p data-vi="Giữ tai thỏ đen nguyên bản sắc nét (PerMonitorV2 ClearType), bảng cài đặt sáng dễ nhìn." data-en="Crisp PerMonitorV2 ClearType black notch paired with an eye-friendly light settings window.">Giữ tai thỏ đen nguyên bản sắc nét (PerMonitorV2 ClearType), bảng cài đặt sáng dễ nhìn.</p>
+        </div>
+        <div class="feat-cell">
+          <h3 data-vi="OSD Âm lượng Trắng, Độ sáng &amp; Pin" data-en="Hardware OSD &amp; telemetry">OSD Âm lượng Trắng, Độ sáng &amp; Pin</h3>
+          <p data-vi="Thanh âm lượng trắng tinh, độ sáng mặt trời, báo sạc/pin yếu và theo dõi CPU/RAM/GPU." data-en="Pure-white volume bar, brightness HUD, 3-state battery alerts, and live CPU/RAM/GPU stats.">Thanh âm lượng trắng tinh, độ sáng mặt trời, báo sạc/pin yếu và theo dõi CPU/RAM/GPU.</p>
+        </div>
+        <div class="feat-cell">
+          <h3 data-vi="Gói ~210 KB · Cài đè trực tiếp" data-en="~210 KB · In-place overwrite">Gói ~210 KB · Cài đè trực tiếp</h3>
+          <p data-vi="Không đòi quyền Admin. Chạy file KumoSetup bản mới đè thẳng lên bản cũ, giữ nguyên dữ liệu." data-en="No UAC prompts. Run any newer KumoSetup over an existing install without losing settings.">Không đòi quyền Admin. Chạy file KumoSetup bản mới đè thẳng lên bản cũ, giữ nguyên dữ liệu.</p>
         </div>
       </div>
-    </div>
-  </section>
+    </section>
 
-  <!-- Technical Specs + FAQ -->
-  <section id="faq" class="section-block" style="padding-top:16px;">
-    <div class="container">
-      <div class="spec-faq-grid">
-        <div class="spec-card">
-          <div class="eyebrow" data-vi="THÔNG SỐ & QUYỀN RIÊNG TƯ" data-en="SPECS & PRIVACY">THÔNG SỐ & QUYỀN RIÊNG TƯ</div>
-          <h3 style="margin:12px 0 4px;font-size:22px;" data-vi="Nhẹ tuyệt đối, minh bạch 100%" data-en="Featherweight & 100% Transparent">Nhẹ tuyệt đối, minh bạch 100%</h3>
-          <div class="spec-list">
-            <div class="spec-row"><span data-vi="Hệ điều hành" data-en="OS">Hệ điều hành</span><strong>Windows 10 / Windows 11 (x64)</strong></div>
-            <div class="spec-row"><span data-vi="Dung lượng bộ cài" data-en="Installer Size">Dung lượng bộ cài</span><strong data-exe-size>~203 KB</strong></div>
-            <div class="spec-row"><span data-vi="Nền tảng đồ họa" data-en="Graphics Stack">Nền tảng đồ họa</span><strong>Win32 UpdateLayeredWindow + ClearType</strong></div>
-            <div class="spec-row"><span data-vi="Tích hợp âm thanh & lời nhạc" data-en="Media & Lyrics">Tích hợp âm thanh & lời nhạc</span><strong>WinRT SMTC + CoreAudio + LRCLIB</strong></div>
-            <div class="spec-row"><span data-vi="Lưu trữ dữ liệu cá nhân" data-en="Local Data">Lưu trữ dữ liệu cá nhân</span><strong>100% Offline (%LOCALAPPDATA%\Kumo)</strong></div>
-            <div class="spec-row"><span data-vi="Theo dõi / Quảng cáo" data-en="Telemetry / Ads">Theo dõi / Quảng cáo</span><strong data-vi="Không thu thập bất kỳ dữ liệu nào" data-en="Zero tracking, zero analytics">Không thu thập bất kỳ dữ liệu nào</strong></div>
-          </div>
-          <div style="margin-top:20px;">
-            <a class="btn-primary" style="width:100%;justify-content:center;" data-dl-link href="https://github.com/buiduchuy2010qn-prog/kumo/releases/latest/download/KumoSetup-v1.1.13.exe">
-              <span>⬇</span>
-              <span data-vi="Tải bản mới nhất cho Windows" data-en="Download Latest for Windows">Tải bản mới nhất cho Windows</span>
-            </a>
+    <section id="credits" class="sec">
+      <h2 class="sec-title" data-vi="Giới thiệu &amp; Nguồn cảm hứng (Credits)" data-en="About &amp; Inspiration (Credits)">Giới thiệu &amp; Nguồn cảm hứng (Credits)</h2>
+      <div class="credits-grid">
+        <div class="c-box">
+          <h3 data-vi="Cảm hứng gốc từ dự án Nusa" data-en="Inspired by Nusa">Cảm hứng gốc từ dự án Nusa</h3>
+          <p data-vi="Kumo được truyền cảm hứng từ Nusa (“a living notch for Windows”) — dự án tai thỏ cho Windows rất tinh tế do tác giả @rama2555 phát triển. Nusa đã mở ra ý tưởng gọn gàng về một góc nhỏ trên mép màn hình dành cho nhạc, lời bài hát, Pomodoro, nhắc uống nước và kệ tệp." data-en="Kumo is inspired by Nusa (“a living notch for Windows”), the original Windows notch project created by @rama2555, pioneering music, lyrics, focus timers, water reminders, and a file shelf at the top bezel.">
+            Kumo được truyền cảm hứng từ <strong>Nusa</strong> (<em>“a living notch for Windows”</em>) — dự án tai thỏ cho Windows rất tinh tế do tác giả <strong>@rama2555</strong> phát triển. Nusa đã mở ra ý tưởng gọn gàng về một góc nhỏ trên mép màn hình dành cho nhạc, lời bài hát, Pomodoro, nhắc uống nước và kệ tệp.
+          </p>
+          <div class="gh-links">
+            <div class="gh-row"><span data-vi="Kho mã nguồn Nusa" data-en="Nusa GitHub Repo">Kho mã nguồn Nusa</span><a href="https://github.com/rama2555/nusa" target="_blank" rel="noopener">github.com/rama2555/nusa</a></div>
+            <div class="gh-row"><span data-vi="Tác giả Nusa" data-en="Nusa Author">Tác giả Nusa</span><a href="https://github.com/rama2555" target="_blank" rel="noopener">github.com/rama2555</a></div>
+            <div class="gh-row"><span data-vi="Trang giới thiệu Nusa" data-en="Nusa Website">Trang giới thiệu Nusa</span><a href="https://rama2555.github.io/nusa/" target="_blank" rel="noopener">rama2555.github.io/nusa</a></div>
           </div>
         </div>
 
-        <div class="faq-card">
-          <h3 style="margin:0 0 10px;font-size:22px;" data-vi="Câu hỏi thường gặp" data-en="Frequently Asked Questions">Câu hỏi thường gặp</h3>
-
-          <details class="faq-item" open>
-            <summary data-vi="Làm sao để hiện lời nhạc khi tai thỏ thu nhỏ?" data-en="How do I show lyrics when the notch is collapsed?">Làm sao để hiện lời nhạc khi tai thỏ thu nhỏ?</summary>
-            <p data-vi="Mở trang Nhạc (Music) trên tai thỏ và nhấn biểu tượng bong bóng lời bài hát ở góc trái dưới. Khi nút sáng trắng, mỗi lần tai thỏ thu gọn lại sẽ tự động hiển thị câu hát đồng bộ theo thời gian thực!" data-en="Open the Music page on the notch and click the bottom-left Lyrics bubble icon. While active, collapsing the notch displays live synced lyrics right inside the compact pill!">
-              Mở trang Nhạc (Music) trên tai thỏ và nhấn biểu tượng bong bóng lời bài hát ở góc trái dưới. Khi nút sáng trắng, mỗi lần tai thỏ thu gọn lại sẽ tự động hiển thị câu hát đồng bộ theo thời gian thực!
-            </p>
-          </details>
-
-          <details class="faq-item">
-            <summary data-vi="Kumo hỗ trợ những trình phát nhạc nào?" data-en="Which music players work with Kumo?">Kumo hỗ trợ những trình phát nhạc nào?</summary>
-            <p data-vi="Mọi ứng dụng phát qua Windows Media Session (SMTC): Spotify, YouTube trên Chrome / Edge / Brave / Cốc Cốc / Firefox, Apple Music, Zing MP3 web và trình phát nội bộ Windows." data-en="Any app supporting Windows SMTC: Spotify, YouTube on Chrome/Edge/Firefox, Apple Music, and local media players.">
-              Mọi ứng dụng phát qua Windows Media Session (SMTC): Spotify, YouTube trên Chrome / Edge / Brave / Cốc Cốc / Firefox, Apple Music, Zing MP3 web và trình phát nội bộ Windows.
-            </p>
-          </details>
-
-          <details class="faq-item">
-            <summary data-vi="Mở lại Bảng quản lý Kumo Settings bằng cách nào?" data-en="How do I open the Kumo Settings control panel?">Mở lại Bảng quản lý Kumo Settings bằng cách nào?</summary>
-            <p data-vi="Bạn có thể bấm biểu tượng bánh răng ⚙ ngay trên góc phải tai thỏ, nhấp chuột phải vào tai thỏ, nhấp đúp icon Kumo ở khay hệ thống (System Tray), hoặc mở lại biểu tượng Kumo ngoài màn hình Desktop." data-en="Click the ⚙ gear icon on the notch, right-click the notch, double-click the Kumo tray icon, or launch the Desktop shortcut.">
-              Bạn có thể bấm biểu tượng bánh răng ⚙ ngay trên góc phải tai thỏ, nhấp chuột phải vào tai thỏ, nhấp đúp icon Kumo ở khay hệ thống (System Tray), hoặc mở lại biểu tượng Kumo ngoài màn hình Desktop.
-            </p>
-          </details>
-
-          <details class="faq-item">
-            <summary data-vi="Khi có bản mới mình cần gỡ bản cũ trước không?" data-en="Do I need to uninstall before updating?">Khi có bản mới mình cần gỡ bản cũ trước không?</summary>
-            <p data-vi="Không cần! Bạn chỉ việc tải KumoSetup bản mới về chạy trực tiếp (hoặc bấm Kiểm tra & Cài đè trong tab Giới thiệu của Kumo Settings). Mọi cài đặt và danh sách của bạn đều được giữ nguyên." data-en="No! Simply run the newer KumoSetup.exe directly over your existing installation — all settings and personal data remain intact.">
-              Không cần! Bạn chỉ việc tải KumoSetup bản mới về chạy trực tiếp (hoặc bấm Kiểm tra & Cài đè trong tab Giới thiệu của Kumo Settings). Mọi cài đặt và danh sách của bạn đều được giữ nguyên.
-            </p>
-          </details>
+        <div class="c-box">
+          <h3 data-vi="Về phiên bản Kumo" data-en="About Kumo">Về phiên bản Kumo</h3>
+          <p data-vi="Phát triển độc lập bằng C#/.NET gốc cho Windows 10 &amp; 11 bởi @buiduchuy2010qn-prog: bổ sung bảng quản lý nền sáng dịu mắt, lời nhạc đầy đủ khi thu nhỏ, thanh tiến trình tải tệp Trình duyệt &amp; Microsoft Store, OSD phần cứng, theo dõi CPU/RAM/GPU và bộ cài đè tự động." data-en="Built natively in C#/.NET for Windows 10 &amp; 11 by @buiduchuy2010qn-prog with an eye-care light control panel, uncut collapsed lyrics, browser &amp; Store download progress bar, hardware OSD, CPU/RAM/GPU monitor, and 1-click overwrite setup.">
+            Phát triển độc lập bằng C#/.NET gốc cho Windows 10 &amp; 11 bởi <strong>@buiduchuy2010qn-prog</strong>: bổ sung bảng quản lý nền sáng dịu mắt, lời nhạc đầy đủ khi thu nhỏ, thanh tiến trình tải tệp Trình duyệt &amp; Microsoft Store, OSD phần cứng, theo dõi CPU/RAM/GPU và bộ cài đè tự động.
+          </p>
+          <div class="gh-links">
+            <div class="gh-row"><span data-vi="Kho mã nguồn Kumo" data-en="Kumo GitHub Repo">Kho mã nguồn Kumo</span><a href="https://github.com/buiduchuy2010qn-prog/kumo" target="_blank" rel="noopener">github.com/buiduchuy2010qn-prog/kumo</a></div>
+            <div class="gh-row"><span data-vi="Nhà phát triển Kumo" data-en="Kumo Developer">Nhà phát triển Kumo</span><a href="https://github.com/buiduchuy2010qn-prog" target="_blank" rel="noopener">github.com/buiduchuy2010qn-prog</a></div>
+            <div class="gh-row"><span data-vi="Dữ liệu lời nhạc đồng bộ" data-en="Synced Lyrics API">Dữ liệu lời nhạc đồng bộ</span><a href="https://lrclib.net" target="_blank" rel="noopener">lrclib.net (LRCLIB)</a></div>
+          </div>
         </div>
       </div>
-    </div>
-  </section>
+    </section>
+  </main>
 
-  <footer class="site-footer">
-    <div class="container foot-flex">
-      <div>
-        <strong>Kumo 雲</strong> — <span data-vi="Đám Mây Tai Thỏ Sống & Bảng Quản Lý Dịu Mắt cho Windows." data-en="Living Cloud Island & Eye-Care Control Panel for Windows.">Đám Mây Tai Thỏ Sống & Bảng Quản Lý Dịu Mắt cho Windows.</span>
-      </div>
-      <div class="foot-links">
-        <a data-dl-link href="https://github.com/buiduchuy2010qn-prog/kumo/releases/latest/download/KumoSetup-v1.1.13.exe" data-vi="Tải bộ cài mới nhất" data-en="Latest Installer">Tải bộ cài mới nhất</a>
-        <a href="https://github.com/buiduchuy2010qn-prog/kumo/releases" target="_blank" rel="noopener">Releases</a>
-        <a href="https://github.com/buiduchuy2010qn-prog/kumo" target="_blank" rel="noopener">GitHub Repo</a>
-      </div>
+  <footer>
+    <div class="wrap foot-in">
+      <span>© 2026 <a href="https://github.com/buiduchuy2010qn-prog/kumo">buiduchuy2010qn-prog/kumo</a> · Inspired by <a href="https://github.com/rama2555/nusa">rama2555/nusa</a> · Lyrics via <a href="https://lrclib.net">LRCLIB</a>.</span>
+      <span>Windows 10 &amp; Windows 11 (x64) · MIT Open Source</span>
     </div>
   </footer>
 
