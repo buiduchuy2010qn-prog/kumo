@@ -124,6 +124,13 @@ namespace Kumo
         private float _dlExpBannerFade = 0.0f;
         private float _dlAnimBar = 0.28f;
         private bool IsDownloadActive { get { return _state.DownloadHudEnabled && _dl != null && _dlSnap.IsActive; } }
+        private bool IsPrivacyActive { get { return _state.PrivacyDotsEnabled && _osd != null && (_osd.IsCameraActive || _osd.IsMicActive); } }
+        private float _privacyFade = 0.0f;
+        private int _lastPrivMask = 0;
+        private readonly DateTime _startupUtc = DateTime.UtcNow;
+        private ulong _lastPinnedClipHash = 0;
+        private DateTime _lastClipCaptureUtc = DateTime.MinValue;
+        private readonly Dictionary<string, Bitmap> _shelfThumbCache = new Dictionary<string, Bitmap>(StringComparer.OrdinalIgnoreCase);
 
         // Smooth continuous blend factors ("nổi nhẹ từ từ" like Nusa!)
         private readonly Stopwatch _frameClock = Stopwatch.StartNew();
@@ -247,11 +254,17 @@ namespace Kumo
 
             if (_osd != null) _osd.OsdChanged += OnSystemOsdChanged;
             _cachedScreenBounds = GetTargetScreen().Bounds;
-            HandleCreated += (s, e) => { _cachedSelfHwnd = Handle; };
+            HandleCreated += (s, e) =>
+            {
+                _cachedSelfHwnd = Handle;
+                try { NativeMethods.AddClipboardFormatListener(Handle); } catch { }
+            };
             FormClosed += (s, e) =>
             {
                 _bgScanRunning = false;
                 if (_osd != null) _osd.OsdChanged -= OnSystemOsdChanged;
+                try { if (_cachedSelfHwnd != IntPtr.Zero) NativeMethods.RemoveClipboardFormatListener(_cachedSelfHwnd); } catch { }
+                ClearShelfThumbCache();
             };
             _winScanThread = new Thread(BackgroundWindowScanLoop)
             {
@@ -269,10 +282,15 @@ namespace Kumo
         private void OnSystemOsdChanged(OsdKind kind, int percent, bool isMuted, int delta)
         {
             if (IsDisposed) return;
+            if (kind == OsdKind.AudioDevice && !_state.AudioDeviceOsdEnabled) return;
+            if (kind == OsdKind.PrivacyAlert && !_state.PrivacyDotsEnabled) return;
+            double dur = 2.05;
+            if (kind == OsdKind.AudioDevice) dur = 2.85;
+            else if (kind == OsdKind.PrivacyAlert) dur = 2.55;
             try
             {
                 if (IsHandleCreated)
-                    BeginInvoke(new MethodInvoker(delegate { TriggerOsdHud(kind, percent, isMuted, delta, 2.05); }));
+                    BeginInvoke(new MethodInvoker(delegate { TriggerOsdHud(kind, percent, isMuted, delta, dur); }));
             }
             catch { }
         }
@@ -446,6 +464,12 @@ namespace Kumo
                 m.Result = IntPtr.Zero;
                 return;
             }
+            if (m.Msg == NativeMethods.WM_CLIPBOARDUPDATE)
+            {
+                TryCaptureClipboardScreenshotToShelf();
+                m.Result = IntPtr.Zero;
+                return;
+            }
             if (m.Msg == 0x0021) // WM_MOUSEACTIVATE
             {
                 m.Result = new IntPtr(3); // MA_NOACTIVATE: process click immediately without stealing window focus!
@@ -453,12 +477,12 @@ namespace Kumo
             }
             if (m.Msg == 0x0084) // WM_NCHITTEST
             {
-                if (_isFullscreenHidden || (!_isExpanded && !_state.OpenByClick))
+                if (_isFullscreenHidden)
                 {
-                    m.Result = new IntPtr(-1); // HTTRANSPARENT: pass clicks straight through when collapsed!
+                    m.Result = new IntPtr(-1);
                     return;
                 }
-                if (!_isExpanded && _state.OpenByClick)
+                if (!_isExpanded)
                 {
                     int lp = unchecked((int)m.LParam.ToInt64());
                     int sx = (short)(lp & 0xFFFF);
@@ -468,6 +492,12 @@ namespace Kumo
                     int maxHalfW = _isMicroPill ? (int)U(26f) : (int)(_curW * 0.5f + U(4f));
                     int maxH = _isMicroPill ? (int)U(6f) : (int)Math.Max(U(30f), _curH + U(2f));
                     if (Math.Abs(sx - cx) > maxHalfW || (sy - scr.Top) > maxH)
+                    {
+                        m.Result = new IntPtr(-1);
+                        return;
+                    }
+                    // Pass clicks straight through to browser tabs underneath when auto-shrunk/minimal in hover mode!
+                    if (!_state.OpenByClick && (_isMicroPill || _bgTabObstructed))
                     {
                         m.Result = new IntPtr(-1);
                         return;
@@ -614,7 +644,8 @@ namespace Kumo
             }
             else if (IsOsdActive)
             {
-                _targetW = U(240f); _targetH = U(36f); _targetR = U(17f); _targetE = U(11f);
+                bool wideOsd = (_osdKind == OsdKind.AudioDevice || _osdKind == OsdKind.Screenshot || _osdKind == OsdKind.PrivacyAlert);
+                _targetW = U(wideOsd ? 282f : 240f); _targetH = U(36f); _targetR = U(17f); _targetE = U(11f);
             }
             else if (IsDownloadActive && !_alwaysMinimal)
             {
@@ -622,19 +653,20 @@ namespace Kumo
             }
             else if (_isMicroPill || _alwaysMinimal)
             {
-                _targetW = U(44f); _targetH = U(4.5f); _targetR = U(3.0f); _targetE = U(2.5f);
+                _targetW = U(IsPrivacyActive ? 54f : 44f); _targetH = U(IsPrivacyActive ? 5.5f : 4.5f); _targetR = U(3.0f); _targetE = U(2.5f);
             }
             else if (IsCollapsedLyricsActive)
             {
                 double lp; bool syn;
                 string lt = _media.GetCollapsedLyricDisplay(out lp, out syn);
                 int len = string.IsNullOrEmpty(lt) ? 16 : lt.Length;
-                float lyrDp = Math.Max(276f, Math.Min(476f, 136f + len * 7.5f));
+                float privAdd = IsPrivacyActive ? 16f : 0f;
+                float lyrDp = Math.Max(276f, Math.Min(488f, 136f + len * 7.5f + privAdd));
                 _targetW = U(lyrDp); _targetH = U(29f); _targetR = U(14f); _targetE = U(10f);
             }
             else
             {
-                _targetW = U(148f); _targetH = U(29f); _targetR = U(14f); _targetE = U(10f);
+                _targetW = U(IsPrivacyActive ? 168f : 148f); _targetH = U(29f); _targetR = U(14f); _targetE = U(10f);
             }
         }
 
@@ -1090,6 +1122,20 @@ RefreshBatteryLevel();
             float targetDlExp = wantExpDl ? 1.0f : 0.0f;
             float targetDlBar = _dlSnap.IsCompleted ? 1.0f : (_dlSnap.HasExactPercent ? Math.Max(0.03f, Math.Min(1.0f, _dlSnap.Progress01)) : 0.35f);
 
+            int curPrivMask = 0;
+            if (_state.PrivacyDotsEnabled && _osd != null)
+            {
+                if (_osd.IsCameraActive) curPrivMask |= 2;
+                if (_osd.IsMicActive) curPrivMask |= 1;
+            }
+            if (curPrivMask != _lastPrivMask)
+            {
+                _lastPrivMask = curPrivMask;
+                UpdateTargetDimensions();
+                _needsRedraw = true;
+            }
+            float targetPriv = (curPrivMask != 0) ? 1.0f : 0.0f;
+
             bool fM  = MoveTowards(ref _mascotFade,      targetMascot, dt * 1.9f * fadeSpd);
             bool fS  = MoveTowards(ref _sleepFade,       targetSleep,  dt * 1.0f * fadeSpd);
             bool fW  = MoveTowards(ref _waveFade,        targetWave,   dt * 2.6f * fadeSpd);
@@ -1099,8 +1145,9 @@ RefreshBatteryLevel();
             bool fD  = MoveTowards(ref _dlFade,          targetDl,     dt * 5.2f * fadeSpd);
             bool fDE = MoveTowards(ref _dlExpBannerFade, targetDlExp,  dt * 5.2f * fadeSpd);
             bool fDB = (_dlFade > 0.01f || _dlExpBannerFade > 0.01f) && MoveTowards(ref _dlAnimBar, targetDlBar, dt * 5.2f);
+            bool fP  = MoveTowards(ref _privacyFade,     targetPriv,   dt * 4.5f * fadeSpd);
 
-            if (mW || mH || mR || mE || fM || fS || fW || fE || fO || fB || fD || fDE || fDB || _osdFade > 0.01f || _dlFade > 0.01f || _dlExpBannerFade > 0.01f)
+            if (mW || mH || mR || mE || fM || fS || fW || fE || fO || fB || fD || fDE || fDB || fP || _osdFade > 0.01f || _dlFade > 0.01f || _dlExpBannerFade > 0.01f)
             {
                 _needsRedraw = true;
             }
@@ -1327,6 +1374,10 @@ RefreshBatteryLevel();
                             }
                         }
                     }
+                    else if (_privacyFade > 0.04f && bodyH >= U(3.5f))
+                    {
+                        DrawPrivacyDotsCluster(g, x0 + bodyW - U(5f), bodyH * 0.5f, _privacyFade, true);
+                    }
 
                     g.Restore(clipState);
 
@@ -1397,6 +1448,10 @@ RefreshBatteryLevel();
                 }
 
                 string nowClock = DateTime.Now.ToString("HH:mm");
+                float privShift = (_privacyFade > 0.02f)
+                    ? ((_osd != null && _osd.IsCameraActive && _osd.IsMicActive) ? U(21f) : U(13f)) * SmoothStep01(_privacyFade)
+                    : 0f;
+
                 if (showColLyrics)
                 {
                     double colPosSec;
@@ -1405,7 +1460,7 @@ RefreshBatteryLevel();
                     LyricLine colLine = _media.GetActiveCollapsedLyricLine(out colPosSec, out isSyn, out colFallback);
 
                     SizeF clkSz = g.MeasureString(nowClock, _fIdleTime);
-                    float clkRight = _state.EqualizerEnabled ? (x0 + w - U(30f)) : (x0 + w - U(11f));
+                    float clkRight = (_state.EqualizerEnabled ? (x0 + w - U(30f)) : (x0 + w - U(11f))) - privShift;
                     float clkCx = clkRight - clkSz.Width * 0.5f;
                     float divX = (float)Math.Round(clkRight - clkSz.Width - U(5.5f));
                     using (SolidBrush divB = new SolidBrush(IsLight ? Color.FromArgb(70, 30, 41, 59) : Color.FromArgb(68, 255, 255, 255)))
@@ -1422,12 +1477,17 @@ RefreshBatteryLevel();
                 }
                 else
                 {
-                    DrawCenteredText(g, nowClock, _fIdleTime, InkPri, x0 + w * 0.5f, midY);
+                    DrawCenteredText(g, nowClock, _fIdleTime, InkPri, x0 + w * 0.5f - privShift * 0.35f, midY);
                 }
 
                 if (_state.EqualizerEnabled)
                 {
                     DrawEqualizerBars(g, x0 + w - U(18.5f), midY);
+                }
+                if (_privacyFade > 0.02f)
+                {
+                    float dotRightX = _state.EqualizerEnabled ? (x0 + w - U(33.5f)) : (x0 + w - U(11.5f));
+                    DrawPrivacyDotsCluster(g, dotRightX, midY, SmoothStep01(_privacyFade), false);
                 }
                 g.Restore(stClock);
 
@@ -1670,16 +1730,21 @@ RefreshBatteryLevel();
             }
 
             float gearX = _state.EqualizerEnabled ? (x0 + w - U(44f)) : (x0 + w - U(24f));
+            float badgeRightX = gearX - U(13f);
+            if (IsPrivacyActive)
+            {
+                badgeRightX = DrawPrivacyHeaderBadge(g, "hdr_privacy", badgeRightX, hdrY) - U(5f);
+            }
             if (IsDownloadActive)
             {
-                DrawDownloadHeaderBadge(g, "hdr_dl", gearX - U(23f), hdrY);
+                DrawDownloadHeaderBadge(g, "hdr_dl", badgeRightX - U(10f), hdrY);
             }
             else if (UpdaterService.HasNewerRelease && !string.IsNullOrEmpty(UpdaterService.LatestTag))
             {
                 string upTxt = "\u2B06 " + UpdaterService.LatestTag;
                 SizeF upSz = g.MeasureString(upTxt, _fShelfSub);
                 float upW = upSz.Width + U(12f);
-                RectangleF upRect = new RectangleF(gearX - U(14f) - upW, hdrY - U(8.5f), upW, U(17f));
+                RectangleF upRect = new RectangleF(badgeRightX - upW, hdrY - U(8.5f), upW, U(17f));
                 _hitZones.Add(new HitZone { Id = "hdr_update", Rect = upRect });
                 bool upHov = (_hoveredId == "hdr_update");
                 FillPill(g, upRect, upHov ? Color.FromArgb(230, 16, 185, 129) : Color.FromArgb(145, 5, 150, 105));
@@ -1725,8 +1790,13 @@ RefreshBatteryLevel();
             if (_osdFade > 0.02f)
             {
                 float oEase = SmoothStep01(_osdFade);
-                float bw = U(236f), bh = U(31f);
+                bool wideOsd = (_osdKind == OsdKind.AudioDevice || _osdKind == OsdKind.Screenshot || _osdKind == OsdKind.PrivacyAlert);
+                float bw = U(wideOsd ? 276f : 236f), bh = U(31f);
                 RectangleF banner = new RectangleF(x0 + (w - bw) * 0.5f, U(4f) - (1.0f - oEase) * U(6f), bw, bh);
+                if (_osdKind == OsdKind.Screenshot || _osdKind == OsdKind.PrivacyAlert)
+                {
+                    _hitZones.Add(new HitZone { Id = "osd_banner", Rect = banner });
+                }
                 Color capBg = IsLight ? Color.FromArgb((int)(246f * oEase), 255, 255, 255) : Color.FromArgb((int)(242f * oEase), 16, 20, 30);
                 FillPill(g, banner, capBg);
                 using (GraphicsPath bp = CreateRoundRect(banner, bh * 0.5f))
@@ -2402,10 +2472,11 @@ RefreshBatteryLevel();
         {
             DrawLeftVCenteredText(g, "Shelf", _fTitle, InkPri, x0 + U(15f), U(19f));
 
-            DrawNusaPillButton(g, "shelf_browse", new RectangleF(x0 + U(58f), U(10f), U(46f), U(18f)), "+ Add", Color.FromArgb(165, 14, 116, 204));
+            DrawNusaPillButton(g, "shelf_browse", new RectangleF(x0 + U(54f), U(10f), U(42f), U(18f)), "+ Add", Color.FromArgb(165, 14, 116, 204));
+            DrawNusaPillButton(g, "shelf_snip", new RectangleF(x0 + U(99f), U(10f), U(44f), U(18f)), "Snip", Color.FromArgb(155, 124, 58, 237));
             if (_state.ShelfFiles.Count > 0)
             {
-                DrawNusaPillButton(g, "shelf_clear", new RectangleF(x0 + U(108f), U(10f), U(46f), U(18f)), "Clear", Nw(38));
+                DrawNusaPillButton(g, "shelf_clear", new RectangleF(x0 + U(146f), U(10f), U(42f), U(18f)), "Clear", Nw(38));
             }
 
             RectangleF zone = new RectangleF(x0 + U(42f), U(33f), U(338f), U(90f));
@@ -2460,21 +2531,40 @@ RefreshBatteryLevel();
                     FillRoundRect(g, thumb, U(9f), IsLight ? Color.FromArgb(228, 235, 247) : Color.FromArgb(38, 44, 62));
 
                     bool drewSysIcon = false;
-                    try
+                    Bitmap imgPreview = GetCachedShelfImageThumb(fp);
+                    if (imgPreview != null)
                     {
-                        if (File.Exists(fp))
+                        using (GraphicsPath tpClip = CreateRoundRect(thumb, U(9f)))
                         {
-                            using (Icon ico = Icon.ExtractAssociatedIcon(fp))
+                            GraphicsState stImg = g.Save();
+                            g.SetClip(tpClip, CombineMode.Intersect);
+                            g.DrawImage(imgPreview, thumb);
+                            g.Restore(stImg);
+                            using (Pen bPen = new Pen(Nw(58), 1f))
                             {
-                                if (ico != null)
+                                g.DrawPath(bPen, tpClip);
+                            }
+                        }
+                        drewSysIcon = true;
+                    }
+                    if (!drewSysIcon)
+                    {
+                        try
+                        {
+                            if (File.Exists(fp))
+                            {
+                                using (Icon ico = Icon.ExtractAssociatedIcon(fp))
                                 {
-                                    g.DrawIcon(ico, new Rectangle((int)(thumb.X + U(6f)), (int)(thumb.Y + U(6f)), (int)U(28f), (int)U(28f)));
-                                    drewSysIcon = true;
+                                    if (ico != null)
+                                    {
+                                        g.DrawIcon(ico, new Rectangle((int)(thumb.X + U(6f)), (int)(thumb.Y + U(6f)), (int)U(28f), (int)U(28f)));
+                                        drewSysIcon = true;
+                                    }
                                 }
                             }
                         }
+                        catch { }
                     }
-                    catch { }
                     if (!drewSysIcon)
                     {
                         DrawCenteredText(g, Path.GetExtension(fp).ToUpperInvariant(), _fAxis, InkPri, thumb.X + thumb.Width * 0.5f, thumb.Y + thumb.Height * 0.5f);
@@ -2807,6 +2897,167 @@ RefreshBatteryLevel();
             }
         }
 
+        private void DrawPrivacyDotsCluster(Graphics g, float rightX, float cy, float alpha01, bool micro)
+        {
+            if (_osd == null || alpha01 <= 0.02f) return;
+            bool cam = _osd.IsCameraActive;
+            bool mic = _osd.IsMicActive;
+            if (!cam && !mic) return;
+
+            int a = Math.Max(0, Math.Min(255, (int)(255f * alpha01)));
+            float dotR = micro ? U(1.65f) : U(3.15f);
+            float haloR = micro ? U(2.9f) : U(6.2f);
+            float curX = rightX - dotR;
+
+            if (mic)
+            {
+                using (SolidBrush hb = new SolidBrush(Color.FromArgb(Math.Min(110, a / 2), 249, 115, 22)))
+                using (SolidBrush db = new SolidBrush(Color.FromArgb(a, 255, 149, 0)))
+                {
+                    g.FillEllipse(hb, curX - haloR, cy - haloR, haloR * 2f, haloR * 2f);
+                    g.FillEllipse(db, curX - dotR, cy - dotR, dotR * 2f, dotR * 2f);
+                }
+                curX -= (micro ? U(4.8f) : U(8.6f));
+            }
+            if (cam)
+            {
+                using (SolidBrush hb = new SolidBrush(Color.FromArgb(Math.Min(110, a / 2), 34, 197, 94)))
+                using (SolidBrush db = new SolidBrush(Color.FromArgb(a, 48, 209, 88)))
+                {
+                    g.FillEllipse(hb, curX - haloR, cy - haloR, haloR * 2f, haloR * 2f);
+                    g.FillEllipse(db, curX - dotR, cy - dotR, dotR * 2f, dotR * 2f);
+                }
+            }
+        }
+
+        private float DrawPrivacyHeaderBadge(Graphics g, string id, float rightEdgeX, float cy)
+        {
+            if (_osd == null) return rightEdgeX;
+            bool cam = _osd.IsCameraActive;
+            bool mic = _osd.IsMicActive;
+            if (!cam && !mic) return rightEdgeX;
+
+            string app = cam ? _osd.CameraAppName : _osd.MicAppName;
+            string prefix = (cam && mic) ? "Cam+Mic" : (cam ? "Cam" : "Mic");
+            string text = !string.IsNullOrEmpty(app) ? (prefix + " \u00B7 " + Truncate(app, 9)) : prefix;
+
+            SizeF tSz = g.MeasureString(text, _fShelfSub);
+            float dotSpan = (cam && mic) ? U(18f) : U(11f);
+            float pillW = dotSpan + tSz.Width + U(10f);
+            RectangleF rect = new RectangleF(rightEdgeX - pillW, cy - U(8.5f), pillW, U(17f));
+            _hitZones.Add(new HitZone { Id = id, Rect = rect });
+            bool hov = (_hoveredId == id);
+
+            Color bg = cam
+                ? Color.FromArgb(hov ? 105 : 64, 34, 197, 94)
+                : Color.FromArgb(hov ? 105 : 64, 249, 115, 22);
+            FillPill(g, rect, bg);
+
+            float dx = rect.X + U(7f);
+            float r = U(2.8f);
+            if (cam)
+            {
+                using (SolidBrush cb = new SolidBrush(Color.FromArgb(255, 48, 209, 88)))
+                {
+                    g.FillEllipse(cb, dx - r, cy - r, r * 2f, r * 2f);
+                }
+                dx += U(6.8f);
+            }
+            if (mic)
+            {
+                using (SolidBrush mb = new SolidBrush(Color.FromArgb(255, 255, 149, 0)))
+                {
+                    g.FillEllipse(mb, dx - r, cy - r, r * 2f, r * 2f);
+                }
+                dx += U(6.8f);
+            }
+
+            DrawLeftVCenteredText(g, text, _fShelfSub, InkPri, dx - U(1.5f), cy);
+            return rect.X;
+        }
+
+        private void DrawHeadphonesVector(Graphics g, float cx, float cy, int alpha)
+        {
+            Color c = IsLight ? Color.FromArgb(alpha, 2, 132, 199) : Color.FromArgb(alpha, 56, 189, 248);
+            using (Pen bp = new Pen(c, U(1.65f)))
+            using (SolidBrush sb = new SolidBrush(c))
+            {
+                bp.StartCap = LineCap.Round; bp.EndCap = LineCap.Round;
+                g.DrawArc(bp, cx - U(5.6f), cy - U(6.0f), U(11.2f), U(10.5f), 180f, 180f);
+                FillRoundRect(g, new RectangleF(cx - U(6.6f), cy - U(1.2f), U(2.9f), U(6.0f)), U(1.3f), c);
+                FillRoundRect(g, new RectangleF(cx + U(3.7f), cy - U(1.2f), U(2.9f), U(6.0f)), U(1.3f), c);
+            }
+        }
+
+        private void DrawPrivacySensorVector(Graphics g, float cx, float cy, bool isCam, int alpha)
+        {
+            Color c = isCam
+                ? (IsLight ? Color.FromArgb(alpha, 22, 163, 74) : Color.FromArgb(alpha, 48, 209, 88))
+                : (IsLight ? Color.FromArgb(alpha, 234, 88, 12) : Color.FromArgb(alpha, 255, 149, 0));
+            using (Pen p = new Pen(c, U(1.55f)))
+            using (SolidBrush sb = new SolidBrush(c))
+            {
+                p.StartCap = LineCap.Round; p.EndCap = LineCap.Round; p.LineJoin = LineJoin.Round;
+                if (isCam)
+                {
+                    FillRoundRect(g, new RectangleF(cx - U(6.2f), cy - U(3.8f), U(8.4f), U(7.6f)), U(1.8f), c);
+                    PointF[] lens = new PointF[]
+                    {
+                        new PointF(cx + U(2.4f), cy - U(1.6f)),
+                        new PointF(cx + U(6.2f), cy - U(3.5f)),
+                        new PointF(cx + U(6.2f), cy + U(3.5f)),
+                        new PointF(cx + U(2.4f), cy + U(1.6f))
+                    };
+                    g.FillPolygon(sb, lens);
+                }
+                else
+                {
+                    FillRoundRect(g, new RectangleF(cx - U(2.4f), cy - U(6.0f), U(4.8f), U(7.6f)), U(2.4f), c);
+                    g.DrawArc(p, cx - U(4.6f), cy - U(3.6f), U(9.2f), U(7.4f), 0f, 180f);
+                    g.DrawLine(p, cx, cy + U(3.8f), cx, cy + U(6.0f));
+                }
+            }
+        }
+
+        private void DrawScreenshotVector(Graphics g, float cx, float cy, int alpha)
+        {
+            Color c = IsLight ? Color.FromArgb(alpha, 124, 58, 237) : Color.FromArgb(alpha, 167, 139, 250);
+            using (Pen p = new Pen(c, U(1.55f)))
+            using (SolidBrush sb = new SolidBrush(c))
+            {
+                p.StartCap = LineCap.Round; p.EndCap = LineCap.Round;
+                float r = U(5.6f), s = U(2.6f);
+                g.DrawLines(p, new PointF[] { new PointF(cx - r, cy - r + s), new PointF(cx - r, cy - r), new PointF(cx - r + s, cy - r) });
+                g.DrawLines(p, new PointF[] { new PointF(cx + r - s, cy - r), new PointF(cx + r, cy - r), new PointF(cx + r, cy - r + s) });
+                g.DrawLines(p, new PointF[] { new PointF(cx - r, cy + r - s), new PointF(cx - r, cy + r), new PointF(cx - r + s, cy + r) });
+                g.DrawLines(p, new PointF[] { new PointF(cx + r - s, cy + r), new PointF(cx + r, cy + r), new PointF(cx + r, cy + r - s) });
+                g.FillEllipse(sb, cx - U(2.1f), cy - U(2.1f), U(4.2f), U(4.2f));
+            }
+        }
+
+        private void DrawMediaToggleVector(Graphics g, float cx, float cy, bool playing, int alpha)
+        {
+            Color c = IsLight ? Color.FromArgb(alpha, 14, 165, 233) : Color.FromArgb(alpha, 56, 189, 248);
+            using (SolidBrush sb = new SolidBrush(c))
+            {
+                if (playing)
+                {
+                    PointF[] tri = new PointF[]
+                    {
+                        new PointF(cx - U(3.6f), cy - U(4.8f)),
+                        new PointF(cx + U(4.8f), cy),
+                        new PointF(cx - U(3.6f), cy + U(4.8f))
+                    };
+                    g.FillPolygon(sb, tri);
+                }
+                else
+                {
+                    FillRoundRect(g, new RectangleF(cx - U(4.4f), cy - U(4.6f), U(3.1f), U(9.2f)), U(1.1f), c);
+                    FillRoundRect(g, new RectangleF(cx + U(1.3f), cy - U(4.6f), U(3.1f), U(9.2f)), U(1.1f), c);
+                }
+            }
+        }
+
         private void DrawOsdHudRow(Graphics g, float x, float cy, float w, float alpha01)
         {
             int a = Math.Max(0, Math.Min(255, (int)(255f * alpha01)));
@@ -2815,7 +3066,61 @@ RefreshBatteryLevel();
             string label, rightTxt;
             Color barStart, barEnd, labelCol;
 
-            if (_osdKind == OsdKind.Brightness)
+            if (_osdKind == OsdKind.AudioDevice)
+            {
+                bool hp = (_osdDelta > 0);
+                if (hp)
+                {
+                    DrawHeadphonesVector(g, iconCx, cy, a);
+                }
+                else
+                {
+                    Color spCol = IsLight ? Color.FromArgb(2, 132, 199) : Color.FromArgb(56, 189, 248);
+                    DrawSpeakerVector(g, iconCx, cy, _osdMuted, _osdPercent, spCol, a);
+                }
+                string dev = (_osd != null && !string.IsNullOrEmpty(_osd.AudioDeviceName))
+                    ? _osd.AudioDeviceName
+                    : (hp ? _state.T("Tai nghe", "Headphones") : _state.T("Loa ngo\u00E0i", "Speakers"));
+                label = Truncate(dev, 23);
+                rightTxt = _osdMuted ? _state.T("T\u1EAFt", "Mute") : string.Format(CultureInfo.InvariantCulture, "{0}%", _osdPercent);
+                barStart = Color.FromArgb(a, 14, 165, 233); barEnd = Color.FromArgb(a, 56, 189, 248);
+                labelCol = IsLight ? Color.FromArgb(a, 2, 132, 199) : Color.FromArgb(a, 125, 211, 252);
+            }
+            else if (_osdKind == OsdKind.PrivacyAlert)
+            {
+                bool cam = (_osdDelta == 2 || _osdDelta == 3);
+                DrawPrivacySensorVector(g, iconCx, cy, cam, a);
+                string app = (_osd != null) ? (cam ? _osd.CameraAppName : _osd.MicAppName) : "";
+                string kindName = (_osdDelta == 3)
+                    ? "Camera & Mic"
+                    : (cam ? "Camera" : "Microphone");
+                label = !string.IsNullOrEmpty(app) ? Truncate(kindName + " \u00B7 " + app, 24) : kindName;
+                rightTxt = _state.T("\u0110ang b\u1EADt", "Active");
+                barStart = cam ? Color.FromArgb(a, 22, 163, 74) : Color.FromArgb(a, 234, 88, 12);
+                barEnd   = cam ? Color.FromArgb(a, 74, 222, 128) : Color.FromArgb(a, 251, 146, 60);
+                labelCol = cam
+                    ? (IsLight ? Color.FromArgb(a, 21, 128, 61) : Color.FromArgb(a, 74, 222, 128))
+                    : (IsLight ? Color.FromArgb(a, 194, 65, 12) : Color.FromArgb(a, 253, 186, 116));
+            }
+            else if (_osdKind == OsdKind.Screenshot)
+            {
+                DrawScreenshotVector(g, iconCx, cy, a);
+                label = _state.T("\u0110\u00E3 ghim \u1EA3nh ch\u1EE5p v\u00E0o K\u1EC7", "Screenshot pinned to Shelf");
+                rightTxt = _state.T("K\u1EC7 t\u1EC7p", "Shelf");
+                barStart = Color.FromArgb(a, 124, 58, 237); barEnd = Color.FromArgb(a, 56, 189, 248);
+                labelCol = IsLight ? Color.FromArgb(a, 109, 40, 217) : Color.FromArgb(a, 196, 181, 253);
+            }
+            else if (_osdKind == OsdKind.MediaToggle)
+            {
+                bool pl = (_osdDelta > 0);
+                DrawMediaToggleVector(g, iconCx, cy, pl, a);
+                string tr = !string.IsNullOrEmpty(_media.CurrentTitle) ? _media.CurrentTitle : _state.T("Tr\u00ECnh ph\u00E1t nh\u1EA1c", "Media Player");
+                label = Truncate(tr, 20);
+                rightTxt = pl ? _state.T("Ph\u00E1t", "Play") : _state.T("D\u1EEBng", "Pause");
+                barStart = Color.FromArgb(a, 14, 165, 233); barEnd = Color.FromArgb(a, 52, 211, 153);
+                labelCol = Nw((int)(230 * alpha01));
+            }
+            else if (_osdKind == OsdKind.Brightness)
             {
                 DrawSunVector(g, iconCx, cy, _osdPercent, a);
                 string dir = (_osdDelta > 0) ? " \u25B2" : ((_osdDelta < 0) ? " \u25BC" : "");
@@ -3475,6 +3780,18 @@ RefreshBatteryLevel();
         // ==================== FULL INTERACTION: CLICK, SCRUB, SCROLL & DRAG ====================
         private void OnNotchMouseWheel(object sender, MouseEventArgs e)
         {
+            bool shiftHeld = (Control.ModifierKeys & Keys.Shift) != 0;
+            bool ctrlHeld = (Control.ModifierKeys & Keys.Control) != 0;
+
+            if (shiftHeld && _osd != null)
+            {
+                if (_osd.SupportsBrightness)
+                    _osd.AdjustBrightness(e.Delta > 0 ? 5 : -5);
+                else
+                    _osd.AdjustVolume(e.Delta > 0 ? 2 : -2);
+                return;
+            }
+
             if (!_isExpanded)
             {
                 if (_osd != null)
@@ -3483,7 +3800,7 @@ RefreshBatteryLevel();
                 }
                 return;
             }
-            if (_hoveredId == "media_vol" && _osd != null)
+            if ((ctrlHeld || _hoveredId == "media_vol" || e.Y <= U(28f)) && _osd != null)
             {
                 _osd.AdjustVolume(e.Delta > 0 ? 4 : -4);
                 return;
@@ -3575,14 +3892,19 @@ RefreshBatteryLevel();
 
             if (e.Button == MouseButtons.Middle)
             {
-                _media.TogglePlayPause();
+                bool willPlay = !_media.IsPlaying;
+                if (_media.HasMedia)
+                    _media.TogglePlayPause();
+                else
+                    NativeMethods.SendMediaKey(NativeMethods.VK_MEDIA_PLAY_PAUSE);
+                TriggerOsdHud(OsdKind.MediaToggle, willPlay ? 100 : 35, false, willPlay ? 1 : -1, 1.55);
                 _needsRedraw = true;
                 return;
             }
 
             if (!_isExpanded)
             {
-                if (e.Button == MouseButtons.Left && _state.OpenByClick)
+                if (e.Button == MouseButtons.Left)
                 {
                     _isExpanded = true;
                     _isMicroPill = false;
@@ -3698,6 +4020,25 @@ RefreshBatteryLevel();
             else if (id == "hdr_bat")
             {
                 TriggerOsdHud(OsdKind.Battery, _batteryPercent, false, 0, 2.5);
+            }
+            else if (id == "hdr_privacy")
+            {
+                bool cam = (_osd != null && _osd.IsCameraActive);
+                try { Process.Start(cam ? "ms-settings:privacy-webcam" : "ms-settings:privacy-microphone"); } catch { }
+            }
+            else if (id == "osd_banner")
+            {
+                if (_osdKind == OsdKind.Screenshot)
+                {
+                    _osdUntilUtc = DateTime.MinValue;
+                    _pageIndex = 3;
+                    UpdateTargetDimensions();
+                }
+                else if (_osdKind == OsdKind.PrivacyAlert)
+                {
+                    bool cam = (_osd != null && _osd.IsCameraActive);
+                    try { Process.Start(cam ? "ms-settings:privacy-webcam" : "ms-settings:privacy-microphone"); } catch { }
+                }
             }
             else if (id == "dl_open" || id == "hdr_dl")
             {
@@ -3841,10 +4182,19 @@ RefreshBatteryLevel();
             {
                 BrowseFilesForShelf();
             }
+            else if (id == "shelf_snip")
+            {
+                _isExpanded = false;
+                _suppressHoverUntilLeave = true;
+                _hw.IsNotchExpanded = false;
+                UpdateTargetDimensions();
+                try { Process.Start("ms-screenclip:"); } catch { }
+            }
             else if (id == "shelf_clear")
             {
                 _state.ShelfFiles.Clear();
                 _state.Shelf.Clear();
+                ClearShelfThumbCache();
                 _state.SaveAll();
             }
             else if (id.StartsWith("shelf_del_"))
@@ -3852,7 +4202,9 @@ RefreshBatteryLevel();
                 int idx;
                 if (int.TryParse(id.Substring("shelf_del_".Length), out idx) && idx >= 0 && idx < _state.ShelfFiles.Count)
                 {
+                    string removed = _state.ShelfFiles[idx];
                     _state.ShelfFiles.RemoveAt(idx);
+                    RemoveShelfThumbCacheItem(removed);
                     _state.SaveAll();
                 }
             }
@@ -4039,6 +4391,185 @@ RefreshBatteryLevel();
                     _needsRedraw = true;
                 }
             }
+        }
+
+        private void ClearShelfThumbCache()
+        {
+            foreach (KeyValuePair<string, Bitmap> kv in _shelfThumbCache)
+            {
+                if (kv.Value != null)
+                {
+                    try { kv.Value.Dispose(); } catch { }
+                }
+            }
+            _shelfThumbCache.Clear();
+        }
+
+        private void RemoveShelfThumbCacheItem(string path)
+        {
+            if (string.IsNullOrEmpty(path)) return;
+            Bitmap bmp;
+            if (_shelfThumbCache.TryGetValue(path, out bmp))
+            {
+                _shelfThumbCache.Remove(path);
+                if (bmp != null)
+                {
+                    try { bmp.Dispose(); } catch { }
+                }
+            }
+        }
+
+        private Bitmap GetCachedShelfImageThumb(string path)
+        {
+            if (string.IsNullOrEmpty(path)) return null;
+            string ext;
+            try { ext = (Path.GetExtension(path) ?? "").ToLowerInvariant(); } catch { return null; }
+            if (ext != ".png" && ext != ".jpg" && ext != ".jpeg" && ext != ".bmp" && ext != ".gif")
+            {
+                return null;
+            }
+
+            Bitmap cached;
+            if (_shelfThumbCache.TryGetValue(path, out cached))
+            {
+                return cached;
+            }
+
+            try
+            {
+                if (!File.Exists(path)) return null;
+                FileInfo fi = new FileInfo(path);
+                if (fi.Length < 64 || fi.Length > 25 * 1024 * 1024) return null;
+
+                byte[] bytes = File.ReadAllBytes(path);
+                using (MemoryStream ms = new MemoryStream(bytes))
+                using (Bitmap src = new Bitmap(ms))
+                {
+                    int w = src.Width, h = src.Height;
+                    if (w < 4 || h < 4) return null;
+                    int side = Math.Min(w, h);
+                    int sx = (w - side) / 2;
+                    int sy = (h - side) / 2;
+
+                    Bitmap sq = new Bitmap(96, 96, PixelFormat.Format32bppArgb);
+                    using (Graphics g = Graphics.FromImage(sq))
+                    {
+                        g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+                        g.SmoothingMode = SmoothingMode.AntiAlias;
+                        g.PixelOffsetMode = PixelOffsetMode.HighQuality;
+                        g.DrawImage(src, new Rectangle(0, 0, 96, 96), new Rectangle(sx, sy, side, side), GraphicsUnit.Pixel);
+                    }
+                    if (_shelfThumbCache.Count >= 16) ClearShelfThumbCache();
+                    _shelfThumbCache[path] = sq;
+                    return sq;
+                }
+            }
+            catch
+            {
+                _shelfThumbCache[path] = null;
+                return null;
+            }
+        }
+
+        private void TryCaptureClipboardScreenshotToShelf()
+        {
+            if (!_state.AutoPinScreenshots) return;
+            DateTime now = DateTime.UtcNow;
+            if ((now - _startupUtc).TotalSeconds < 1.5) return;
+            if ((now - _lastClipCaptureUtc).TotalMilliseconds < 320.0) return;
+
+            try
+            {
+                if (Clipboard.ContainsFileDropList() || !Clipboard.ContainsImage())
+                {
+                    return;
+                }
+
+                using (Image rawImg = Clipboard.GetImage())
+                {
+                    Bitmap bmp = rawImg as Bitmap;
+                    bool ownBmp = false;
+                    if (bmp == null && rawImg != null)
+                    {
+                        bmp = new Bitmap(rawImg);
+                        ownBmp = true;
+                    }
+                    try
+                    {
+                        if (bmp == null || bmp.Width < 24 || bmp.Height < 24) return;
+
+                        ulong hash = 14695981039346656037UL;
+                        hash = (hash ^ (ulong)bmp.Width) * 1099511628211UL;
+                        hash = (hash ^ (ulong)bmp.Height) * 1099511628211UL;
+                        for (int gy = 1; gy <= 4; gy++)
+                        {
+                            int py = (bmp.Height * gy) / 5;
+                            for (int gx = 1; gx <= 4; gx++)
+                            {
+                                int px = (bmp.Width * gx) / 5;
+                                int argb = bmp.GetPixel(px, py).ToArgb();
+                                hash = (hash ^ unchecked((ulong)(uint)argb)) * 1099511628211UL;
+                            }
+                        }
+
+                        if (hash == _lastPinnedClipHash) return;
+                        _lastPinnedClipHash = hash;
+                        _lastClipCaptureUtc = now;
+
+                        string snipDir = Path.Combine(_state.DataDir, "Snips");
+                        if (!Directory.Exists(snipDir)) Directory.CreateDirectory(snipDir);
+
+                        string fileName = "Snip_" + DateTime.Now.ToString("yyyyMMdd_HHmmss", CultureInfo.InvariantCulture) + ".png";
+                        string fullPath = Path.Combine(snipDir, fileName);
+                        if (File.Exists(fullPath))
+                        {
+                            fileName = "Snip_" + DateTime.Now.ToString("yyyyMMdd_HHmmss_fff", CultureInfo.InvariantCulture) + ".png";
+                            fullPath = Path.Combine(snipDir, fileName);
+                        }
+
+                        bmp.Save(fullPath, ImageFormat.Png);
+
+                        // Prune old snips beyond newest 15 files so disk stays clean
+                        try
+                        {
+                            FileInfo[] existing = new DirectoryInfo(snipDir).GetFiles("Snip_*.png");
+                            if (existing != null && existing.Length > 15)
+                            {
+                                Array.Sort(existing, delegate(FileInfo a, FileInfo b) { return b.CreationTimeUtc.CompareTo(a.CreationTimeUtc); });
+                                for (int k = 15; k < existing.Length; k++)
+                                {
+                                    string oldP = existing[k].FullName;
+                                    if (!_state.ShelfFiles.Contains(oldP))
+                                    {
+                                        try { existing[k].Delete(); } catch { }
+                                    }
+                                }
+                            }
+                        }
+                        catch { }
+
+                        _state.ShelfFiles.Remove(fullPath);
+                        _state.ShelfFiles.Insert(0, fullPath);
+                        while (_state.ShelfFiles.Count > 12)
+                        {
+                            string tail = _state.ShelfFiles[_state.ShelfFiles.Count - 1];
+                            _state.ShelfFiles.RemoveAt(_state.ShelfFiles.Count - 1);
+                            RemoveShelfThumbCacheItem(tail);
+                        }
+                        _state.SaveAll();
+
+                        TriggerOsdHud(OsdKind.Screenshot, 100, false, 1, 2.35);
+                    }
+                    finally
+                    {
+                        if (ownBmp && bmp != null)
+                        {
+                            try { bmp.Dispose(); } catch { }
+                        }
+                    }
+                }
+            }
+            catch { }
         }
     }
 

@@ -39,6 +39,13 @@ namespace Kumo
         public const int ULW_ALPHA = 0x00000002;
 
         public const int WM_DROPFILES = 0x0233;
+        public const int WM_CLIPBOARDUPDATE = 0x031D;
+
+        [DllImport("user32.dll", SetLastError = true)]
+        public static extern bool AddClipboardFormatListener(IntPtr hwnd);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        public static extern bool RemoveClipboardFormatListener(IntPtr hwnd);
 
         [StructLayout(LayoutKind.Sequential)]
         public struct POINT

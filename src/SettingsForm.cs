@@ -768,6 +768,16 @@ namespace Kumo
                 _state.T("Tự động hiện thanh tiến trình khi tải tệp trên trình duyệt (Chrome, Edge, Cốc Cốc, Firefox...) hoặc tải app từ Microsoft Store.", "Show live download progress on the notch for web browsers and Microsoft Store apps."),
                 _state.DownloadHudEnabled);
 
+            y = DrawToggleCard(g, x, y, w, "tog_audio_osd",
+                _state.T("Thông báo Tai nghe Bluetooth & Đổi loa (Audio switch)", "Bluetooth headphones & audio switch alert"),
+                _state.T("Tự động bung thông báo trên tai thỏ khi kết nối tai nghe Bluetooth, cắm tai nghe dây hoặc đổi thiết bị phát âm thanh.", "Pop up a Dynamic Island alert when connecting headphones or switching audio output."),
+                _state.AudioDeviceOsdEnabled);
+
+            y = DrawToggleCard(g, x, y, w, "tog_privacy_dots",
+                _state.T("Chấm báo hiệu Camera & Mic đang bật (Privacy dots)", "Camera & Microphone privacy indicator dots"),
+                _state.T("Hiện chấm xanh lá (Camera) và chấm cam (Mic) trên mép tai thỏ kèm tên ứng dụng đang thu âm/ghi hình.", "Show green (Camera) and amber (Mic) privacy dots with the active app name."),
+                _state.PrivacyDotsEnabled);
+
             y = DrawToggleCard(g, x, y, w, "tog_sounds",
                 _state.T("Âm báo nhắc nhở (Reminder sounds)", "Reminder sounds"),
                 _state.T("Phát âm báo nhẹ khi kết thúc phiên tập trung Pomodoro.", "Play subtle chimes when Pomodoro focus or break timers complete."),
@@ -831,7 +841,7 @@ namespace Kumo
 
             y = DrawSegmentedCard(g, x, y, w, "seg_open_",
                 _state.T("Cách mở tai thỏ (Open the notch)", "Open the notch"),
-                _state.T("Mở ngay khi lướt chuột vào tai thỏ hoặc chỉ mở khi nhấp chuột trái.", "Expand smoothly on mouse hover or require a left click."),
+                _state.T("Lăn chuột chỉnh âm lượng · Shift + Lăn chuột chỉnh độ sáng · Chuột giữa Dừng/Phát nhạc nhanh.", "Scroll wheel adjusts volume · Shift + Scroll adjusts brightness · Middle-click toggles Play/Pause."),
                 new string[] { _state.T("Đưa chuột (Hover)", "Hover"), _state.T("Nhấp chuột (Click)", "Click") },
                 _state.OpenByClick ? 1 : 0);
 
@@ -1057,6 +1067,11 @@ namespace Kumo
 
             y += U(10f);
             y = DrawSectionHeader(g, x, y, _state.T("KỆ LƯU TRỮ TỆP KÉO-THẢ (FILE SHELF)", "FILE SHELF"));
+
+            y = DrawToggleCard(g, x, y, w, "tog_auto_snips",
+                _state.T("Tự ghim ảnh chụp màn hình vào Kệ (Win + Shift + S)", "Auto-pin screenshots to Shelf (Win + Shift + S)"),
+                _state.T("Tự động lưu ảnh vừa chụp màn hình vào Kệ tệp có ảnh xem trước để kéo-thả ngay sang Zalo, Messenger, Discord.", "Automatically pin new screenshots to Shelf with live thumbnails for instant drag-and-drop."),
+                _state.AutoPinScreenshots);
 
             y = DrawToggleCard(g, x, y, w, "tog_shelf_clear",
                 _state.T("Làm trống Kệ tệp khi khởi động", "Start with an empty Shelf"),
@@ -1499,6 +1514,16 @@ namespace Kumo
                 _state.DownloadHudEnabled = !_state.DownloadHudEnabled;
                 SaveAndApply();
             }
+            else if (id == "tog_audio_osd")
+            {
+                _state.AudioDeviceOsdEnabled = !_state.AudioDeviceOsdEnabled;
+                SaveAndApply();
+            }
+            else if (id == "tog_privacy_dots")
+            {
+                _state.PrivacyDotsEnabled = !_state.PrivacyDotsEnabled;
+                SaveAndApply();
+            }
             else if (id == "tog_sounds")
             {
                 _state.ReminderSounds = !_state.ReminderSounds;
@@ -1636,6 +1661,11 @@ namespace Kumo
                     _state.Todos.RemoveAt(idx);
                     SaveAndApply();
                 }
+            }
+            else if (id == "tog_auto_snips")
+            {
+                _state.AutoPinScreenshots = !_state.AutoPinScreenshots;
+                SaveAndApply();
             }
             else if (id == "tog_shelf_clear")
             {

@@ -51,6 +51,9 @@ namespace Kumo
         public bool DefaultLyricsSplit = false;
         public bool EqualizerEnabled = true;
         public bool DownloadHudEnabled = true;   // Animated equalizer bars on Notch
+        public bool AudioDeviceOsdEnabled = true;
+        public bool PrivacyDotsEnabled = true;
+        public bool AutoPinScreenshots = true;
 
         // ==================== ACTIVE UI NAVIGATION ====================
         public int ActiveTab = 0;
@@ -171,6 +174,10 @@ namespace Kumo
             ShowLyrics = true;
             DefaultLyricsSplit = false;
             EqualizerEnabled = true;
+            DownloadHudEnabled = true;
+            AudioDeviceOsdEnabled = true;
+            PrivacyDotsEnabled = true;
+            AutoPinScreenshots = true;
             FocusMinutes = 25;
             ShortBreakMinutes = 5;
             LongBreakMinutes = 15;
@@ -244,6 +251,9 @@ namespace Kumo
                         else if (k == "lyrics_split") DefaultLyricsSplit = (v == "1");
                         else if (k == "equalizer") EqualizerEnabled = (v == "1");
                         else if (k == "dl_hud") DownloadHudEnabled = (v == "1");
+                        else if (k == "audio_dev_osd") AudioDeviceOsdEnabled = (v == "1");
+                        else if (k == "privacy_dots") PrivacyDotsEnabled = (v == "1");
+                        else if (k == "auto_pin_snips") AutoPinScreenshots = (v == "1");
                         else if (k == "water_remind") WaterRemindersEnabled = (v == "1");
                         else if (k == "water_goal") int.TryParse(v, out WaterGoalMl);
                         else if (k == "water_drank") int.TryParse(v, out WaterDrankMl);
@@ -372,6 +382,9 @@ namespace Kumo
                 sb.AppendLine("lyrics_split=" + (DefaultLyricsSplit ? "1" : "0"));
                 sb.AppendLine("equalizer=" + (EqualizerEnabled ? "1" : "0"));
                 sb.AppendLine("dl_hud=" + (DownloadHudEnabled ? "1" : "0"));
+                sb.AppendLine("audio_dev_osd=" + (AudioDeviceOsdEnabled ? "1" : "0"));
+                sb.AppendLine("privacy_dots=" + (PrivacyDotsEnabled ? "1" : "0"));
+                sb.AppendLine("auto_pin_snips=" + (AutoPinScreenshots ? "1" : "0"));
                 sb.AppendLine("water_remind=" + (WaterRemindersEnabled ? "1" : "0"));
                 sb.AppendLine("water_goal=" + WaterGoalMl);
                 sb.AppendLine("water_drank=" + WaterDrankMl);
