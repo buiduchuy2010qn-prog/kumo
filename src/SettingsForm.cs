@@ -784,9 +784,31 @@ namespace Kumo
                 _state.LockKeysOsdEnabled);
 
             y = DrawToggleCard(g, x, y, w, "tog_mic_hotkey",
-                _state.T("Phím tắt tắt/bật Mic (Ctrl + Alt + M)", "Mic mute hotkey (Ctrl + Alt + M)"),
+                _state.T("Phím tắt tắt/bật Mic (" + _state.MicHotkeyName + ")", "Mic mute hotkey (" + _state.MicHotkeyName + ")"),
                 _state.T("Tắt/bật micro mặc định ở mọi ứng dụng khi họp và hiện trạng thái mic trên tai thỏ.", "Mute/unmute the default microphone system-wide and show the mic state on the notch."),
                 _state.MicHotkeyEnabled);
+
+            if (_state.MicHotkeyEnabled)
+            {
+                bool hkBusy = (_notch != null && !_notch.IsDisposed && !_notch.MicHotkeyActive);
+                y = DrawSegmentedCard(g, x, y, w, "seg_mickey_",
+                    _state.T("Chọn tổ hợp phím tắt Mic", "Mic hotkey combination"),
+                    hkBusy
+                        ? _state.T("⚠ Đang bị ứng dụng khác chiếm", "⚠ Taken by another app")
+                        : _state.T("Áp dụng ngay lập tức.", "Applies immediately."),
+                    AppState.MicHotkeyNames,
+                    _state.MicHotkeyIndex);
+            }
+
+            y = DrawToggleCard(g, x, y, w, "tog_clip_history",
+                _state.T("Lịch sử copy trong Kệ tệp (Clipboard history)", "Clipboard history in File Shelf"),
+                _state.T("Nhớ 12 đoạn chữ/link copy gần nhất. Chỉ lưu trong RAM, bỏ qua mật khẩu.", "Remembers your last 12 copied texts/links. RAM only, skips passwords."),
+                _state.ClipHistoryEnabled);
+
+            y = DrawToggleCard(g, x, y, w, "tog_weather",
+                _state.T("Thời tiết trên tai thỏ (Weather)", "Weather on the notch"),
+                _state.T("Nhiệt độ hiện tại khi mở tai thỏ. Vị trí gần đúng theo IP, dữ liệu Open-Meteo.", "Current temperature in the expanded notch. IP-based location, Open-Meteo data."),
+                _state.WeatherEnabled);
 
             y = DrawToggleCard(g, x, y, w, "tog_sounds",
                 _state.T("Âm báo nhắc nhở (Reminder sounds)", "Reminder sounds"),
@@ -1555,6 +1577,25 @@ namespace Kumo
             {
                 _state.MicHotkeyEnabled = !_state.MicHotkeyEnabled;
                 SaveAndApply();
+            }
+            else if (id == "tog_clip_history")
+            {
+                _state.ClipHistoryEnabled = !_state.ClipHistoryEnabled;
+                SaveAndApply();
+            }
+            else if (id == "tog_weather")
+            {
+                _state.WeatherEnabled = !_state.WeatherEnabled;
+                SaveAndApply();
+            }
+            else if (id.StartsWith("seg_mickey_"))
+            {
+                int mk;
+                if (int.TryParse(id.Substring("seg_mickey_".Length), out mk) && mk >= 0 && mk < AppState.MicHotkeyNames.Length)
+                {
+                    _state.MicHotkeyIndex = mk;
+                    SaveAndApply();
+                }
             }
             else if (id == "tog_sounds")
             {

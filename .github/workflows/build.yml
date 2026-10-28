@@ -30,7 +30,7 @@ jobs:
     runs-on: windows-latest
     steps:
       - name: Checkout mã nguồn
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Xác định số phiên bản động (Dynamic Version)
         id: ver
@@ -105,7 +105,7 @@ jobs:
           Write-Host "SHA256(KumoSetup.exe v$targetVer) = $hash"
 
       - name: Đóng gói KumoSetup Artifact trên GitHub
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: KumoSetup-v${{ steps.ver.outputs.version }}-Windows-x64
           path: |

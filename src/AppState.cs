@@ -56,6 +56,16 @@ namespace Kumo
         public bool AutoPinScreenshots = true;
         public bool LockKeysOsdEnabled = true;   // Caps Lock / Num Lock HUD
         public bool MicHotkeyEnabled = true;     // Ctrl+Alt+M mic mute + mic state HUD
+        public int MicHotkeyIndex = 0;           // 0: Ctrl+Alt+M, 1: Ctrl+Shift+M, 2: Ctrl+Alt+K, 3: Pause
+        public bool ClipHistoryEnabled = true;   // Remember the last copied texts/links (memory only, never written to disk)
+        public bool WeatherEnabled = true;       // Current weather in the expanded header (IP location + Open-Meteo)
+        public int QuickTimerMinutes = 5;
+
+        public static readonly string[] MicHotkeyNames = new string[] { "Ctrl+Alt+M", "Ctrl+Shift+M", "Ctrl+Alt+K", "Pause" };
+        public string MicHotkeyName
+        {
+            get { return MicHotkeyNames[Math.Max(0, Math.Min(MicHotkeyNames.Length - 1, MicHotkeyIndex))]; }
+        }
 
         // ==================== ACTIVE UI NAVIGATION ====================
         public int ActiveTab = 0;
@@ -182,6 +192,9 @@ namespace Kumo
             AutoPinScreenshots = true;
             LockKeysOsdEnabled = true;
             MicHotkeyEnabled = true;
+            MicHotkeyIndex = 0;
+            ClipHistoryEnabled = true;
+            WeatherEnabled = true;
             FocusMinutes = 25;
             ShortBreakMinutes = 5;
             LongBreakMinutes = 15;
@@ -260,6 +273,10 @@ namespace Kumo
                         else if (k == "auto_pin_snips") AutoPinScreenshots = (v == "1");
                         else if (k == "lock_keys_osd") LockKeysOsdEnabled = (v == "1");
                         else if (k == "mic_hotkey") MicHotkeyEnabled = (v == "1");
+                        else if (k == "mic_hotkey_idx") { int.TryParse(v, out MicHotkeyIndex); if (MicHotkeyIndex < 0 || MicHotkeyIndex >= MicHotkeyNames.Length) MicHotkeyIndex = 0; }
+                        else if (k == "clip_history") ClipHistoryEnabled = (v == "1");
+                        else if (k == "weather") WeatherEnabled = (v == "1");
+                        else if (k == "quick_timer_min") { int.TryParse(v, out QuickTimerMinutes); QuickTimerMinutes = Math.Max(1, Math.Min(180, QuickTimerMinutes)); }
                         else if (k == "water_remind") WaterRemindersEnabled = (v == "1");
                         else if (k == "water_goal") int.TryParse(v, out WaterGoalMl);
                         else if (k == "water_drank") int.TryParse(v, out WaterDrankMl);
@@ -393,6 +410,10 @@ namespace Kumo
                 sb.AppendLine("auto_pin_snips=" + (AutoPinScreenshots ? "1" : "0"));
                 sb.AppendLine("lock_keys_osd=" + (LockKeysOsdEnabled ? "1" : "0"));
                 sb.AppendLine("mic_hotkey=" + (MicHotkeyEnabled ? "1" : "0"));
+                sb.AppendLine("mic_hotkey_idx=" + MicHotkeyIndex);
+                sb.AppendLine("clip_history=" + (ClipHistoryEnabled ? "1" : "0"));
+                sb.AppendLine("weather=" + (WeatherEnabled ? "1" : "0"));
+                sb.AppendLine("quick_timer_min=" + QuickTimerMinutes);
                 sb.AppendLine("water_remind=" + (WaterRemindersEnabled ? "1" : "0"));
                 sb.AppendLine("water_goal=" + WaterGoalMl);
                 sb.AppendLine("water_drank=" + WaterDrankMl);

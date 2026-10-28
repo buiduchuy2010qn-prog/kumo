@@ -22,7 +22,8 @@ namespace Kumo
         PrivacyAlert = 7,
         CapsLock = 8,
         NumLock = 9,
-        MicMute = 10
+        MicMute = 10,
+        TimerDone = 11
     }
 
     public delegate void OsdChangedHandler(OsdKind kind, int percent, bool isMuted, int delta);

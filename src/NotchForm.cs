@@ -160,6 +160,22 @@ namespace Kumo
         private bool _micHotkeyRegistered = false;
         private bool _forceAudioDevOsd = false;
 
+        // v1.1.24: quick timer, clipboard history, battery time, weather, custom mic hotkey
+        private WeatherService _weather;
+        private DateTime _qtEndUtc = DateTime.MinValue;
+        private int _qtTotalSec = 300;
+        private bool IsQuickTimerRunning { get { return _qtEndUtc != DateTime.MinValue; } }
+        private int QuickTimerSecondsLeft { get { return IsQuickTimerRunning ? Math.Max(0, (int)Math.Ceiling((_qtEndUtc - DateTime.UtcNow).TotalSeconds)) : 0; } }
+        private readonly List<string> _clipHistory = new List<string>();
+        private bool _shelfClipMode = false;
+        private int _clipScroll = 0;
+        private DateTime _suppressClipUntilUtc = DateTime.MinValue;
+        private int _clipCopiedIdx = -1;
+        private DateTime _clipCopiedUntilUtc = DateTime.MinValue;
+        private int _batteryLifeSec = -1;
+        private int _micHotkeyRegisteredIdx = -1;
+        public bool MicHotkeyActive { get { return _micHotkeyRegistered; } }
+
         // Pages: 0=Music, 1=Pomodoro, 2=Water, 3=Shelf, 4=TodoList, 5=SystemMonitor
         private int _pageIndex = 5;
         private const int TotalPages = 6;
@@ -271,6 +287,8 @@ namespace Kumo
             _animTimer.Start();
 
             if (_osd != null) _osd.OsdChanged += OnSystemOsdChanged;
+            _weather = new WeatherService();
+            _weather.Enabled = _state.WeatherEnabled;
             _cachedScreenBounds = GetTargetScreen().Bounds;
             HandleCreated += (s, e) =>
             {
@@ -285,6 +303,7 @@ namespace Kumo
                 try { if (_cachedSelfHwnd != IntPtr.Zero) NativeMethods.RemoveClipboardFormatListener(_cachedSelfHwnd); } catch { }
                 try { if (_micHotkeyRegistered && _cachedSelfHwnd != IntPtr.Zero) NativeMethods.UnregisterHotKey(_cachedSelfHwnd, HOTKEY_MIC_ID); } catch { }
                 _micHotkeyRegistered = false;
+                if (_weather != null) { _weather.Dispose(); _weather = null; }
                 ClearShelfThumbCache();
             };
             _winScanThread = new Thread(BackgroundWindowScanLoop)
@@ -324,17 +343,25 @@ namespace Kumo
             if (!IsHandleCreated) return;
             bool want = _state.MicHotkeyEnabled && _osd != null;
             if (_osd != null) _osd.MicWatchEnabled = _state.MicHotkeyEnabled;
+            int idx = Math.Max(0, Math.Min(AppState.MicHotkeyNames.Length - 1, _state.MicHotkeyIndex));
             try
             {
-                if (want && !_micHotkeyRegistered)
-                {
-                    _micHotkeyRegistered = NativeMethods.RegisterHotKey(Handle, HOTKEY_MIC_ID,
-                        NativeMethods.MOD_CONTROL | NativeMethods.MOD_ALT | NativeMethods.MOD_NOREPEAT, (uint)Keys.M);
-                }
-                else if (!want && _micHotkeyRegistered)
+                if (_micHotkeyRegistered && (!want || idx != _micHotkeyRegisteredIdx))
                 {
                     NativeMethods.UnregisterHotKey(Handle, HOTKEY_MIC_ID);
                     _micHotkeyRegistered = false;
+                    _micHotkeyRegisteredIdx = -1;
+                }
+                if (want && !_micHotkeyRegistered)
+                {
+                    uint mods = NativeMethods.MOD_NOREPEAT;
+                    uint vk = (uint)Keys.M;
+                    if (idx == 0) mods |= NativeMethods.MOD_CONTROL | NativeMethods.MOD_ALT;
+                    else if (idx == 1) mods |= NativeMethods.MOD_CONTROL | NativeMethods.MOD_SHIFT;
+                    else if (idx == 2) { mods |= NativeMethods.MOD_CONTROL | NativeMethods.MOD_ALT; vk = (uint)Keys.K; }
+                    else vk = (uint)Keys.Pause;
+                    _micHotkeyRegistered = NativeMethods.RegisterHotKey(Handle, HOTKEY_MIC_ID, mods, vk);
+                    _micHotkeyRegisteredIdx = _micHotkeyRegistered ? idx : -1;
                 }
             }
             catch { }
@@ -523,6 +550,13 @@ namespace Kumo
             _cachedScreenBounds = GetTargetScreen().Bounds;
             _isFullscreenHidden = _state.HideInFullscreen && _bgFullscreen;
             UpdateMicHotkey();
+            if (_weather != null)
+            {
+                bool wasOff = !_weather.Enabled;
+                _weather.Enabled = _state.WeatherEnabled;
+                if (wasOff && _state.WeatherEnabled && !_weather.HasData) _weather.RefreshSoon();
+            }
+            if (!_state.ClipHistoryEnabled) { _clipHistory.Clear(); _shelfClipMode = false; }
             UpdateAutoMinimalState();
             UpdateTargetDimensions();
             _curW = Math.Min(_canvasW - U(50f), Math.Max(U(24f), _curW));
@@ -570,6 +604,7 @@ namespace Kumo
             if (m.Msg == NativeMethods.WM_CLIPBOARDUPDATE)
             {
                 TryCaptureClipboardScreenshotToShelf();
+                TryCaptureClipboardText();
                 m.Result = IntPtr.Zero;
                 return;
             }
@@ -641,6 +676,7 @@ namespace Kumo
                     int pct = (hasPack && sps.BatteryLifePercent <= 100) ? (int)sps.BatteryLifePercent : 100;
                     bool charging = !noBattery && ((sps.ACLineStatus == 1) || ((sps.BatteryFlag & 8) != 0));
                     int kind = charging ? 1 : (pct <= 20 ? 2 : 0);
+                    _batteryLifeSec = (!noBattery && !charging && sps.BatteryLifeTime > 0 && sps.BatteryLifeTime < 100 * 3600) ? sps.BatteryLifeTime : -1;
                     if (!_batteryBaselineReady)
                     {
                         _batteryBaselineReady = true;
@@ -652,13 +688,16 @@ namespace Kumo
                         bool chgChanged = (charging != _batteryCharging);
                         bool enteredLow = (!charging && kind == 2 && _batteryStateKind != 2);
                         bool enteredCrit = (!charging && pct <= 10 && _batteryPercent > 10);
+                        bool becameFull = (charging && !chgChanged && pct >= 100 && _batteryPercent < 100);
                         if (pct != _batteryPercent || chgChanged || kind != _batteryStateKind)
                         {
                             _batteryPercent = pct; _batteryCharging = charging; _batteryStateKind = kind;
                             _batteryFraction = Math.Max(0.06f, pct / 100.0f);
                             _needsRedraw = true;
                         }
-                        if (_hasBattery && (chgChanged || enteredLow || enteredCrit))
+                        if (_hasBattery && becameFull)
+                            TriggerOsdHud(OsdKind.Battery, 100, false, 2, 4.0);
+                        else if (_hasBattery && (chgChanged || enteredLow || enteredCrit))
                             TriggerOsdHud(OsdKind.Battery, pct, false, charging ? 1 : -1, 2.75);
                     }
                 }
@@ -761,7 +800,7 @@ namespace Kumo
             else if (IsOsdActive)
             {
                 bool compactBar = ((_osdKind == OsdKind.Volume && !_osdMuted) || _osdKind == OsdKind.Brightness);
-                bool tinyHud = (_osdKind == OsdKind.CapsLock || _osdKind == OsdKind.NumLock || _osdKind == OsdKind.MicMute);
+                bool tinyHud = (_osdKind == OsdKind.CapsLock || _osdKind == OsdKind.NumLock || _osdKind == OsdKind.MicMute || _osdKind == OsdKind.TimerDone);
                 _targetW = U(tinyHud ? 196f : (compactBar ? 228f : 292f)); _targetH = U(32f); _targetR = U(15.5f); _targetE = U(10.5f);
             }
             else if (IsDownloadActive && !_alwaysMinimal)
@@ -792,6 +831,24 @@ namespace Kumo
         private void OnSecondTick(object sender, EventArgs e)
         {
 RefreshBatteryLevel();
+
+            if (IsQuickTimerRunning)
+            {
+                if (DateTime.UtcNow >= _qtEndUtc)
+                {
+                    int doneMin = Math.Max(1, _qtTotalSec / 60);
+                    _qtEndUtc = DateTime.MinValue;
+                    if (_state.ReminderSounds)
+                    {
+                        try { System.Media.SystemSounds.Exclamation.Play(); } catch { }
+                    }
+                    TriggerOsdHud(OsdKind.TimerDone, 100, false, doneMin, 6.0);
+                }
+                else if (!_isExpanded && !_isMicroPill)
+                {
+                    _needsRedraw = true;
+                }
+            }
 
             if (_state.PomodoroRunning)
             {
@@ -1758,10 +1815,14 @@ RefreshBatteryLevel();
             GraphicsState stClock = g.Save();
             g.TranslateTransform(0f, -(1.0f - cEase) * U(2.5f));
 
+            bool qtLive = IsQuickTimerRunning;
             bool pomoLive = _state.PomodoroRunning;
-            if (pomoLive)
+            bool useQt = qtLive && (!pomoLive || QuickTimerSecondsLeft <= _state.PomodoroSecondsLeft);
+            bool cdLive = qtLive || pomoLive;
+            if (cdLive)
             {
-                DrawPomodoroMiniRing(g, x0 + U(19.0f), midY);
+                if (useQt) DrawCountdownMiniRing(g, x0 + U(19.0f), midY, QuickTimerSecondsLeft / (float)Math.Max(1, _qtTotalSec), QtAccent);
+                else DrawPomodoroMiniRing(g, x0 + U(19.0f), midY);
             }
             else if ((_media.HasMedia && _media.IsPlaying) && _batteryStateKind != 2)
             {
@@ -1789,8 +1850,8 @@ RefreshBatteryLevel();
                 rightCursor -= pSpan * pAlpha;
             }
 
-            string nowClock = pomoLive ? FormatMMSS(_state.PomodoroSecondsLeft) : DateTime.Now.ToString("HH:mm");
-            Color clkCol = pomoLive ? PomoAccent : InkPri;
+            string nowClock = cdLive ? FormatMMSS(useQt ? QuickTimerSecondsLeft : _state.PomodoroSecondsLeft) : DateTime.Now.ToString("HH:mm");
+            Color clkCol = cdLive ? (useQt ? QtAccent : PomoAccent) : InkPri;
             SizeF clkSz = g.MeasureString(nowClock, _fIdleTime);
             bool showColLyrics = IsCollapsedLyricsActive && ((rightCursor - leftContentX) >= (clkSz.Width + U(68f)));
 
@@ -1985,12 +2046,12 @@ RefreshBatteryLevel();
             }
             else if (_batteryStateKind == 2)
             {
-                fullBat = string.Format(CultureInfo.InvariantCulture, "{0}% \u00B7 {1}", _batteryPercent, _state.T("Pin y\u1EBFu", "Low"));
+                fullBat = string.Format(CultureInfo.InvariantCulture, "{0}% \u00B7 {1}", _batteryPercent, (_batteryLifeSec > 0) ? FormatBatteryLife(_batteryLifeSec) : _state.T("Pin y\u1EBFu", "Low"));
                 batCol = IsLight ? Color.FromArgb(220, 38, 38) : Color.FromArgb(255, 98, 98);
             }
             else
             {
-                fullBat = string.Format(CultureInfo.InvariantCulture, "{0}% \u00B7 {1}", _batteryPercent, _state.T("Pin bth", "Normal"));
+                fullBat = string.Format(CultureInfo.InvariantCulture, "{0}% \u00B7 {1}", _batteryPercent, (_batteryLifeSec > 0) ? FormatBatteryLife(_batteryLifeSec) : _state.T("Pin bth", "Normal"));
                 batCol = Nw(215);
             }
             if (!_hasBattery)
@@ -2009,20 +2070,35 @@ RefreshBatteryLevel();
             float availSpan = Math.Max(U(52f), badgeRightX - slotLeft);
             string batTxt = isSplitLyrics ? shortBat : fullBat;
             SizeF bSz = g.MeasureString(batTxt, _fAxis);
-            if (!isSplitLyrics && (U(24f) + bSz.Width + dSz.Width + tSz.Width + U(8f) > availSpan))
+
+            // Current weather (icon + temperature) right after the clock
+            string wxTxt = null;
+            float wxW = 0f;
+            if (_state.WeatherEnabled && _weather != null && _weather.HasData)
+            {
+                wxTxt = string.Format(CultureInfo.InvariantCulture, "{0}\u00B0", (int)Math.Round(_weather.TemperatureC));
+                wxW = U(7f) + U(16f) + g.MeasureString(wxTxt, _fHdrDate).Width;
+            }
+
+            if (!isSplitLyrics && (U(24f) + bSz.Width + dSz.Width + tSz.Width + wxW + U(8f) > availSpan))
             {
                 batTxt = shortBat;
                 bSz = g.MeasureString(batTxt, _fAxis);
             }
+            if (wxTxt != null && (U(24f) + bSz.Width + dSz.Width + tSz.Width + wxW + U(6f) > availSpan))
+            {
+                wxTxt = null;
+                wxW = 0f;
+            }
             bool drawDate = true;
-            if (U(24f) + bSz.Width + dSz.Width + tSz.Width + U(6f) > availSpan)
+            if (U(24f) + bSz.Width + dSz.Width + tSz.Width + wxW + U(6f) > availSpan)
             {
                 drawDate = false;
                 dSz = SizeF.Empty;
             }
 
-            // Center Battery + Date + Clock symmetrically between left title and right status area!
-            float visualClusterW = U(24f) + bSz.Width + (drawDate ? dSz.Width : 0f) + tSz.Width;
+            // Center Battery + Date + Clock (+ Weather) symmetrically between left title and right status area!
+            float visualClusterW = U(24f) + bSz.Width + (drawDate ? dSz.Width : 0f) + tSz.Width + wxW;
             float clusterStartX = isSplitLyrics
                 ? Math.Max(slotLeft + U(4f), Math.Min(badgeRightX - visualClusterW - U(4f), x0 + (w - visualClusterW) * 0.5f))
                 : (slotLeft + Math.Max(U(3f), (availSpan - visualClusterW) * 0.5f));
@@ -2049,6 +2125,13 @@ RefreshBatteryLevel();
                 {
                     g.DrawString(timeStr, _fHdrTime, bTime, (float)Math.Round(dateX), (float)Math.Round(dateY));
                 }
+            }
+
+            if (wxTxt != null)
+            {
+                float wxX = dateX + dtW + U(7f);
+                DrawWeatherIcon(g, wxX + U(7.5f), hdrY, _weather.WeatherCode, _weather.IsDay);
+                DrawLeftVCenteredText(g, wxTxt, _fHdrDate, ToCrispInk(Nw(225)), wxX + U(16f), hdrY);
             }
 
             DrawSettingsGearButton(g, "open_settings", gearX, hdrY);
@@ -2564,10 +2647,8 @@ RefreshBatteryLevel();
             DrawMiniCircleBtn(g, "pomo_plus", x0 + U(320f), U(50f), "+");
             DrawMiniCircleBtn(g, "pomo_reset", x0 + U(350f), U(50f), "↺");
 
-            string modeSub = (_state.PomodoroMode == 0)
-                ? _state.T("Phiên tập trung (Focus)", "Focus time")
-                : (_state.PomodoroMode == 1 ? _state.T("Nghỉ ngắn (Short break)", "Short break") : _state.T("Nghỉ dài (Long break)", "Long break"));
-            DrawCenteredText(g, modeSub, _fMusicSub, Nw(145), x0 + U(256f), U(76f));
+            // Quick timer (separate from Pomodoro): [-] 5 phút [+] — click to start/stop, scroll to change minutes
+            DrawQuickTimerChip(g, x0 + U(256f), U(76f));
 
             DrawNusaPillButton(g, "pomo_focus", new RectangleF(x0 + U(138f), U(92f), U(64f), U(28f)), "Focus",
                 _state.PomodoroMode == 0 ? Color.FromArgb(110, 255, 75, 85) : Nw(32));
@@ -2737,6 +2818,11 @@ RefreshBatteryLevel();
         private void DrawShelfPage(Graphics g, float x0, float w, float h)
         {
             DrawTwoToneTitle(g, "File ", "Shelf", Color.FromArgb(167, 139, 250), x0 + U(15f), U(18f));
+            if (_shelfClipMode && _state.ClipHistoryEnabled)
+            {
+                DrawShelfClipHistory(g, x0);
+                return;
+            }
 
             RectangleF zone = new RectangleF(x0 + U(40f), U(33f), U(336f), U(64f));
             bool zoneHov = (_hoveredId == "shelf_browse_zone");
@@ -2857,12 +2943,92 @@ RefreshBatteryLevel();
             if (_state.ShelfFiles.Count > 0)
             {
                 DrawNusaPillButton(g, "shelf_clear", new RectangleF(x0 + U(176f), barY, U(58f), barH), _state.T("Xóa kệ", "Clear"), Nw(38));
-                string hint = string.Format(CultureInfo.InvariantCulture, _state.T("{0} tệp · Kéo ra ngoài", "{0} file(s) · Drag out"), _state.ShelfFiles.Count);
-                DrawRightVCenteredText(g, hint, _fShelfSub, Nw(135), x0 + U(374f), barY + barH * 0.5f);
+                if (_state.ClipHistoryEnabled)
+                {
+                    DrawNusaPillButton(g, "shelf_clipmode", new RectangleF(x0 + U(239f), barY, U(74f), barH),
+                        string.Format(CultureInfo.InvariantCulture, "Copy \u00B7 {0}", _clipHistory.Count), Color.FromArgb(150, 245, 158, 11));
+                    DrawRightVCenteredText(g, string.Format(CultureInfo.InvariantCulture, _state.T("{0} tệp", "{0} file(s)"), _state.ShelfFiles.Count),
+                        _fShelfSub, Nw(135), x0 + U(374f), barY + barH * 0.5f);
+                }
+                else
+                {
+                    string hint = string.Format(CultureInfo.InvariantCulture, _state.T("{0} tệp · Kéo ra ngoài", "{0} file(s) · Drag out"), _state.ShelfFiles.Count);
+                    DrawRightVCenteredText(g, hint, _fShelfSub, Nw(135), x0 + U(374f), barY + barH * 0.5f);
+                }
             }
             else
             {
+                if (_state.ClipHistoryEnabled)
+                {
+                    DrawNusaPillButton(g, "shelf_clipmode", new RectangleF(x0 + U(176f), barY, U(74f), barH),
+                        string.Format(CultureInfo.InvariantCulture, "Copy \u00B7 {0}", _clipHistory.Count), Color.FromArgb(150, 245, 158, 11));
+                }
                 DrawRightVCenteredText(g, _state.T("Win+Shift+S tự ghim ảnh", "Win+Shift+S auto-pins"), _fShelfSub, Nw(130), x0 + U(374f), barY + barH * 0.5f);
+            }
+        }
+
+        // Clipboard history view inside the Shelf page (click a row to copy it again, scroll for more)
+        private void DrawShelfClipHistory(Graphics g, float x0)
+        {
+            RectangleF zone = new RectangleF(x0 + U(40f), U(33f), U(336f), U(64f));
+            using (GraphicsPath zp = CreateRoundRect(zone, U(13f)))
+            using (SolidBrush zb = new SolidBrush(Nw(8)))
+            using (Pen zPen = new Pen(Nw(44), U(1.3f)))
+            {
+                g.FillPath(zb, zp);
+                g.DrawPath(zPen, zp);
+            }
+
+            if (_clipHistory.Count == 0)
+            {
+                DrawCenteredText(g, _state.T("Copy chữ hoặc link bất kỳ — sẽ hiện ở đây", "Copy any text or link — it will show up here"),
+                    _fShelfMain, Nw(170), zone.X + zone.Width * 0.5f, zone.Y + zone.Height * 0.5f);
+            }
+            else
+            {
+                int maxScroll = Math.Max(0, _clipHistory.Count - 3);
+                _clipScroll = Math.Max(0, Math.Min(maxScroll, _clipScroll));
+                bool flash = DateTime.UtcNow < _clipCopiedUntilUtc;
+                using (StringFormat sf = new StringFormat(StringFormatFlags.NoWrap))
+                {
+                    sf.Trimming = StringTrimming.EllipsisCharacter;
+                    sf.LineAlignment = StringAlignment.Center;
+                    for (int row = 0; row < 3; row++)
+                    {
+                        int idx = _clipScroll + row;
+                        if (idx >= _clipHistory.Count) break;
+                        RectangleF r = new RectangleF(zone.X + U(4f), zone.Y + U(3f) + row * U(19.5f), zone.Width - U(8f), U(18.5f));
+                        string id = "clip_item_" + idx;
+                        _hitZones.Add(new HitZone { Id = id, Rect = r });
+                        bool hov = (_hoveredId == id);
+                        bool copied = flash && idx == _clipCopiedIdx;
+                        if (hov || copied) FillRoundRect(g, r, U(7f), copied ? Color.FromArgb(70, 16, 185, 129) : Nw(30));
+
+                        string one = _clipHistory[idx].Replace("\r\n", " \u00B7 ").Replace('\n', ' ').Replace('\r', ' ').Replace('\t', ' ').Trim();
+                        float rightW = U(52f);
+                        RectangleF tr = new RectangleF(r.X + U(8f), r.Y, r.Width - U(16f) - rightW, r.Height);
+                        using (SolidBrush tb = new SolidBrush(ToCrispInk(Nw(hov ? 255 : 220))))
+                        {
+                            g.DrawString(one, _fShelfSub, tb, tr, sf);
+                        }
+                        string tag = copied ? _state.T("Đã copy ✓", "Copied ✓") : (hov ? _state.T("Bấm để copy", "Click to copy") : "");
+                        if (tag.Length > 0)
+                        {
+                            DrawRightVCenteredText(g, tag, _fShelfSub, copied ? Color.FromArgb(74, 222, 128) : Nw(150), r.Right - U(8f), r.Y + r.Height * 0.5f);
+                        }
+                    }
+                }
+            }
+
+            float barY = U(101f), barH = U(21f);
+            DrawNusaPillButton(g, "shelf_filemode", new RectangleF(x0 + U(40f), barY, U(64f), barH), _state.T("← Tệp", "← Files"), Nw(38));
+            if (_clipHistory.Count > 0)
+            {
+                DrawNusaPillButton(g, "clip_clear", new RectangleF(x0 + U(109f), barY, U(84f), barH), _state.T("Xóa lịch sử", "Clear history"), Color.FromArgb(45, 239, 68, 68));
+                string hint = (_clipHistory.Count > 3)
+                    ? string.Format(CultureInfo.InvariantCulture, _state.T("{0} mục · Cuộn để xem thêm", "{0} items · Scroll for more"), _clipHistory.Count)
+                    : string.Format(CultureInfo.InvariantCulture, _state.T("{0} mục · Chỉ lưu trong RAM", "{0} items · RAM only"), _clipHistory.Count);
+                DrawRightVCenteredText(g, hint, _fShelfSub, Nw(135), x0 + U(374f), barY + barH * 0.5f);
             }
         }
 
@@ -3095,8 +3261,200 @@ RefreshBatteryLevel();
         {
             int modeTotalMin = (_state.PomodoroMode == 0) ? _state.FocusMinutes : (_state.PomodoroMode == 1 ? _state.ShortBreakMinutes : _state.LongBreakMinutes);
             float totalSec = Math.Max(1, modeTotalMin * 60);
-            float frac = Math.Max(0.03f, Math.Min(1f, _state.PomodoroSecondsLeft / totalSec));
-            Color c = PomoAccent;
+            DrawCountdownMiniRing(g, cx, cy, _state.PomodoroSecondsLeft / totalSec, PomoAccent);
+        }
+
+        private Color QtAccent { get { return Color.FromArgb(255, 251, 191, 36); } }
+
+        private string FormatBatteryLife(int sec)
+        {
+            int hrs = sec / 3600, mins = (sec % 3600) / 60;
+            if (hrs > 0)
+                return _state.T(string.Format(CultureInfo.InvariantCulture, "c\u00F2n {0}g{1:00}p", hrs, mins),
+                                string.Format(CultureInfo.InvariantCulture, "{0}h {1:00}m left", hrs, mins));
+            return _state.T(string.Format(CultureInfo.InvariantCulture, "c\u00F2n {0} ph\u00FAt", Math.Max(1, mins)),
+                            string.Format(CultureInfo.InvariantCulture, "{0}m left", Math.Max(1, mins)));
+        }
+
+        private void DrawTimerVector(Graphics g, float cx, float cy, Color c)
+        {
+            using (Pen p = new Pen(c, U(1.5f)))
+            {
+                p.StartCap = LineCap.Round; p.EndCap = LineCap.Round;
+                float r = U(5.6f);
+                g.DrawEllipse(p, cx - r, cy - r + U(1.2f), r * 2f, r * 2f);
+                g.DrawLine(p, cx, cy + U(1.2f), cx, cy - U(2.2f));
+                g.DrawLine(p, cx, cy + U(1.2f), cx + U(2.2f), cy + U(2.4f));
+                g.DrawLine(p, cx - U(2.2f), cy - r - U(0.6f), cx + U(2.2f), cy - r - U(0.6f));
+            }
+        }
+
+        // Quick timer chip on the Pomodoro page:  [-]  (timer) 5 phút  [+]   — click the middle to start/stop, wheel to change
+        private void DrawQuickTimerChip(Graphics g, float cx, float cy)
+        {
+            bool running = IsQuickTimerRunning;
+            string txt = running
+                ? FormatMMSS(QuickTimerSecondsLeft) + " \u00B7 " + _state.T("D\u1EEBng", "Stop")
+                : string.Format(CultureInfo.InvariantCulture, _state.T("H\u1EB9n gi\u1EDD {0} ph\u00FAt", "Timer {0} min"), _state.QuickTimerMinutes);
+            SizeF ts = g.MeasureString(txt, _fShelfSub);
+            float sideW = running ? 0f : U(18f);
+            float midW = U(18f) + ts.Width + U(8f);
+            float chipW = midW + sideW * 2f;
+            float chipH = U(19f);
+            RectangleF chip = new RectangleF(cx - chipW * 0.5f, cy - chipH * 0.5f, chipW, chipH);
+            RectangleF mid = new RectangleF(chip.X + sideW, chip.Y, midW, chipH);
+            _hitZones.Add(new HitZone { Id = "qt_chip", Rect = new RectangleF(chip.X, chip.Y - U(2f), chip.Width, chip.Height + U(4f)) });
+            if (!running)
+            {
+                _hitZones.Add(new HitZone { Id = "qt_minus", Rect = new RectangleF(chip.X, chip.Y - U(2f), sideW, chipH + U(4f)) });
+                _hitZones.Add(new HitZone { Id = "qt_plus", Rect = new RectangleF(chip.Right - sideW, chip.Y - U(2f), sideW, chipH + U(4f)) });
+            }
+            bool hovMid = (_hoveredId == "qt_chip");
+            Color acc = QtAccent;
+            FillPill(g, chip, Color.FromArgb(running ? 70 : (hovMid ? 58 : 34), acc.R, acc.G, acc.B));
+            if (!running)
+            {
+                if (_hoveredId == "qt_minus") FillPill(g, new RectangleF(chip.X + U(1.5f), chip.Y + U(1.5f), sideW - U(1f), chipH - U(3f)), Nw(60));
+                if (_hoveredId == "qt_plus") FillPill(g, new RectangleF(chip.Right - sideW - U(0.5f), chip.Y + U(1.5f), sideW - U(1f), chipH - U(3f)), Nw(60));
+                DrawCenteredText(g, "\u2212", _fPill, InkPri, chip.X + sideW * 0.5f + U(1f), cy);
+                DrawCenteredText(g, "+", _fPill, InkPri, chip.Right - sideW * 0.5f - U(1f), cy);
+            }
+            DrawTimerVector(g, mid.X + U(10f), cy - U(0.6f), acc);
+            DrawLeftVCenteredText(g, txt, _fShelfSub, InkPri, mid.X + U(18f), cy);
+        }
+
+        private void StepQuickTimerMinutes(int dir)
+        {
+            int m = _state.QuickTimerMinutes;
+            int step = (dir > 0) ? (m >= 10 ? 5 : 1) : (m > 10 ? 5 : 1);
+            _state.QuickTimerMinutes = Math.Max(1, Math.Min(180, m + dir * step));
+            _needsRedraw = true;
+        }
+
+        private void ToggleQuickTimer()
+        {
+            if (IsQuickTimerRunning)
+            {
+                _qtEndUtc = DateTime.MinValue;
+            }
+            else
+            {
+                _qtTotalSec = Math.Max(60, _state.QuickTimerMinutes * 60);
+                _qtEndUtc = DateTime.UtcNow.AddSeconds(_qtTotalSec);
+                _state.SaveAll();
+            }
+            _needsRedraw = true;
+        }
+
+        private void DrawCloudShape(Graphics g, float cx, float cy, float s, Color c)
+        {
+            using (GraphicsPath p = new GraphicsPath())
+            {
+                p.AddEllipse(cx - U(6.2f) * s, cy - U(1.6f) * s, U(6.4f) * s, U(5.6f) * s);
+                p.AddEllipse(cx - U(3.4f) * s, cy - U(4.6f) * s, U(7.2f) * s, U(7.2f) * s);
+                p.AddEllipse(cx + U(0.4f) * s, cy - U(2.2f) * s, U(5.8f) * s, U(5.4f) * s);
+                p.AddRectangle(new RectangleF(cx - U(3.2f) * s, cy + U(0.6f) * s, U(6.8f) * s, U(3.4f) * s));
+                p.FillMode = FillMode.Winding;
+                using (SolidBrush b = new SolidBrush(c)) g.FillPath(b, p);
+            }
+        }
+
+        // Open-Meteo WMO weather codes -> tiny vector icon
+        private void DrawWeatherIcon(Graphics g, float cx, float cy, int code, bool isDay)
+        {
+            Color sun = Color.FromArgb(255, 251, 191, 36);
+            Color moon = Color.FromArgb(255, 226, 232, 240);
+            Color cloud = IsLight ? Color.FromArgb(255, 100, 116, 139) : Color.FromArgb(255, 203, 213, 225);
+            Color rain = Color.FromArgb(255, 96, 165, 250);
+
+            if (code <= 1)
+            {
+                if (isDay)
+                {
+                    float r = U(3.4f);
+                    using (SolidBrush sb = new SolidBrush(sun)) g.FillEllipse(sb, cx - r, cy - r, r * 2f, r * 2f);
+                    using (Pen rp = new Pen(sun, U(1.3f)))
+                    {
+                        rp.StartCap = LineCap.Round; rp.EndCap = LineCap.Round;
+                        for (int i = 0; i < 8; i++)
+                        {
+                            double a = i * Math.PI / 4.0;
+                            g.DrawLine(rp, cx + (float)Math.Cos(a) * U(5f), cy + (float)Math.Sin(a) * U(5f), cx + (float)Math.Cos(a) * U(6.6f), cy + (float)Math.Sin(a) * U(6.6f));
+                        }
+                    }
+                }
+                else
+                {
+                    using (GraphicsPath mp = new GraphicsPath())
+                    {
+                        mp.AddEllipse(cx - U(5f), cy - U(5f), U(10f), U(10f));
+                        using (Region rg = new Region(mp))
+                        {
+                            using (GraphicsPath cut = new GraphicsPath())
+                            {
+                                cut.AddEllipse(cx - U(2f), cy - U(7f), U(10f), U(10f));
+                                rg.Exclude(cut);
+                            }
+                            using (SolidBrush mb = new SolidBrush(moon)) g.FillRegion(mb, rg);
+                        }
+                    }
+                }
+                return;
+            }
+            if (code == 2)
+            {
+                float r = U(3.2f);
+                float sx = cx + U(2.6f), sy = cy - U(2.8f);
+                using (SolidBrush sb = new SolidBrush(isDay ? sun : moon)) g.FillEllipse(sb, sx - r, sy - r, r * 2f, r * 2f);
+                DrawCloudShape(g, cx - U(0.6f), cy + U(1.2f), 0.92f, cloud);
+                return;
+            }
+
+            bool isRain = (code >= 51 && code <= 67) || (code >= 80 && code <= 82);
+            bool isSnow = (code >= 71 && code <= 77) || code == 85 || code == 86;
+            bool isStorm = code >= 95;
+            bool isFog = code == 45 || code == 48;
+            float lift = (isRain || isSnow || isStorm) ? U(2.2f) : 0f;
+            DrawCloudShape(g, cx, cy - lift + U(0.6f), 1.0f, cloud);
+
+            if (isRain)
+            {
+                using (Pen dp = new Pen(rain, U(1.3f)))
+                {
+                    dp.StartCap = LineCap.Round; dp.EndCap = LineCap.Round;
+                    for (int i = -1; i <= 1; i++)
+                        g.DrawLine(dp, cx + i * U(3f) + U(0.6f), cy + U(3.4f), cx + i * U(3f) - U(0.6f), cy + U(6.2f));
+                }
+            }
+            else if (isSnow)
+            {
+                using (SolidBrush wb = new SolidBrush(Color.FromArgb(255, 241, 245, 249)))
+                {
+                    for (int i = -1; i <= 1; i++)
+                        g.FillEllipse(wb, cx + i * U(3f) - U(1f), cy + U(4.4f) - ((i == 0) ? U(0.8f) : 0f), U(2f), U(2f));
+                }
+            }
+            else if (isStorm)
+            {
+                PointF[] bolt = new PointF[] {
+                    new PointF(cx + U(0.8f), cy + U(1.2f)), new PointF(cx - U(1.8f), cy + U(4.6f)), new PointF(cx + U(0.1f), cy + U(4.6f)),
+                    new PointF(cx - U(0.9f), cy + U(7.6f)), new PointF(cx + U(2.4f), cy + U(3.6f)), new PointF(cx + U(0.4f), cy + U(3.6f))
+                };
+                using (SolidBrush bb = new SolidBrush(sun)) g.FillPolygon(bb, bolt);
+            }
+            else if (isFog)
+            {
+                using (Pen fp = new Pen(cloud, U(1.2f)))
+                {
+                    fp.StartCap = LineCap.Round; fp.EndCap = LineCap.Round;
+                    g.DrawLine(fp, cx - U(5.5f), cy + U(5.2f), cx + U(5.5f), cy + U(5.2f));
+                }
+            }
+        }
+
+        private void DrawCountdownMiniRing(Graphics g, float cx, float cy, float frac01, Color c)
+        {
+            float frac = Math.Max(0.03f, Math.Min(1f, frac01));
             float r = U(7.8f);
             RectangleF arcRect = new RectangleF(cx - r + U(1.4f), cy - r + U(1.4f), (r - U(1.4f)) * 2f, (r - U(1.4f)) * 2f);
             using (Pen bg = new Pen(Color.FromArgb(72, c.R, c.G, c.B), U(2.25f)))
@@ -3488,8 +3846,13 @@ RefreshBatteryLevel();
             }
             else if (_osdKind == OsdKind.Battery)
             {
-                text = (_batteryStateKind == 1) ? _state.T("S\u1EA1c", "Chg") : string.Format(CultureInfo.InvariantCulture, "{0}%", _osdPercent);
+                text = (_osdDelta == 2) ? _state.T("\u0110\u1EA7y", "Full") : ((_batteryStateKind == 1) ? _state.T("S\u1EA1c", "Chg") : string.Format(CultureInfo.InvariantCulture, "{0}%", _osdPercent));
                 bgTint = Color.FromArgb((int)(68 * alpha01), 16, 185, 129);
+            }
+            else if (_osdKind == OsdKind.TimerDone)
+            {
+                text = _state.T("H\u1EBFt gi\u1EDD", "Time's up");
+                bgTint = Color.FromArgb((int)(80 * alpha01), 245, 158, 11);
             }
             else
             {
@@ -3521,6 +3884,8 @@ RefreshBatteryLevel();
             else if (_osdKind == OsdKind.MediaToggle) DrawMediaToggleVector(g, icx, cy, _osdDelta > 0, a);
             else if (_osdKind == OsdKind.CapsLock || _osdKind == OsdKind.NumLock) DrawKeyCapVector(g, icx, cy, (_osdKind == OsdKind.CapsLock) ? "A" : "1", _osdDelta > 0, a);
             else if (_osdKind == OsdKind.MicMute) DrawMicVector(g, icx, cy, _osdDelta == 0 || _osdMuted, a);
+            else if (_osdKind == OsdKind.TimerDone) DrawTimerVector(g, icx, cy, Color.FromArgb(a, QtAccent.R, QtAccent.G, QtAccent.B));
+            else if (_osdKind == OsdKind.Battery) DrawBatteryRing(g, icx, cy);
             else
             {
                 Color spkCol = _osdMuted ? Color.FromArgb(248, 113, 113) : (IsLight ? Color.FromArgb(15, 23, 42) : Color.FromArgb(255, 255, 255));
@@ -3644,24 +4009,43 @@ RefreshBatteryLevel();
             else if (_osdKind == OsdKind.Battery)
             {
                 DrawBatteryRing(g, iconCx, cy);
-                if (_batteryStateKind == 1)
+                if (_osdDelta == 2)
+                {
+                    label = _state.T("\u0110\u00E3 s\u1EA1c \u0111\u1EA7y \u00B7 C\u00F3 th\u1EC3 r\u00FAt s\u1EA1c", "Fully charged \u00B7 Unplug");
+                    labelCol = IsLight ? Color.FromArgb(a, 5, 150, 105) : Color.FromArgb(a, 74, 222, 128);
+                }
+                else if (_batteryStateKind == 1)
                 {
                     label = _state.T("\u0110ang s\u1EA1c pin \u26A1", "Charging \u26A1");
                     labelCol = IsLight ? Color.FromArgb(a, 5, 150, 105) : Color.FromArgb(a, 74, 222, 128);
                 }
                 else if (_batteryStateKind == 2)
                 {
-                    label = _state.T("Pin y\u1EBFu \u00B7 C\u1EA7n s\u1EA1c", "Low Battery");
+                    label = (_batteryLifeSec > 0)
+                        ? _state.T("Pin y\u1EBFu \u00B7 ", "Low \u00B7 ") + FormatBatteryLife(_batteryLifeSec)
+                        : _state.T("Pin y\u1EBFu \u00B7 C\u1EA7n s\u1EA1c", "Low Battery");
                     labelCol = IsLight ? Color.FromArgb(a, 220, 38, 38) : Color.FromArgb(a, 252, 129, 129);
                 }
                 else
                 {
-                    label = _state.T("Pin b\u00ECnh th\u01B0\u1EDDng", "Battery Normal");
+                    label = (_batteryLifeSec > 0)
+                        ? _state.T("Pin \u00B7 ", "Battery \u00B7 ") + FormatBatteryLife(_batteryLifeSec)
+                        : _state.T("Pin b\u00ECnh th\u01B0\u1EDDng", "Battery Normal");
                     labelCol = Color.FromArgb(a, InkPri.R, InkPri.G, InkPri.B);
                 }
                 rightTxt = string.Format(CultureInfo.InvariantCulture, "{0}%", _osdPercent);
                 showBar = false;
                 barStart = Color.Empty; barEnd = Color.Empty;
+            }
+            else if (_osdKind == OsdKind.TimerDone)
+            {
+                DrawTimerVector(g, iconCx, cy, Color.FromArgb(a, QtAccent.R, QtAccent.G, QtAccent.B));
+                label = _state.T("H\u1EBFt gi\u1EDD! \u00B7 ", "Time's up! \u00B7 ") +
+                        string.Format(CultureInfo.InvariantCulture, _state.T("{0} ph\u00FAt", "{0} min"), Math.Max(1, _osdDelta));
+                rightTxt = _state.T("Xong", "Done");
+                showBar = false;
+                barStart = Color.Empty; barEnd = Color.Empty;
+                labelCol = Color.FromArgb(a, QtAccent.R, QtAccent.G, QtAccent.B);
             }
             else
             {
@@ -4445,6 +4829,17 @@ RefreshBatteryLevel();
             }
 
             float x0 = (_canvasW - _curW) * 0.5f;
+            if (_pageIndex == 1 && !IsQuickTimerRunning && (_hoveredId == "qt_chip" || _hoveredId == "qt_minus" || _hoveredId == "qt_plus"))
+            {
+                StepQuickTimerMinutes(e.Delta > 0 ? 1 : -1);
+                return;
+            }
+            if (_pageIndex == 3 && _shelfClipMode && _clipHistory.Count > 3 && e.Y >= U(30f) && e.Y <= U(98f))
+            {
+                _clipScroll += (e.Delta < 0) ? 1 : -1;
+                _needsRedraw = true;
+                return;
+            }
             if (_pageIndex == 0 && _isLyricsSplit && _state.ShowLyrics && _media.HasMedia && e.X >= x0 + U(238f))
             {
                 _lyricScrollOffset += (e.Delta < 0) ? 1 : -1;
@@ -4769,6 +5164,37 @@ RefreshBatteryLevel();
                     _lyricScrollUntilUtc = DateTime.MinValue;
                     _media.SeekToSeconds(Math.Max(0.0, _lastDisplayedLyrics[lIdx].TimeSec + _media.TotalLyricsOffsetSec));
                 }
+            }
+            else if (id == "qt_chip")
+            {
+                ToggleQuickTimer();
+            }
+            else if (id == "qt_minus")
+            {
+                StepQuickTimerMinutes(-1);
+            }
+            else if (id == "qt_plus")
+            {
+                StepQuickTimerMinutes(1);
+            }
+            else if (id == "shelf_clipmode")
+            {
+                _shelfClipMode = true;
+                _clipScroll = 0;
+            }
+            else if (id == "shelf_filemode")
+            {
+                _shelfClipMode = false;
+            }
+            else if (id == "clip_clear")
+            {
+                _clipHistory.Clear();
+                _clipScroll = 0;
+            }
+            else if (id.StartsWith("clip_item_"))
+            {
+                int ci;
+                if (int.TryParse(id.Substring("clip_item_".Length), out ci)) CopyClipHistoryItem(ci);
             }
             else if (id == "pomo_toggle")
             {
@@ -5324,6 +5750,46 @@ RefreshBatteryLevel();
                 _shelfThumbCache[path] = null;
                 return null;
             }
+        }
+
+        // Clipboard text history (RAM only). Respects password managers' "exclude from history/monitoring" markers.
+        private void TryCaptureClipboardText()
+        {
+            if (!_state.ClipHistoryEnabled) return;
+            if (DateTime.UtcNow < _suppressClipUntilUtc) return;
+            try
+            {
+                IDataObject d = Clipboard.GetDataObject();
+                if (d == null) return;
+                if (d.GetDataPresent("ExcludeClipboardContentFromMonitorProcessing") || d.GetDataPresent("Clipboard Viewer Ignore")) return;
+                if (d.GetDataPresent("CanIncludeInClipboardHistory"))
+                {
+                    MemoryStream ms = d.GetData("CanIncludeInClipboardHistory") as MemoryStream;
+                    if (ms != null && ms.Length >= 4 && BitConverter.ToInt32(ms.ToArray(), 0) == 0) return;
+                }
+                if (d.GetDataPresent(DataFormats.FileDrop) || !d.GetDataPresent(DataFormats.UnicodeText)) return;
+                string t = d.GetData(DataFormats.UnicodeText) as string;
+                if (string.IsNullOrEmpty(t) || t.Trim().Length == 0) return;
+                if (t.Length > 20000) t = t.Substring(0, 20000);
+                _clipHistory.Remove(t);
+                _clipHistory.Insert(0, t);
+                while (_clipHistory.Count > 12) _clipHistory.RemoveAt(_clipHistory.Count - 1);
+                _clipScroll = 0;
+                _clipCopiedIdx = -1;
+                if (_isExpanded && _pageIndex == 3) _needsRedraw = true;
+            }
+            catch { }
+        }
+
+        private void CopyClipHistoryItem(int idx)
+        {
+            if (idx < 0 || idx >= _clipHistory.Count) return;
+            _suppressClipUntilUtc = DateTime.UtcNow.AddMilliseconds(700);
+            try { Clipboard.SetText(_clipHistory[idx], TextDataFormat.UnicodeText); }
+            catch { return; }
+            _clipCopiedIdx = idx;
+            _clipCopiedUntilUtc = DateTime.UtcNow.AddSeconds(1.4);
+            _needsRedraw = true;
         }
 
         private void TryCaptureClipboardScreenshotToShelf()
