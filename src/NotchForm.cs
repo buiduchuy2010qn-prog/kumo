@@ -1904,12 +1904,13 @@ RefreshBatteryLevel();
             }
             else
             {
-                float lyY = U(31f);
+                double effPos = _media.GetEffectiveLyricsPosSec();
+                float lyY = U(27.5f);
                 for (int i = 0; i < win.Length; i++)
                 {
                     bool active = (i == activeSlot);
                     string lid = "lyric_seek_" + i;
-                    RectangleF lRect = new RectangleF(paneX - U(4f), lyY - U(10.5f), paneW + U(6f), U(21f));
+                    RectangleF lRect = new RectangleF(paneX - U(4f), lyY - U(10f), paneW + U(6f), U(20f));
                     _hitZones.Add(new HitZone { Id = lid, Rect = lRect });
                     bool lHov = (_hoveredId == lid);
 
@@ -1926,16 +1927,16 @@ RefreshBatteryLevel();
                         lSz = g.MeasureString(fullTxt, useFont);
                     }
 
-                    RectangleF lineViewport = new RectangleF(paneX, lyY - U(11f), paneW, U(22f));
+                    RectangleF lineViewport = new RectangleF(paneX, lyY - U(10.5f), paneW, U(21f));
                     if (active)
                     {
-                        DrawKaraokeLyricLine(g, win[i], fullTxt, pos, true, useFont, lineViewport, false);
+                        DrawKaraokeLyricLine(g, win[i], fullTxt, effPos, true, useFont, lineViewport, false);
                     }
                     else
                     {
                         Color lineCol = lHov
                             ? ToCrispInk(Nw(220))
-                            : ((i < activeSlot) ? ToCrispInk(Nw(142)) : ToCrispInk(Nw(96)));
+                            : ((activeSlot >= 0 && i < activeSlot) ? ToCrispInk(Nw(142)) : ToCrispInk(Nw(96)));
                         GraphicsState stLine = g.Save();
                         g.SetClip(lineViewport, CombineMode.Intersect);
                         if (lSz.Width <= paneW + U(2f))
@@ -1955,8 +1956,50 @@ RefreshBatteryLevel();
                         }
                         g.Restore(stLine);
                     }
-                    lyY += U(23f);
+                    lyY += U(21.5f);
                 }
+
+                // Bottom Sync Status & 1-Click Fine-Tuning Bar (aligned with media buttons at U(115f))
+                float barCy = U(115.5f);
+                double totOff = _media.TotalLyricsOffsetSec;
+                string syncInfo;
+                Color syncCol;
+                if (activeSlot < 0)
+                {
+                    syncInfo = (Math.Abs(totOff) >= 0.2)
+                        ? string.Format(CultureInfo.InvariantCulture, "\u266A {0} ({1:+0.0;-0.0}s)", _state.T("\u0110ang d\u1EA1o \u0111\u1EA7u", "Intro"), totOff)
+                        : ("\u266A " + _state.T("\u0110ang d\u1EA1o \u0111\u1EA7u...", "Waiting for vocals..."));
+                    syncCol = IsLight ? Color.FromArgb(255, 2, 132, 199) : Color.FromArgb(255, 125, 211, 252);
+                }
+                else if (Math.Abs(totOff) >= 0.1)
+                {
+                    syncInfo = string.Format(CultureInfo.InvariantCulture, "{0}: {1:+0.0;-0.0}s", _state.T("Nh\u1ECBp MV", "Offset"), totOff);
+                    syncCol = ToCrispInk(Nw(155));
+                }
+                else
+                {
+                    syncInfo = "\u266A " + _state.T("\u0110\u00E3 kh\u1EDBp l\u1EDDi", "Synced");
+                    syncCol = ToCrispInk(Nw(130));
+                }
+                DrawLeftVCenteredText(g, syncInfo, _fTimeSmall, syncCol, paneX, barCy);
+
+                float pH = U(16.5f);
+                float rx = paneX + paneW;
+                RectangleF rAdd  = new RectangleF(rx - U(34f), barCy - pH * 0.5f, U(34f), pH);
+                RectangleF rNow  = new RectangleF(rAdd.X - U(4f) - U(68f), barCy - pH * 0.5f, U(68f), pH);
+                RectangleF rSub  = new RectangleF(rNow.X - U(4f) - U(34f), barCy - pH * 0.5f, U(34f), pH);
+
+                _hitZones.Add(new HitZone { Id = "lyr_off_sub", Rect = rSub });
+                _hitZones.Add(new HitZone { Id = "lyr_sync_now", Rect = rNow });
+                _hitZones.Add(new HitZone { Id = "lyr_off_add", Rect = rAdd });
+
+                FillPill(g, rSub, _hoveredId == "lyr_off_sub" ? Nw(68) : Nw(34));
+                FillPill(g, rNow, _hoveredId == "lyr_sync_now" ? Color.FromArgb(210, 14, 165, 233) : Color.FromArgb(145, 2, 132, 199));
+                FillPill(g, rAdd, _hoveredId == "lyr_off_add" ? Nw(68) : Nw(34));
+
+                DrawCenteredText(g, "-0.5s", _fTimeSmall, InkPri, rSub.X + rSub.Width * 0.5f, barCy);
+                DrawCenteredText(g, _state.T("H\u00E1t c\u00E2u \u0111\u1EA7u", "Sync start"), _fTimeSmall, Color.White, rNow.X + rNow.Width * 0.5f, barCy);
+                DrawCenteredText(g, "+0.5s", _fTimeSmall, InkPri, rAdd.X + rAdd.Width * 0.5f, barCy);
             }
         }
 
@@ -3624,8 +3667,20 @@ RefreshBatteryLevel();
                 int lIdx;
                 if (int.TryParse(id.Substring("lyric_seek_".Length), out lIdx) && lIdx >= 0 && lIdx < _lastDisplayedLyrics.Length)
                 {
-                    _media.SeekToSeconds(_lastDisplayedLyrics[lIdx].TimeSec);
+                    _media.SeekToSeconds(Math.Max(0.0, _lastDisplayedLyrics[lIdx].TimeSec + _media.TotalLyricsOffsetSec));
                 }
+            }
+            else if (id == "lyr_off_sub")
+            {
+                _media.AdjustUserLyricsOffset(-0.5);
+            }
+            else if (id == "lyr_off_add")
+            {
+                _media.AdjustUserLyricsOffset(0.5);
+            }
+            else if (id == "lyr_sync_now")
+            {
+                _media.SyncFirstLineToNow();
             }
             else if (id == "pomo_toggle")
             {

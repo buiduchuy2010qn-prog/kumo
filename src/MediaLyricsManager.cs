@@ -41,6 +41,28 @@ namespace Kumo
         [DllImport("user32.dll")]
         private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
 
+        [ComImport, Guid("BCDE0395-E52F-467C-8E3D-C4579291692E")]
+        private class MediaMMDeviceEnumeratorCom { }
+
+        [ComImport, Guid("A95664D2-9614-4F35-A746-DE8DB63617E6"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+        private interface IMediaMMDeviceEnumerator
+        {
+            int EnumAudioEndpoints(int dataFlow, int dwStateMask, out IntPtr ppDevices);
+            int GetDefaultAudioEndpoint(int dataFlow, int role, out IMediaMMDevice ppEndpoint);
+        }
+
+        [ComImport, Guid("D666063F-1587-4E43-81F1-B948E807363F"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+        private interface IMediaMMDevice
+        {
+            int Activate(ref Guid iid, int dwClsCtx, IntPtr pActivationParams, [MarshalAs(UnmanagedType.IUnknown)] out object ppInterface);
+        }
+
+        [ComImport, Guid("C02216F6-8C67-4B5B-9D00-D008E73E0064"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+        private interface IMediaAudioMeterInformation
+        {
+            int GetPeakValue(out float pfPeak);
+        }
+
         public string CurrentTitle { get; private set; }
         public string CurrentArtist { get; private set; }
         public string SourceAppId { get; private set; }
@@ -65,6 +87,20 @@ namespace Kumo
         private string _lastTrackKey = "";
         private string _lastThumbTrackKey = "";
         private string _lastLyricsQuery = "";
+
+        // MV vs Audio-Single auto offset + Live WASAPI peak gate + User per-song fine offset
+        private IMediaAudioMeterInformation _audioMeter = null;
+        private DateTime _meterRetryAfterUtc = DateTime.MinValue;
+        private double _lrcAudioMasterDurSec = 0.0;
+        private double _lrcFirstTagSec = 0.0;
+        private double _lrcLastTagSec = 0.0;
+        private double _autoMvOffsetSec = 0.0;
+        private double _userOffsetSec = 0.0;
+        private readonly Dictionary<string, double> _perSongUserOffsets = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+        private bool _sawNearZeroStart = false;
+        private bool _onsetCalibratedOffset = false;
+        private int _sustainedMusicTicks = 0;
+        private volatile bool _silentIntroHold = false;
 
         private volatile bool _running;
         private Thread _worker;
@@ -128,10 +164,53 @@ namespace Kumo
             }
         }
 
+        public double TotalLyricsOffsetSec
+        {
+            get { return _autoMvOffsetSec + _userOffsetSec; }
+        }
+
+        public double GetEffectiveLyricsPosSec()
+        {
+            double raw = GetLivePositionSec();
+            if (_silentIntroHold && raw < 35.0)
+            {
+                return -1.0;
+            }
+            return raw - (_autoMvOffsetSec + _userOffsetSec);
+        }
+
+        public void AdjustUserLyricsOffset(double deltaSec)
+        {
+            lock (_lock)
+            {
+                _userOffsetSec = Math.Max(-90.0, Math.Min(120.0, Math.Round(_userOffsetSec + deltaSec, 1)));
+                if (!string.IsNullOrEmpty(_lastTrackKey))
+                {
+                    _perSongUserOffsets[_lastTrackKey] = _userOffsetSec;
+                }
+            }
+        }
+
+        public void SyncFirstLineToNow()
+        {
+            double raw = GetLivePositionSec();
+            lock (_lock)
+            {
+                if (_syncedLyrics.Count == 0) return;
+                _silentIntroHold = false;
+                double firstT = _syncedLyrics[0].TimeSec;
+                _userOffsetSec = Math.Max(-90.0, Math.Min(150.0, Math.Round((raw - firstT) - _autoMvOffsetSec, 2)));
+                if (!string.IsNullOrEmpty(_lastTrackKey))
+                {
+                    _perSongUserOffsets[_lastTrackKey] = _userOffsetSec;
+                }
+            }
+        }
+
         public LyricLine[] GetDisplayLyricsWindow(out int activeSlot)
         {
             activeSlot = -1;
-            double pos = GetLivePositionSec();
+            double effPos = GetEffectiveLyricsPosSec();
             lock (_lock)
             {
                 if (_syncedLyrics.Count == 0)
@@ -139,10 +218,19 @@ namespace Kumo
                     return new LyricLine[0];
                 }
 
+                // Hold in calm unsung state until the exact timestamp of the first sung line!
+                if (effPos < _syncedLyrics[0].TimeSec)
+                {
+                    int c0 = Math.Min(4, _syncedLyrics.Count);
+                    LyricLine[] pre = new LyricLine[c0];
+                    for (int i = 0; i < c0; i++) pre[i] = _syncedLyrics[i];
+                    return pre;
+                }
+
                 int curIdx = 0;
                 for (int i = 0; i < _syncedLyrics.Count; i++)
                 {
-                    if (_syncedLyrics[i].TimeSec <= pos + 0.14)
+                    if (_syncedLyrics[i].TimeSec <= effPos)
                         curIdx = i;
                     else
                         break;
@@ -313,17 +401,138 @@ namespace Kumo
         }
 
         // ==================== BACKGROUND SMTC + THUMBNAIL + LRCLIB WORKER ====================
+        private float ReadAudioPeak()
+        {
+            try
+            {
+                if (_audioMeter == null)
+                {
+                    if (DateTime.UtcNow < _meterRetryAfterUtc) return -1f;
+                    _meterRetryAfterUtc = DateTime.UtcNow.AddSeconds(5);
+                    IMediaMMDeviceEnumerator en = (IMediaMMDeviceEnumerator)(new MediaMMDeviceEnumeratorCom());
+                    IMediaMMDevice dev;
+                    if (en.GetDefaultAudioEndpoint(0, 0, out dev) == 0 && dev != null)
+                    {
+                        Guid iid = new Guid("C02216F6-8C67-4B5B-9D00-D008E73E0064");
+                        object obj;
+                        if (dev.Activate(ref iid, 23, IntPtr.Zero, out obj) == 0 && obj != null)
+                        {
+                            _audioMeter = (IMediaAudioMeterInformation)obj;
+                        }
+                    }
+                }
+                if (_audioMeter != null)
+                {
+                    float pk;
+                    if (_audioMeter.GetPeakValue(out pk) == 0) return pk;
+                    _audioMeter = null;
+                }
+            }
+            catch
+            {
+                _audioMeter = null;
+            }
+            return -1f;
+        }
+
+        private void SampleLiveAudioGate()
+        {
+            if (!HasMedia || !IsPlaying)
+            {
+                _silentIntroHold = false;
+                return;
+            }
+            double raw = GetLivePositionSec();
+            if (raw <= 2.8 && !_sawNearZeroStart)
+            {
+                _sawNearZeroStart = true;
+                _sustainedMusicTicks = 0;
+                _onsetCalibratedOffset = false;
+            }
+
+            float pk = ReadAudioPeak();
+            if (pk < 0f)
+            {
+                _silentIntroHold = false;
+                return;
+            }
+
+            if (pk >= 0.058f)
+            {
+                _sustainedMusicTicks = Math.Min(30, _sustainedMusicTicks + 1);
+            }
+            else if (pk < 0.024f)
+            {
+                _sustainedMusicTicks = Math.Max(0, _sustainedMusicTicks - 1);
+            }
+
+            if (raw < 35.0 && _sustainedMusicTicks < 3 && pk < 0.022f)
+            {
+                _silentIntroHold = true;
+            }
+            else if (_sustainedMusicTicks >= 5)
+            {
+                _silentIntroHold = false;
+                lock (_lock)
+                {
+                    if (_sawNearZeroStart && !_onsetCalibratedOffset && _autoMvOffsetSec > 0.5 && _durationSec > 45.0 && _lrcAudioMasterDurSec > 30.0)
+                    {
+                        double excess = _durationSec - _lrcAudioMasterDurSec;
+                        if (raw >= 4.0 && raw <= excess + 2.5)
+                        {
+                            _autoMvOffsetSec = Math.Round(Math.Max(0.0, raw - 0.5), 1);
+                            _onsetCalibratedOffset = true;
+                        }
+                    }
+                }
+            }
+            else if (raw >= 35.0)
+            {
+                _silentIntroHold = false;
+            }
+        }
+
+        private void RecalculateAutoMvOffsetLocked()
+        {
+            if (_syncedLyrics.Count == 0 || !string.Equals(LyricsStatus, "Synced", StringComparison.Ordinal))
+            {
+                _autoMvOffsetSec = 0.0;
+                return;
+            }
+            if (_durationSec > 45.0 && _lrcAudioMasterDurSec > 30.0)
+            {
+                double excess = _durationSec - _lrcAudioMasterDurSec;
+                bool startsEarly = (_lrcFirstTagSec < 10.0);
+                bool endsEarly = ((_durationSec - _lrcLastTagSec) > Math.Max(20.0, excess * 0.68));
+                if (excess >= 6.0 && excess <= 95.0 && startsEarly && endsEarly)
+                {
+                    if (!_onsetCalibratedOffset)
+                    {
+                        _autoMvOffsetSec = Math.Round(excess * 0.72, 1);
+                    }
+                    return;
+                }
+            }
+            _autoMvOffsetSec = 0.0;
+        }
+
         private void WorkerLoop()
         {
+            int sub = 0;
             while (_running)
             {
                 try
                 {
-                    PollSmtcOnce();
-                    UpdateActiveLyricLine();
+                    if (sub == 0)
+                    {
+                        PollSmtcOnce();
+                        UpdateActiveLyricLine();
+                    }
+                    SampleLiveAudioGate();
                 }
                 catch { }
-                Thread.Sleep(900);
+                sub = (sub + 1) % 9;
+                Thread.Sleep(100);
             }
         }
 
@@ -455,6 +664,29 @@ namespace Kumo
                 string trackKey = artist + "|" + title;
                 bool trackChanged = !string.Equals(trackKey, _lastTrackKey, StringComparison.Ordinal);
                 _lastTrackKey = trackKey;
+                if (trackChanged)
+                {
+                    lock (_lock)
+                    {
+                        _lrcAudioMasterDurSec = 0.0;
+                        _lrcFirstTagSec = 0.0;
+                        _lrcLastTagSec = 0.0;
+                        _autoMvOffsetSec = 0.0;
+                        double savedOff;
+                        _userOffsetSec = _perSongUserOffsets.TryGetValue(trackKey, out savedOff) ? savedOff : 0.0;
+                        _sawNearZeroStart = (GetLivePositionSec() <= 3.0);
+                        _onsetCalibratedOffset = false;
+                        _sustainedMusicTicks = 0;
+                        _silentIntroHold = false;
+                    }
+                }
+                else
+                {
+                    lock (_lock)
+                    {
+                        RecalculateAutoMvOffsetLocked();
+                    }
+                }
 
                 // Load Album Art Thumbnail (when track changes OR if we haven't decoded art for this track yet — YouTube sometimes attaches thumbnail 0.5s after title!)
                 bool needThumb = trackChanged || !string.Equals(trackKey, _lastThumbTrackKey, StringComparison.Ordinal);
@@ -687,26 +919,26 @@ namespace Kumo
         public bool HasCollapsedLyricNow()
         {
             if (!HasMedia || !IsPlaying) return false;
-            double livePosSec = GetLivePositionSec();
+            double effPos = GetEffectiveLyricsPosSec();
             lock (_lock)
             {
                 if (_syncedLyrics.Count == 0) return false;
-                if (livePosSec + 0.30 < _syncedLyrics[0].TimeSec) return false;
+                if (effPos < _syncedLyrics[0].TimeSec) return false;
                 return true;
             }
         }
 
         public LyricLine GetActiveCollapsedLyricLine(out double livePosSec, out bool isSyncedLine, out string fallbackText)
         {
-            livePosSec = GetLivePositionSec();
+            livePosSec = GetEffectiveLyricsPosSec();
             lock (_lock)
             {
-                if (_syncedLyrics.Count > 0 && livePosSec + 0.30 >= _syncedLyrics[0].TimeSec)
+                if (_syncedLyrics.Count > 0 && livePosSec >= _syncedLyrics[0].TimeSec)
                 {
                     int idx = 0;
                     for (int i = 0; i < _syncedLyrics.Count; i++)
                     {
-                        if (_syncedLyrics[i].TimeSec <= livePosSec + 0.14)
+                        if (_syncedLyrics[i].TimeSec <= livePosSec)
                             idx = i;
                         else
                             break;
@@ -739,6 +971,33 @@ namespace Kumo
             return fb;
         }
 
+        private static void MeasureLrcTagBounds(string rawLrc, out double firstNonEmptySec, out double lastTagSec)
+        {
+            firstNonEmptySec = -1.0;
+            lastTagSec = 0.0;
+            Regex rx = new Regex(@"\[(\d+):(\d+(?:\.\d+)?)\](.*)");
+            string[] lines = rawLrc.Split(new char[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+            for (int i = 0; i < lines.Length; i++)
+            {
+                Match m = rx.Match(lines[i]);
+                if (!m.Success) continue;
+                int mins;
+                double secs;
+                if (int.TryParse(m.Groups[1].Value, out mins) &&
+                    double.TryParse(m.Groups[2].Value, NumberStyles.Float, CultureInfo.InvariantCulture, out secs))
+                {
+                    double t = mins * 60.0 + secs;
+                    if (t > lastTagSec) lastTagSec = t;
+                    string txt = m.Groups[3].Value.Trim();
+                    if (firstNonEmptySec < 0.0 && !string.IsNullOrEmpty(txt))
+                    {
+                        firstNonEmptySec = t;
+                    }
+                }
+            }
+            if (firstNonEmptySec < 0.0) firstNonEmptySec = 0.0;
+        }
+
         private bool TryQueryLrclibSingle(string rawQuery)
         {
             if (string.IsNullOrEmpty(rawQuery)) return false;
@@ -751,30 +1010,101 @@ namespace Kumo
             using (StreamReader sr = new StreamReader(resp.GetResponseStream(), Encoding.UTF8))
             {
                 string json = sr.ReadToEnd();
-                Match mSynced = Regex.Match(json, "\"syncedLyrics\"\\s*:\\s*\"((?:\\\\.|[^\"\\\\])*)\"");
-                if (mSynced.Success && !string.IsNullOrEmpty(mSynced.Groups[1].Value))
+                MatchCollection objs = Regex.Matches(json, @"\{\s*""id""\s*:[\s\S]*?(?=\},\s*\{\s*""id""|\}\s*\]\s*$)");
+
+                string bestSynced = null;
+                double bestScore = -1e9;
+                double bestFirstSec = 0.0;
+                double bestLastSec = 0.0;
+                double bestCandDur = 0.0;
+                double minCanonicalAudioDur = 1e9;
+                string firstPlain = null;
+
+                for (int i = 0; i < objs.Count; i++)
                 {
-                    string rawLrc = Regex.Unescape(mSynced.Groups[1].Value);
-                    ParseLrc(rawLrc);
+                    string chunk = objs[i].Value;
+                    double cDur = 0.0;
+                    Match mDur = Regex.Match(chunk, @"""duration""\s*:\s*([0-9]+(?:\.[0-9]+)?)");
+                    if (mDur.Success)
+                    {
+                        double.TryParse(mDur.Groups[1].Value, NumberStyles.Float, CultureInfo.InvariantCulture, out cDur);
+                    }
+
+                    Match mSyn = Regex.Match(chunk, "\"syncedLyrics\"\\s*:\\s*\"((?:\\\\.|[^\"\\\\])*)\"");
+                    if (mSyn.Success && !string.IsNullOrEmpty(mSyn.Groups[1].Value))
+                    {
+                        string unesc = Regex.Unescape(mSyn.Groups[1].Value);
+                        double fSec, lSec;
+                        MeasureLrcTagBounds(unesc, out fSec, out lSec);
+                        if (lSec > 5.0)
+                        {
+                            if (cDur > 30.0 && cDur < minCanonicalAudioDur)
+                            {
+                                minCanonicalAudioDur = cDur;
+                            }
+                            double score = 100.0 - i * 1.5;
+                            if (_durationSec > 30.0 && cDur > 30.0)
+                            {
+                                double diff = Math.Abs(cDur - _durationSec);
+                                bool genuinelyAlignedToVideo = (fSec >= 10.0) || ((_durationSec - lSec) <= 22.0);
+                                if (diff <= 4.5 && genuinelyAlignedToVideo)
+                                {
+                                    score += 500.0 - diff * 20.0;
+                                }
+                                else if (diff <= 4.5)
+                                {
+                                    score += 40.0 - diff * 4.0;
+                                }
+                            }
+                            if (score > bestScore)
+                            {
+                                bestScore = score;
+                                bestSynced = unesc;
+                                bestFirstSec = fSec;
+                                bestLastSec = lSec;
+                                bestCandDur = cDur;
+                            }
+                        }
+                    }
+
+                    if (firstPlain == null)
+                    {
+                        Match mPl = Regex.Match(chunk, "\"plainLyrics\"\\s*:\\s*\"((?:\\\\.|[^\"\\\\])*)\"");
+                        if (mPl.Success && !string.IsNullOrEmpty(mPl.Groups[1].Value))
+                        {
+                            firstPlain = Regex.Unescape(mPl.Groups[1].Value);
+                        }
+                    }
+                }
+
+                if (!string.IsNullOrEmpty(bestSynced))
+                {
+                    ParseLrc(bestSynced);
                     if (_syncedLyrics.Count > 0)
                     {
-                        LyricsStatus = "Synced";
+                        lock (_lock)
+                        {
+                            LyricsStatus = "Synced";
+                            _lrcFirstTagSec = bestFirstSec;
+                            _lrcLastTagSec = bestLastSec;
+                            _lrcAudioMasterDurSec = (minCanonicalAudioDur < 1e8) ? minCanonicalAudioDur : bestCandDur;
+                            RecalculateAutoMvOffsetLocked();
+                        }
                         UpdateActiveLyricLine();
                         return true;
                     }
                 }
 
-                Match mPlain = Regex.Match(json, "\"plainLyrics\"\\s*:\\s*\"((?:\\\\.|[^\"\\\\])*)\"");
-                if (mPlain.Success && !string.IsNullOrEmpty(mPlain.Groups[1].Value))
+                if (!string.IsNullOrEmpty(firstPlain))
                 {
-                    string rawPlain = Regex.Unescape(mPlain.Groups[1].Value);
-                    string[] lines = rawPlain.Split(new char[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
-                    double dur = _durationSec > 20.0 ? _durationSec : (lines.Length * 4.0);
-                    double stepSec = Math.Max(2.5, dur / Math.Max(1, lines.Length));
+                    string[] lines = firstPlain.Split(new char[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+                    double dur = _durationSec > 25.0 ? _durationSec : (lines.Length * 4.0 + 14.0);
+                    double introPad = Math.Min(16.0, dur * 0.10);
+                    double stepSec = Math.Max(2.5, (dur - introPad - 6.0) / Math.Max(1, lines.Length));
                     lock (_lock)
                     {
                         _syncedLyrics.Clear();
-                        double t = 0;
+                        double t = introPad;
                         foreach (string ln in lines)
                         {
                             _syncedLyrics.Add(new LyricLine { TimeSec = t, Text = ln.Trim() });
@@ -782,6 +1112,7 @@ namespace Kumo
                         }
                         FinalizeLyricTimings(_syncedLyrics, dur);
                         LyricsStatus = "Plain";
+                        _autoMvOffsetSec = 0.0;
                     }
                     UpdateActiveLyricLine();
                     return true;
@@ -1013,14 +1344,20 @@ namespace Kumo
 
         private void UpdateActiveLyricLine()
         {
-            double pos = GetLivePositionSec();
+            double effPos = GetEffectiveLyricsPosSec();
             lock (_lock)
             {
                 if (_syncedLyrics.Count == 0) return;
+                if (effPos < _syncedLyrics[0].TimeSec)
+                {
+                    CurrentLyricLine = _syncedLyrics[0].Text;
+                    NextLyricLine = (_syncedLyrics.Count > 1) ? _syncedLyrics[1].Text : "";
+                    return;
+                }
                 int idx = 0;
                 for (int i = 0; i < _syncedLyrics.Count; i++)
                 {
-                    if (_syncedLyrics[i].TimeSec <= pos + 0.35)
+                    if (_syncedLyrics[i].TimeSec <= effPos)
                         idx = i;
                     else
                         break;
