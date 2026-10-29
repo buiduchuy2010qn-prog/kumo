@@ -176,6 +176,30 @@ namespace Kumo
         private int _micHotkeyRegisteredIdx = -1;
         public bool MicHotkeyActive { get { return _micHotkeyRegistered; } }
 
+        // v1.1.25: true fullscreen + top-edge peek, inline mini calendar, 20-20-20 & water HUD, smart DND, follow-cursor monitor
+        private Rectangle _cachedWorkingArea;
+        private bool _cachedIsPrimary = true;
+        private float _lastMonitorDpi = 96f;
+        private bool _fullscreenPeek = false;
+        private float _fsPeekDwellSec = 0f;
+        private bool _calendarOpen = false;
+        private int _calendarMonthOffset = 0;
+        private bool _previewForceCalendar = false;
+        private int _activeScreenSec = 0;
+        private int _waterRemindSec = 0;
+
+        private bool IsSmartDndSuppressed
+        {
+            get
+            {
+                if (!_state.SmartDndEnabled) return false;
+                if (_bgFullscreen) return true;
+                if (_state.PomodoroRunning && _state.PomodoroMode == 0) return true;
+                if (_osd != null && (_osd.IsMicActive || _osd.IsCameraActive)) return true;
+                return false;
+            }
+        }
+
         // Pages: 0=Music, 1=Pomodoro, 2=Water, 3=Shelf, 4=TodoList, 5=SystemMonitor
         private int _pageIndex = 5;
         private const int TotalPages = 6;
@@ -253,6 +277,7 @@ namespace Kumo
             DoubleBuffered = true;
 
             RefreshBatteryLevel();
+            CacheScreenInfo(GetTargetScreen());
             DetectScaleAndInitFonts();
             InitReusableCanvas();
 
@@ -289,7 +314,7 @@ namespace Kumo
             if (_osd != null) _osd.OsdChanged += OnSystemOsdChanged;
             _weather = new WeatherService();
             _weather.Enabled = _state.WeatherEnabled;
-            _cachedScreenBounds = GetTargetScreen().Bounds;
+            CacheScreenInfo(GetTargetScreen());
             HandleCreated += (s, e) =>
             {
                 _cachedSelfHwnd = Handle;
@@ -445,6 +470,7 @@ namespace Kumo
             set
             {
                 _pageIndex = ((value % TotalPages) + TotalPages) % TotalPages;
+                _calendarOpen = false;
                 _isExpanded = true;
                 _isMicroPill = false;
                 _hw.IsNotchExpanded = true;
@@ -519,6 +545,7 @@ namespace Kumo
         public void RevealAndOpenSettings()
         {
             _isFullscreenHidden = false;
+            _fullscreenPeek = true;
             _autoMinimalObstruction = false;
             if (!_alwaysMinimal) _isMicroPill = false;
             UpdateTargetDimensions();
@@ -532,6 +559,7 @@ namespace Kumo
             _showRestingMascot = _state.MascotEnabled;
             _alwaysMinimal = _state.AlwaysMinimal;
             if (!_state.ShowLyrics) _isLyricsSplit = false;
+            if (!_state.HideInFullscreen) { _fullscreenPeek = false; _fsPeekDwellSec = 0f; }
 
             if (!_showRestingMascot)
             {
@@ -539,6 +567,7 @@ namespace Kumo
                 _waveUntilUtc = DateTime.MinValue;
             }
 
+            CacheScreenInfo(GetTargetScreen());
             DetectScaleAndInitFonts();
             InitReusableCanvas();
 
@@ -547,8 +576,7 @@ namespace Kumo
                 Bounds = new Rectangle(_canvasWinX, _canvasWinY, _canvasW, _canvasH);
             }
 
-            _cachedScreenBounds = GetTargetScreen().Bounds;
-            _isFullscreenHidden = _state.HideInFullscreen && _bgFullscreen;
+            _isFullscreenHidden = _state.HideInFullscreen && _bgFullscreen && !_fullscreenPeek;
             UpdateMicHotkey();
             if (_weather != null)
             {
@@ -564,8 +592,33 @@ namespace Kumo
             RenderLayeredNotch();
         }
 
+        private void CacheScreenInfo(Screen scr)
+        {
+            if (scr == null) scr = Screen.PrimaryScreen;
+            if (scr == null) return;
+            _cachedScreenBounds = scr.Bounds;
+            _cachedWorkingArea = scr.WorkingArea;
+            _cachedIsPrimary = scr.Primary;
+        }
+
         private Screen GetTargetScreen()
         {
+            if (_state.MonitorIndex == -1)
+            {
+                if ((_isExpanded || _isDragHover || _isModalDialogOpen) && _cachedScreenBounds.Width > 0)
+                {
+                    Screen pinned = Screen.FromPoint(new Point(_cachedScreenBounds.Left + _cachedScreenBounds.Width / 2, _cachedScreenBounds.Top + 10));
+                    if (pinned != null) return pinned;
+                }
+                try
+                {
+                    Screen cur = Screen.FromPoint(Cursor.Position);
+                    if (cur != null) return cur;
+                }
+                catch { }
+                return Screen.PrimaryScreen;
+            }
+
             Screen[] screens = Screen.AllScreens;
             if (screens != null && screens.Length > 0)
             {
@@ -573,6 +626,37 @@ namespace Kumo
                 if (idx >= 0 && idx < screens.Length) return screens[idx];
             }
             return Screen.PrimaryScreen;
+        }
+
+        private void SyncTargetScreenPlacement()
+        {
+            Screen scr = GetTargetScreen();
+            if (scr == null) return;
+            Rectangle prevBounds = _cachedScreenBounds;
+            Rectangle prevWork = _cachedWorkingArea;
+            if (scr.Bounds == prevBounds && scr.WorkingArea == prevWork) return;
+
+            CacheScreenInfo(scr);
+            if (scr.Bounds != prevBounds)
+            {
+                float dpi = NativeMethods.GetMonitorDpi(IsHandleCreated ? Handle : IntPtr.Zero, scr.Bounds);
+                if (Math.Abs(dpi - _lastMonitorDpi) > 0.5f)
+                {
+                    DetectScaleAndInitFonts();
+                    InitReusableCanvas();
+                }
+                else
+                {
+                    _canvasWinX = scr.Bounds.Left + (scr.Bounds.Width - _canvasW) / 2;
+                    _canvasWinY = scr.Bounds.Top;
+                }
+                if (IsHandleCreated)
+                {
+                    Bounds = new Rectangle(_canvasWinX, _canvasWinY, _canvasW, _canvasH);
+                }
+                UpdateTargetDimensions();
+                _needsRedraw = true;
+            }
         }
 
         // ==================== BULLETPROOF WIN32 OVERLAY HIT-TESTING ====================
@@ -631,7 +715,7 @@ namespace Kumo
                     int lp = unchecked((int)m.LParam.ToInt64());
                     int sx = (short)(lp & 0xFFFF);
                     int sy = (short)((lp >> 16) & 0xFFFF);
-                    Rectangle scr = GetTargetScreen().Bounds;
+                    Rectangle scr = (_cachedScreenBounds.Width > 0) ? _cachedScreenBounds : GetTargetScreen().Bounds;
                     int cx = scr.Left + scr.Width / 2;
                     int maxHalfW = _isMicroPill ? (int)U(26f) : (int)(_curW * 0.5f + U(4f));
                     int maxH = _isMicroPill ? (int)U(6f) : (int)Math.Max(U(30f), _curH + U(2f));
@@ -724,7 +808,9 @@ namespace Kumo
 
         private void DetectScaleAndInitFonts()
         {
-            float dpi = NativeMethods.GetMonitorDpi(IsHandleCreated ? Handle : IntPtr.Zero, GetTargetScreen().Bounds);
+            Rectangle scrBounds = (_cachedScreenBounds.Width > 0) ? _cachedScreenBounds : GetTargetScreen().Bounds;
+            float dpi = NativeMethods.GetMonitorDpi(IsHandleCreated ? Handle : IntPtr.Zero, scrBounds);
+            _lastMonitorDpi = dpi;
 
             DisposeCachedFonts();
             _scale = (dpi / 96.0f) * _state.GetSizeMultiplier();
@@ -766,7 +852,7 @@ namespace Kumo
         {
             _canvasW = Math.Max(320, (int)Math.Ceiling(U(696f)));
             _canvasH = Math.Max(120, (int)Math.Ceiling(U(182f)));
-            Rectangle screen = GetTargetScreen().Bounds;
+            Rectangle screen = (_cachedScreenBounds.Width > 0) ? _cachedScreenBounds : GetTargetScreen().Bounds;
             _canvasWinX = screen.Left + (screen.Width - _canvasW) / 2;
             _canvasWinY = screen.Top;
             if (_canvasBmp != null)
@@ -794,8 +880,15 @@ namespace Kumo
             }
             if (_isExpanded)
             {
-                bool wide = (_pageIndex == 0 && _isLyricsSplit && _state.ShowLyrics);
-                _targetW = U(wide ? 598f : 416f); _targetH = U(wide ? 152f : 139f); _targetR = U(30f); _targetE = U(20f);
+                if (_calendarOpen || _previewForceCalendar)
+                {
+                    _targetW = U(416f); _targetH = U(148f); _targetR = U(30f); _targetE = U(20f);
+                }
+                else
+                {
+                    bool wide = (_pageIndex == 0 && _isLyricsSplit && _state.ShowLyrics);
+                    _targetW = U(wide ? 598f : 416f); _targetH = U(wide ? 152f : 139f); _targetR = U(30f); _targetE = U(20f);
+                }
             }
             else if (IsOsdActive)
             {
@@ -867,21 +960,74 @@ RefreshBatteryLevel();
                     {
                         try { System.Media.SystemSounds.Asterisk.Play(); } catch { }
                     }
-                    _isExpanded = true;
-                    _pageIndex = 1;
-                    UpdateTargetDimensions();
-                    _needsRedraw = true;
+                    if (_bgFullscreen && _state.SmartDndEnabled)
+                    {
+                        if (!_state.HideInFullscreen)
+                        {
+                            TriggerOsdHud(OsdKind.TimerDone, 100, false, _state.FocusMinutes, 5.0);
+                        }
+                    }
+                    else
+                    {
+                        _calendarOpen = false;
+                        _isExpanded = true;
+                        _pageIndex = 1;
+                        UpdateTargetDimensions();
+                        _needsRedraw = true;
+                    }
                 }
             }
 
-            _cachedScreenBounds = GetTargetScreen().Bounds;
-            bool fsNow = _state.HideInFullscreen && _bgFullscreen;
+            // Gentle 1-row 20-20-20 Eye-Care & Water Reminders (with Smart DND during Fullscreen / Mic Calls / Pomodoro Focus)
+            string todayKey = DateTime.Now.ToString("yyyy-MM-dd");
+            if (!string.IsNullOrEmpty(_state.WaterLastDate) && _state.WaterLastDate != todayKey)
+            {
+                _state.WaterLastDate = todayKey;
+                _state.WaterDrankMl = 0;
+                Array.Clear(_state.WaterHourlyMl, 0, 24);
+            }
+            uint idleSecMs = NativeMethods.GetIdleTimeMs();
+            if (idleSecMs >= 300000)
+            {
+                _activeScreenSec = 0;
+            }
+            else if (idleSecMs < 90000)
+            {
+                _activeScreenSec = Math.Min(20 * 60, _activeScreenSec + 1);
+                _waterRemindSec = Math.Min(45 * 60, _waterRemindSec + 1);
+            }
+
+            if (!_state.EyeCareEnabled)
+            {
+                _activeScreenSec = 0;
+            }
+            else if (_activeScreenSec >= 20 * 60 && !IsSmartDndSuppressed && !IsOsdActive && !IsDownloadActive && !_isExpanded)
+            {
+                _activeScreenSec = 0;
+                TriggerOsdHud(OsdKind.EyeCare, 100, false, 20, 4.8);
+            }
+
+            if (!_state.WaterRemindersEnabled || _state.WaterDrankMl >= _state.WaterGoalMl)
+            {
+                _waterRemindSec = 0;
+            }
+            else if (_waterRemindSec >= 45 * 60 && !IsSmartDndSuppressed && !IsOsdActive && !IsDownloadActive && !_isExpanded)
+            {
+                _waterRemindSec = 0;
+                int wp = Math.Min(100, (_state.WaterDrankMl * 100) / Math.Max(1, _state.WaterGoalMl));
+                TriggerOsdHud(OsdKind.WaterRemind, wp, false, _state.WaterCupSizeMl, 5.2);
+            }
+
+            SyncTargetScreenPlacement();
+            if (!_bgFullscreen) { _fullscreenPeek = false; _fsPeekDwellSec = 0f; }
+            bool fsNow = _state.HideInFullscreen && _bgFullscreen && !_fullscreenPeek;
             if (fsNow != _isFullscreenHidden)
             {
                 _isFullscreenHidden = fsNow;
                 if (fsNow && _isExpanded)
                 {
                     _isExpanded = false;
+                    _calendarOpen = false;
                     _hw.IsNotchExpanded = false;
                 }
                 UpdateTargetDimensions();
@@ -992,25 +1138,43 @@ RefreshBatteryLevel();
                         NativeMethods.GetClassName(fg, sb, 96);
                         string cls = sb.ToString();
 
-                        if (!IsIgnoredShellClass(cls) && !cls.Equals("ApplicationFrameWindow", StringComparison.OrdinalIgnoreCase))
+                        if (!IsIgnoredShellClass(cls))
                         {
+                            if (_cachedIsPrimary)
+                            {
+                                int quns;
+                                if (NativeMethods.SHQueryUserNotificationState(out quns) == 0 && (quns == 3 || quns == 4))
+                                {
+                                    fs = true;
+                                }
+                            }
+
                             NativeMethods.RECT wr;
                             if (NativeMethods.GetWindowRect(fg, out wr))
                             {
                                 Rectangle scr = _cachedScreenBounds;
+                                Rectangle work = _cachedWorkingArea;
                                 float sc = _scale;
                                 int style = NativeMethods.GetWindowLong(fg, NativeMethods.GWL_STYLE);
 
-                                // 1. True Fullscreen game / borderless video check
-                                if ((style & NativeMethods.WS_CAPTION) == 0 &&
-                                    wr.Left <= scr.Left && wr.Top <= scr.Top &&
-                                    wr.Right >= scr.Right && wr.Bottom >= scr.Bottom)
+                                // 1. True Fullscreen game / YouTube HTML5 / F11 browser / VLC / UWP video check
+                                bool coversMonitor = (scr.Width > 0 && scr.Height > 0 &&
+                                    wr.Left <= scr.Left + 1 && wr.Top <= scr.Top + 1 &&
+                                    wr.Right >= scr.Right - 1 && wr.Bottom >= scr.Bottom - 1);
+                                if (coversMonitor)
                                 {
-                                    fs = true;
+                                    bool noCaption = (style & NativeMethods.WS_CAPTION) == 0;
+                                    bool notMaximized = (style & NativeMethods.WS_MAXIMIZE) == 0;
+                                    bool dockedTaskbarCovered = (work.Width > 0 && work.Height > 0) &&
+                                        (work.Height < scr.Height - 4 || work.Width < scr.Width - 4);
+                                    if (noCaption || dockedTaskbarCovered || notMaximized)
+                                    {
+                                        fs = true;
+                                    }
                                 }
 
                                 // 2. Smart Browser/Explorer Tab collision check (zero CopyFromScreen, zero UI lag!)
-                                if (!fs && _state.AutoMinimalEnabled)
+                                if (!fs && _state.AutoMinimalEnabled && !cls.Equals("ApplicationFrameWindow", StringComparison.OrdinalIgnoreCase))
                                 {
                                     bool isTabbedApp =
                                         cls.IndexOf("Chrome_WidgetWin", StringComparison.OrdinalIgnoreCase) >= 0 ||
@@ -1110,10 +1274,54 @@ RefreshBatteryLevel();
             if (dt <= 0.001f || dt > 0.08f) dt = 0.016f;
 
             Point cursor = Cursor.Position;
-            Rectangle screenBounds = GetTargetScreen().Bounds;
+            if (_state.MonitorIndex == -1 && !_isExpanded && !_isDragHover && !_isModalDialogOpen)
+            {
+                SyncTargetScreenPlacement();
+            }
+            Rectangle screenBounds = (_cachedScreenBounds.Width > 0) ? _cachedScreenBounds : GetTargetScreen().Bounds;
             int centerX = screenBounds.Left + screenBounds.Width / 2;
             int relY = cursor.Y - screenBounds.Top;
             int absDx = Math.Abs(cursor.X - centerX);
+
+            if (!_state.HideInFullscreen || !_bgFullscreen)
+            {
+                _fullscreenPeek = false;
+                _fsPeekDwellSec = 0f;
+            }
+            else if (!_fullscreenPeek)
+            {
+                if (relY >= 0 && relY <= 2 && absDx <= (int)U(130f))
+                {
+                    _fsPeekDwellSec += dt;
+                    if (_fsPeekDwellSec >= 0.20f)
+                    {
+                        _fullscreenPeek = true;
+                        _fsPeekDwellSec = 0f;
+                    }
+                }
+                else
+                {
+                    _fsPeekDwellSec = 0f;
+                }
+            }
+            else if (!_isExpanded && !_isDragHover && !_isModalDialogOpen && (relY > (int)U(44f) || absDx > (int)U(190f)))
+            {
+                _fullscreenPeek = false;
+            }
+
+            bool fsAnimNow = _state.HideInFullscreen && _bgFullscreen && !_fullscreenPeek;
+            if (fsAnimNow != _isFullscreenHidden)
+            {
+                _isFullscreenHidden = fsAnimNow;
+                if (fsAnimNow && _isExpanded)
+                {
+                    _isExpanded = false;
+                    _calendarOpen = false;
+                    _hw.IsNotchExpanded = false;
+                }
+                UpdateTargetDimensions();
+                _needsRedraw = true;
+            }
 
             DateTime nowUtc = DateTime.UtcNow;
 
@@ -1298,6 +1506,7 @@ RefreshBatteryLevel();
                     _isScrubbingSeek = false;
                     _shelfDragCandidate = -1;
                     _waterEditMode = false;
+                    _calendarOpen = false;
                     _isMicroPill = _alwaysMinimal || _autoMinimalObstruction;
                 }
 
@@ -1459,6 +1668,8 @@ RefreshBatteryLevel();
             bool oldMic = _isMicroPill;
             bool oldMascot = _showRestingMascot;
             bool oldWave = _previewForceWave;
+            bool oldCal = _previewForceCalendar;
+            bool oldCalOpen = _calendarOpen;
             bool oldSplit = _isLyricsSplit;
             int oldPage = _pageIndex;
             float oldExpFade = _expandFade;
@@ -1476,6 +1687,8 @@ RefreshBatteryLevel();
             _isExpanded = expanded;
             _isMicroPill = !expanded && (pageIndex == -2);
             _previewForceWave = !expanded && (pageIndex == -3);
+            _previewForceCalendar = expanded && (pageIndex == 99);
+            _calendarOpen = _previewForceCalendar;
             if (!expanded && pageIndex == -4) _isLyricsSplit = true;
             if (expanded && pageIndex == 0 && _state.DefaultLyricsSplit) _isLyricsSplit = true;
 
@@ -1510,7 +1723,7 @@ RefreshBatteryLevel();
             }
             _privacyFade = IsPrivacyActive ? 1.0f : 0.0f;
             _expandFade = expanded ? 1.0f : 0.0f;
-            if (pageIndex >= 0) _pageIndex = pageIndex;
+            if (pageIndex >= 0 && pageIndex < TotalPages) _pageIndex = pageIndex;
             UpdateTargetDimensions();
 
             int bmpW = (int)Math.Ceiling(_targetW + _targetE * 2f + U(30f));
@@ -1536,6 +1749,8 @@ RefreshBatteryLevel();
             _isMicroPill = oldMic;
             _showRestingMascot = oldMascot;
             _previewForceWave = oldWave;
+            _previewForceCalendar = oldCal;
+            _calendarOpen = oldCalOpen;
             _isLyricsSplit = oldSplit;
             _pageIndex = oldPage;
             _expandFade = oldExpFade;
@@ -1629,7 +1844,9 @@ RefreshBatteryLevel();
                                 GraphicsState stExp = g.Save();
                                 float yOff = -(1.0f - expProg) * U(6f);
                                 g.TranslateTransform(0f, yOff);
-                                float expFullH = (_pageIndex == 0 && _isLyricsSplit && _state.ShowLyrics) ? U(152f) : U(140f);
+                                float expFullH = (_calendarOpen || _previewForceCalendar)
+                                    ? U(148f)
+                                    : ((_pageIndex == 0 && _isLyricsSplit && _state.ShowLyrics) ? U(152f) : U(140f));
                                 DrawExpandedNusa(g, x0, bodyW, expFullH);
                                 g.Restore(stExp);
 
@@ -1982,6 +2199,13 @@ RefreshBatteryLevel();
 
         private float MeasurePageHeaderLeftLimit(Graphics g, float x0, bool isSplitLyrics)
         {
+            if (_calendarOpen || _previewForceCalendar)
+            {
+                string cp1 = _state.T("L\u1ECBch  ", "Mini  ");
+                string cp2 = _state.T("Th\u00E1ng", "Calendar");
+                float cw = g.MeasureString(cp1, _fTitle).Width + g.MeasureString(cp2, _fTitle).Width - U(3.5f);
+                return x0 + U(15f) + cw + U(8f);
+            }
             if (_pageIndex == 0)
             {
                 return isSplitLyrics ? (x0 + U(30f)) : (x0 + U(105f));
@@ -2001,7 +2225,8 @@ RefreshBatteryLevel();
         // ==================== STAGE 1: EXPANDED NUSA (FLAT INLINE HEADER — NO FLOATING POPUPS!) ====================
         private void DrawExpandedNusa(Graphics g, float x0, float w, float h)
         {
-            bool isSplitLyrics = (_pageIndex == 0 && _isLyricsSplit && _state.ShowLyrics);
+            bool calActive = (_calendarOpen || _previewForceCalendar);
+            bool isSplitLyrics = !calActive && (_pageIndex == 0 && _isLyricsSplit && _state.ShowLyrics);
             float hdrY = isSplitLyrics ? U(15.5f) : U(17.8f);
 
             float gearX = _state.EqualizerEnabled ? (x0 + w - U(43f)) : (x0 + w - U(23f));
@@ -2112,8 +2337,14 @@ RefreshBatteryLevel();
             float dateX = batX + bSz.Width + U(6f);
             float dateY = hdrY - _fHdrTime.Height * 0.5f;
             float dtW = (drawDate ? dSz.Width : 0f) + tSz.Width;
-            _hitZones.Add(new HitZone { Id = "hdr_clock", Rect = new RectangleF(dateX - U(2f), hdrY - U(11f), dtW + U(6f), U(22f)) });
-            using (SolidBrush bDate = new SolidBrush(ToCrispInk(Nw(_hoveredId == "hdr_clock" ? 255 : 210))))
+            RectangleF clkHit = new RectangleF(dateX - U(4f), hdrY - U(9.5f), dtW + U(8f), U(19f));
+            _hitZones.Add(new HitZone { Id = "hdr_clock", Rect = clkHit });
+            if (calActive || _hoveredId == "hdr_clock")
+            {
+                FillPill(g, clkHit, calActive ? Color.FromArgb(72, 14, 165, 233) : Nw(36));
+            }
+            Color dateInk = calActive ? Color.FromArgb(125, 211, 252) : ToCrispInk(Nw(_hoveredId == "hdr_clock" ? 255 : 210));
+            using (SolidBrush bDate = new SolidBrush(dateInk))
             using (SolidBrush bTime = new SolidBrush(InkPri))
             {
                 if (drawDate)
@@ -2141,35 +2372,142 @@ RefreshBatteryLevel();
                 DrawEqualizerBars(g, x0 + w - U(20f), hdrY);
             }
 
-            switch (_pageIndex)
+            if (calActive)
             {
-                case 0:
-                    if (_isLyricsSplit && _state.ShowLyrics)
-                        DrawLyricsSplitPage(g, x0, w, h);
-                    else
-                        DrawMusicPage(g, x0, w, h);
-                    break;
-                case 1:
-                    DrawPomodoroPage(g, x0, w, h);
-                    break;
-                case 2:
-                    DrawWaterPage(g, x0, w, h);
-                    break;
-                case 3:
-                    DrawShelfPage(g, x0, w, h);
-                    break;
-                case 4:
-                    DrawTodoPage(g, x0, w, h);
-                    break;
-                case 5:
-                    DrawSystemMonitorPage(g, x0, w, h);
-                    break;
+                DrawMiniCalendarPage(g, x0, w, h);
+            }
+            else
+            {
+                switch (_pageIndex)
+                {
+                    case 0:
+                        if (_isLyricsSplit && _state.ShowLyrics)
+                            DrawLyricsSplitPage(g, x0, w, h);
+                        else
+                            DrawMusicPage(g, x0, w, h);
+                        break;
+                    case 1:
+                        DrawPomodoroPage(g, x0, w, h);
+                        break;
+                    case 2:
+                        DrawWaterPage(g, x0, w, h);
+                        break;
+                    case 3:
+                        DrawShelfPage(g, x0, w, h);
+                        break;
+                    case 4:
+                        DrawTodoPage(g, x0, w, h);
+                        break;
+                    case 5:
+                        DrawSystemMonitorPage(g, x0, w, h);
+                        break;
+                }
             }
 
             float navCy = h * 0.5f;
             DrawNavArrow(g, "nav_prev", x0 + U(20f), navCy, true);
             DrawNavArrow(g, "nav_next", x0 + w - U(20f), navCy, false);
             DrawPageDots(g, x0 + w * 0.5f, h - U(7.5f));
+        }
+
+        // ==================== INLINE MINI MONTH CALENDAR (CLICK HEADER DATE/CLOCK) ====================
+        private void DrawMiniCalendarPage(Graphics g, float x0, float w, float h)
+        {
+            DrawTwoToneTitle(g, _state.T("L\u1ECBch", "Mini"), _state.T(" Th\u00E1ng", " Calendar"), Color.FromArgb(56, 189, 248), x0 + U(15f), U(17.8f));
+
+            DateTime now = DateTime.Now;
+            DateTime viewFirst = new DateTime(now.Year, now.Month, 1).AddMonths(_calendarMonthOffset);
+            int daysInMonth = DateTime.DaysInMonth(viewFirst.Year, viewFirst.Month);
+            DateTime prevMonth = viewFirst.AddMonths(-1);
+            int daysInPrev = DateTime.DaysInMonth(prevMonth.Year, prevMonth.Month);
+            int startOffset = (((int)viewFirst.DayOfWeek) + 6) % 7; // Monday = 0 .. Sunday = 6
+
+            float leftX = x0 + U(38f);
+            float leftW = U(122f);
+            float leftCx = leftX + leftW * 0.5f;
+
+            string monthLabel = _state.IsVietnamese
+                ? string.Format(CultureInfo.InvariantCulture, "Th\u00E1ng {0} \u00B7 {1}", viewFirst.Month, viewFirst.Year)
+                : viewFirst.ToString("MMM yyyy", CultureInfo.InvariantCulture);
+            DrawCenteredText(g, monthLabel, _fPill, Color.FromArgb(56, 189, 248), leftCx, U(38f));
+
+            DrawCenteredText(g, now.Day.ToString(CultureInfo.InvariantCulture), _fHeroBig, InkPri, leftCx, U(67f));
+
+            string[] viW = new string[] { "Ch\u1EE7 Nh\u1EADt", "Th\u1EE9 Hai", "Th\u1EE9 Ba", "Th\u1EE9 T\u01B0", "Th\u1EE9 N\u0103m", "Th\u1EE9 S\u00E1u", "Th\u1EE9 B\u1EA3y" };
+            string[] enW = new string[] { "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday" };
+            string subDay = (_calendarMonthOffset == 0)
+                ? (_state.IsVietnamese ? (viW[(int)now.DayOfWeek] + " \u00B7 H\u00F4m nay") : (enW[(int)now.DayOfWeek] + " \u00B7 Today"))
+                : string.Format(CultureInfo.InvariantCulture, _state.T("H\u00F4m nay: {0:00}/{1:00}", "Today: {0:00}/{1:00}"), now.Day, now.Month);
+            DrawCenteredText(g, subDay, _fShelfSub, Nw(185), leftCx, U(94f));
+
+            DrawNusaPillButton(g, "cal_prev", new RectangleF(leftX, U(108f), U(24f), U(19f)), "\u2039", Nw(48));
+            DrawNusaPillButton(g, "cal_today", new RectangleF(leftX + U(28f), U(108f), U(66f), U(19f)),
+                _state.T("H\u00F4m nay", "Today"),
+                (_calendarMonthOffset != 0) ? Color.FromArgb(205, 14, 165, 233) : Nw(44));
+            DrawNusaPillButton(g, "cal_next", new RectangleF(leftX + U(98f), U(108f), U(24f), U(19f)), "\u203A", Nw(48));
+
+            using (SolidBrush div = new SolidBrush(Nw(38)))
+            {
+                g.FillRectangle(div, x0 + U(167f), U(33f), Math.Max(1f, U(1f)), U(94f));
+            }
+
+            float gridX = x0 + U(176f);
+            float gridW = U(202f);
+            float colW = gridW / 7f;
+            string[] dow = _state.IsVietnamese
+                ? new string[] { "T2", "T3", "T4", "T5", "T6", "T7", "CN" }
+                : new string[] { "Mo", "Tu", "We", "Th", "Fr", "Sa", "Su" };
+
+            for (int c = 0; c < 7; c++)
+            {
+                float dcx = gridX + (c + 0.5f) * colW;
+                Color hdrCol = (c >= 5) ? Color.FromArgb(125, 211, 252) : Nw(148);
+                DrawCenteredText(g, dow[c], _fShelfSub, hdrCol, dcx, U(37.5f));
+            }
+
+            int rows = (startOffset + daysInMonth > 35) ? 6 : 5;
+            float rowStartCy = (rows == 6) ? U(53.0f) : U(55.0f);
+            float rowStep = (rows == 6) ? U(14.0f) : U(16.6f);
+
+            for (int r = 0; r < rows; r++)
+            {
+                for (int c = 0; c < 7; c++)
+                {
+                    int idx = r * 7 + c;
+                    float cx = gridX + (c + 0.5f) * colW;
+                    float cy = rowStartCy + r * rowStep;
+                    int dayNum;
+                    bool inMonth;
+                    if (idx < startOffset)
+                    {
+                        dayNum = daysInPrev - startOffset + 1 + idx;
+                        inMonth = false;
+                    }
+                    else if (idx >= startOffset + daysInMonth)
+                    {
+                        dayNum = idx - (startOffset + daysInMonth) + 1;
+                        inMonth = false;
+                    }
+                    else
+                    {
+                        dayNum = idx - startOffset + 1;
+                        inMonth = true;
+                    }
+
+                    bool isToday = inMonth && dayNum == now.Day && viewFirst.Month == now.Month && viewFirst.Year == now.Year;
+                    if (isToday)
+                    {
+                        RectangleF pill = new RectangleF(cx - U(11.5f), cy - U(6.8f), U(23f), U(13.6f));
+                        FillPill(g, pill, Color.FromArgb(14, 165, 233));
+                        DrawCenteredText(g, dayNum.ToString(CultureInfo.InvariantCulture), _fShelfSub, Color.White, cx, cy);
+                    }
+                    else
+                    {
+                        Color dCol = !inMonth ? Nw(56) : ((c >= 5) ? Color.FromArgb(186, 230, 253) : Nw(225));
+                        DrawCenteredText(g, dayNum.ToString(CultureInfo.InvariantCulture), _fShelfSub, dCol, cx, cy);
+                    }
+                }
+            }
         }
 
         // ==================== PAGE 0: REAL WINRT SMTC MUSIC & ALBUM ART ====================
@@ -3794,6 +4132,38 @@ RefreshBatteryLevel();
             }
         }
 
+        private void DrawWaterDropVector(Graphics g, float cx, float cy, int alpha)
+        {
+            Color c = IsLight ? Color.FromArgb(alpha, 2, 132, 199) : Color.FromArgb(alpha, 56, 189, 248);
+            using (SolidBrush sb = new SolidBrush(c))
+            using (GraphicsPath gp = new GraphicsPath())
+            {
+                PointF[] pts = new PointF[]
+                {
+                    new PointF(cx, cy - U(6.0f)),
+                    new PointF(cx + U(4.6f), cy + U(1.4f)),
+                    new PointF(cx, cy + U(5.8f)),
+                    new PointF(cx - U(4.6f), cy + U(1.4f))
+                };
+                gp.AddClosedCurve(pts, 0.46f);
+                g.FillPath(sb, gp);
+            }
+        }
+
+        private void DrawEyeCareVector(Graphics g, float cx, float cy, int alpha)
+        {
+            Color c = IsLight ? Color.FromArgb(alpha, 5, 150, 105) : Color.FromArgb(alpha, 52, 211, 153);
+            using (Pen p = new Pen(c, U(1.55f)))
+            using (SolidBrush sb = new SolidBrush(c))
+            {
+                p.StartCap = LineCap.Round; p.EndCap = LineCap.Round;
+                float rx = U(6.2f), ry = U(3.8f);
+                g.DrawBezier(p, new PointF(cx - rx, cy), new PointF(cx - rx * 0.45f, cy - ry * 1.45f), new PointF(cx + rx * 0.45f, cy - ry * 1.45f), new PointF(cx + rx, cy));
+                g.DrawBezier(p, new PointF(cx - rx, cy), new PointF(cx - rx * 0.45f, cy + ry * 1.45f), new PointF(cx + rx * 0.45f, cy + ry * 1.45f), new PointF(cx + rx, cy));
+                g.FillEllipse(sb, cx - U(1.9f), cy - U(1.9f), U(3.8f), U(3.8f));
+            }
+        }
+
         private float DrawOsdHeaderBadge(Graphics g, string id, float rightEdgeX, float cy, float alpha01, bool compact)
         {
             int a = Math.Max(0, Math.Min(255, (int)(255f * alpha01)));
@@ -3854,6 +4224,16 @@ RefreshBatteryLevel();
                 text = _state.T("H\u1EBFt gi\u1EDD", "Time's up");
                 bgTint = Color.FromArgb((int)(80 * alpha01), 245, 158, 11);
             }
+            else if (_osdKind == OsdKind.WaterRemind)
+            {
+                text = string.Format(CultureInfo.InvariantCulture, "+{0}ml", Math.Max(50, _osdDelta));
+                bgTint = Color.FromArgb((int)(78 * alpha01), 14, 165, 233);
+            }
+            else if (_osdKind == OsdKind.EyeCare)
+            {
+                text = _state.T("Ngh\u1EC9 m\u1EAFt", "20-20-20");
+                bgTint = Color.FromArgb((int)(74 * alpha01), 16, 185, 129);
+            }
             else
             {
                 text = _osdMuted ? _state.T("T\u1EAFt", "Mute") : string.Format(CultureInfo.InvariantCulture, "{0}%", _osdPercent);
@@ -3866,7 +4246,7 @@ RefreshBatteryLevel();
             float iconSpan = U(17f);
             float pillW = iconSpan + tSz.Width + U(9f);
             RectangleF rect = new RectangleF(rightEdgeX - pillW, cy - U(8.5f), pillW, U(17f));
-            if (!string.IsNullOrEmpty(id) && (_osdKind == OsdKind.Screenshot || _osdKind == OsdKind.PrivacyAlert))
+            if (!string.IsNullOrEmpty(id) && (_osdKind == OsdKind.Screenshot || _osdKind == OsdKind.PrivacyAlert || _osdKind == OsdKind.WaterRemind || _osdKind == OsdKind.EyeCare))
             {
                 _hitZones.Add(new HitZone { Id = id, Rect = rect });
             }
@@ -3885,6 +4265,8 @@ RefreshBatteryLevel();
             else if (_osdKind == OsdKind.CapsLock || _osdKind == OsdKind.NumLock) DrawKeyCapVector(g, icx, cy, (_osdKind == OsdKind.CapsLock) ? "A" : "1", _osdDelta > 0, a);
             else if (_osdKind == OsdKind.MicMute) DrawMicVector(g, icx, cy, _osdDelta == 0 || _osdMuted, a);
             else if (_osdKind == OsdKind.TimerDone) DrawTimerVector(g, icx, cy, Color.FromArgb(a, QtAccent.R, QtAccent.G, QtAccent.B));
+            else if (_osdKind == OsdKind.WaterRemind) DrawWaterDropVector(g, icx, cy, a);
+            else if (_osdKind == OsdKind.EyeCare) DrawEyeCareVector(g, icx, cy, a);
             else if (_osdKind == OsdKind.Battery) DrawBatteryRing(g, icx, cy);
             else
             {
@@ -4046,6 +4428,25 @@ RefreshBatteryLevel();
                 showBar = false;
                 barStart = Color.Empty; barEnd = Color.Empty;
                 labelCol = Color.FromArgb(a, QtAccent.R, QtAccent.G, QtAccent.B);
+            }
+            else if (_osdKind == OsdKind.WaterRemind)
+            {
+                DrawWaterDropVector(g, iconCx, cy, a);
+                label = _state.T("U\u1ED1ng n\u01B0\u1EDBc nh\u00E9 \u00B7 ", "Hydrate \u00B7 ") +
+                        string.Format(CultureInfo.InvariantCulture, "{0}ml", _state.WaterDrankMl);
+                rightTxt = string.Format(CultureInfo.InvariantCulture, "+{0}ml", Math.Max(50, _osdDelta));
+                showBar = false;
+                barStart = Color.Empty; barEnd = Color.Empty;
+                labelCol = IsLight ? Color.FromArgb(a, 2, 132, 199) : Color.FromArgb(a, 125, 211, 252);
+            }
+            else if (_osdKind == OsdKind.EyeCare)
+            {
+                DrawEyeCareVector(g, iconCx, cy, a);
+                label = _state.T("Ngh\u1EC9 m\u1EAFt 20s \u00B7 Nh\u00ECn xa 6m", "20-20-20 \u00B7 Look 6m away");
+                rightTxt = "20s";
+                showBar = false;
+                barStart = Color.Empty; barEnd = Color.Empty;
+                labelCol = IsLight ? Color.FromArgb(a, 5, 150, 105) : Color.FromArgb(a, 110, 231, 183);
             }
             else
             {
@@ -4827,6 +5228,12 @@ RefreshBatteryLevel();
                 _osd.AdjustVolume(e.Delta > 0 ? 4 : -4);
                 return;
             }
+            if (_calendarOpen)
+            {
+                _calendarMonthOffset = Math.Max(-120, Math.Min(120, _calendarMonthOffset + (e.Delta < 0 ? 1 : -1)));
+                _needsRedraw = true;
+                return;
+            }
 
             float x0 = (_canvasW - _curW) * 0.5f;
             if (_pageIndex == 1 && !IsQuickTimerRunning && (_hoveredId == "qt_chip" || _hoveredId == "qt_minus" || _hoveredId == "qt_plus"))
@@ -4945,6 +5352,14 @@ RefreshBatteryLevel();
             {
                 if (e.Button == MouseButtons.Left)
                 {
+                    if (IsOsdActive && _osdKind == OsdKind.WaterRemind)
+                    {
+                        _state.LogWaterDrink(_state.WaterCupSizeMl);
+                        _waterRemindSec = 0;
+                        _osdUntilUtc = DateTime.MinValue;
+                        _calendarOpen = false;
+                        _pageIndex = 2;
+                    }
                     _isExpanded = true;
                     _isMicroPill = false;
                     _hw.IsNotchExpanded = true;
@@ -4963,6 +5378,12 @@ RefreshBatteryLevel();
                 if (_hoveredId == "media_vol" && _osd != null)
                 {
                     _osd.ToggleMute();
+                    _needsRedraw = true;
+                    return;
+                }
+                if (_hoveredId == "hdr_clock")
+                {
+                    _showHeaderSeconds = !_showHeaderSeconds;
                     _needsRedraw = true;
                     return;
                 }
@@ -5041,11 +5462,13 @@ RefreshBatteryLevel();
         {
             if (id == "nav_prev")
             {
+                _calendarOpen = false;
                 _pageIndex = (_pageIndex + TotalPages - 1) % TotalPages;
                 UpdateTargetDimensions();
             }
             else if (id == "nav_next")
             {
+                _calendarOpen = false;
                 _pageIndex = (_pageIndex + 1) % TotalPages;
                 UpdateTargetDimensions();
             }
@@ -5054,18 +5477,34 @@ RefreshBatteryLevel();
                 int idx;
                 if (int.TryParse(id.Substring(4), out idx))
                 {
+                    _calendarOpen = false;
                     _pageIndex = idx;
                     UpdateTargetDimensions();
                 }
             }
             else if (id == "hdr_clock")
             {
-                _showHeaderSeconds = !_showHeaderSeconds;
+                _calendarOpen = !_calendarOpen;
+                if (_calendarOpen) _calendarMonthOffset = 0;
+                UpdateTargetDimensions();
+            }
+            else if (id == "cal_prev")
+            {
+                _calendarMonthOffset = Math.Max(-120, _calendarMonthOffset - 1);
+            }
+            else if (id == "cal_next")
+            {
+                _calendarMonthOffset = Math.Min(120, _calendarMonthOffset + 1);
+            }
+            else if (id == "cal_today")
+            {
+                _calendarMonthOffset = 0;
             }
             else if (id == "hdr_bat")
             {
                 if (!_hasBattery)
                 {
+                    _calendarOpen = false;
                     _pageIndex = 5;
                     UpdateTargetDimensions();
                 }
@@ -5084,7 +5523,22 @@ RefreshBatteryLevel();
                 if (_osdKind == OsdKind.Screenshot)
                 {
                     _osdUntilUtc = DateTime.MinValue;
+                    _calendarOpen = false;
                     _pageIndex = 3;
+                    UpdateTargetDimensions();
+                }
+                else if (_osdKind == OsdKind.WaterRemind)
+                {
+                    _state.LogWaterDrink(_state.WaterCupSizeMl);
+                    _waterRemindSec = 0;
+                    _osdUntilUtc = DateTime.MinValue;
+                    _calendarOpen = false;
+                    _pageIndex = 2;
+                    UpdateTargetDimensions();
+                }
+                else if (_osdKind == OsdKind.EyeCare)
+                {
+                    _osdUntilUtc = DateTime.MinValue;
                     UpdateTargetDimensions();
                 }
                 else if (_osdKind == OsdKind.PrivacyAlert)
@@ -5115,10 +5569,11 @@ RefreshBatteryLevel();
             }
             else if (id == "hdr_eq")
             {
-                if (_pageIndex == 0)
+                if (!_calendarOpen && _pageIndex == 0)
                     _media.TogglePlayPause();
                 else
                 {
+                    _calendarOpen = false;
                     _pageIndex = 0;
                     UpdateTargetDimensions();
                 }
@@ -5239,6 +5694,7 @@ RefreshBatteryLevel();
             }
             else if (id == "water_drink")
             {
+                _waterRemindSec = 0;
                 _state.LogWaterDrink(_state.WaterCupSizeMl);
             }
             else if (id == "water_undo")
@@ -5455,6 +5911,7 @@ RefreshBatteryLevel();
             {
                 e.Effect = DragDropEffects.Copy;
                 _isDragHover = true;
+                _calendarOpen = false;
                 _isExpanded = true;
                 _isMicroPill = false;
                 _pageIndex = 3;

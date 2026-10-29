@@ -43,6 +43,13 @@ namespace Kumo
                             nf.SavePreviewBitmap(Path.Combine(outDir, "preview_kumo_shelf.png"), true, 3);
                             nf.SavePreviewBitmap(Path.Combine(outDir, "preview_kumo_todo.png"), true, 4);
                             nf.SavePreviewBitmap(Path.Combine(outDir, "preview_kumo_perf.png"), true, 5);
+                            nf.SavePreviewBitmap(Path.Combine(outDir, "preview_kumo_calendar.png"), true, 99);
+
+                            nf.TriggerOsdHud(OsdKind.EyeCare, 100, false, 20, 5.0);
+                            nf.SavePreviewBitmap(Path.Combine(outDir, "preview_kumo_eyecare.png"), false, -1);
+                            nf.TriggerOsdHud(OsdKind.WaterRemind, 65, false, st.WaterCupSizeMl, 5.0);
+                            nf.SavePreviewBitmap(Path.Combine(outDir, "preview_kumo_water_hud.png"), false, -1);
+                            nf.TriggerOsdHud(OsdKind.None, 0, false, 0, -1.0);
 
                             media.SetMockPreviewTrack(true);
                             nf.SavePreviewBitmap(Path.Combine(outDir, "preview_kumo_music_playing.png"), true, 0);
@@ -50,6 +57,7 @@ namespace Kumo
                             media.SetMockPreviewTrack(false);
 
                             sf.SaveSettingsPreview(Path.Combine(outDir, "preview_kumo_settings.png"), 0);
+                            sf.SaveSettingsPreview(Path.Combine(outDir, "preview_kumo_settings_display.png"), 1);
                         }
                     }
                 }

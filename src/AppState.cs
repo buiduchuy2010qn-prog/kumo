@@ -59,6 +59,8 @@ namespace Kumo
         public int MicHotkeyIndex = 0;           // 0: Ctrl+Alt+M, 1: Ctrl+Shift+M, 2: Ctrl+Alt+K, 3: Pause
         public bool ClipHistoryEnabled = true;   // Remember the last copied texts/links (memory only, never written to disk)
         public bool WeatherEnabled = true;       // Current weather in the expanded header (IP location + Open-Meteo)
+        public bool EyeCareEnabled = true;       // Gentle 20-20-20 eye-care 1-row HUD every 20 min of active screen time
+        public bool SmartDndEnabled = true;      // Defer water/eye reminders during Fullscreen, Mic calls, or active Pomodoro Focus
         public int QuickTimerMinutes = 5;
 
         public static readonly string[] MicHotkeyNames = new string[] { "Ctrl+Alt+M", "Ctrl+Shift+M", "Ctrl+Alt+K", "Pause" };
@@ -195,6 +197,8 @@ namespace Kumo
             MicHotkeyIndex = 0;
             ClipHistoryEnabled = true;
             WeatherEnabled = true;
+            EyeCareEnabled = true;
+            SmartDndEnabled = true;
             FocusMinutes = 25;
             ShortBreakMinutes = 5;
             LongBreakMinutes = 15;
@@ -276,6 +280,8 @@ namespace Kumo
                         else if (k == "mic_hotkey_idx") { int.TryParse(v, out MicHotkeyIndex); if (MicHotkeyIndex < 0 || MicHotkeyIndex >= MicHotkeyNames.Length) MicHotkeyIndex = 0; }
                         else if (k == "clip_history") ClipHistoryEnabled = (v == "1");
                         else if (k == "weather") WeatherEnabled = (v == "1");
+                        else if (k == "eye_care") EyeCareEnabled = (v == "1");
+                        else if (k == "smart_dnd") SmartDndEnabled = (v == "1");
                         else if (k == "quick_timer_min") { int.TryParse(v, out QuickTimerMinutes); QuickTimerMinutes = Math.Max(1, Math.Min(180, QuickTimerMinutes)); }
                         else if (k == "water_remind") WaterRemindersEnabled = (v == "1");
                         else if (k == "water_goal") int.TryParse(v, out WaterGoalMl);
@@ -413,6 +419,8 @@ namespace Kumo
                 sb.AppendLine("mic_hotkey_idx=" + MicHotkeyIndex);
                 sb.AppendLine("clip_history=" + (ClipHistoryEnabled ? "1" : "0"));
                 sb.AppendLine("weather=" + (WeatherEnabled ? "1" : "0"));
+                sb.AppendLine("eye_care=" + (EyeCareEnabled ? "1" : "0"));
+                sb.AppendLine("smart_dnd=" + (SmartDndEnabled ? "1" : "0"));
                 sb.AppendLine("quick_timer_min=" + QuickTimerMinutes);
                 sb.AppendLine("water_remind=" + (WaterRemindersEnabled ? "1" : "0"));
                 sb.AppendLine("water_goal=" + WaterGoalMl);

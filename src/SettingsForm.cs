@@ -810,6 +810,16 @@ namespace Kumo
                 _state.T("Nhiệt độ hiện tại khi mở tai thỏ. Vị trí gần đúng theo IP, dữ liệu Open-Meteo.", "Current temperature in the expanded notch. IP-based location, Open-Meteo data."),
                 _state.WeatherEnabled);
 
+            y = DrawToggleCard(g, x, y, w, "tog_eyecare",
+                _state.T("Nhắc nghỉ mắt 20-20-20 (Eye-care 20-20-20)", "20-20-20 Eye-care reminder"),
+                _state.T("Báo nhẹ 1 hàng mỗi 20 phút nhìn màn hình liên tục để nhìn xa 6m trong 20 giây.", "Calm 1-row reminder every 20 minutes of active screen time to look 6m away for 20s."),
+                _state.EyeCareEnabled);
+
+            y = DrawToggleCard(g, x, y, w, "tog_smart_dnd",
+                _state.T("Tự hoãn nhắc nhở khi Họp / Fullscreen (Smart DND)", "Smart DND during Meetings, Focus & Fullscreen"),
+                _state.T("Không hiện nhắc nước & nghỉ mắt khi đang toàn màn hình, bật Mic/Camera họp hoặc chạy Pomodoro.", "Pause water & eye-care reminders during Fullscreen, active Mic/Camera calls, or Pomodoro Focus."),
+                _state.SmartDndEnabled);
+
             y = DrawToggleCard(g, x, y, w, "tog_sounds",
                 _state.T("Âm báo nhắc nhở (Reminder sounds)", "Reminder sounds"),
                 _state.T("Phát âm báo nhẹ khi kết thúc phiên tập trung Pomodoro.", "Play subtle chimes when Pomodoro focus or break timers complete."),
@@ -828,11 +838,12 @@ namespace Kumo
             y = DrawSectionHeader(g, x, y, _state.T("MÀN HÌNH HIỂN THỊ (NOTCH SCREEN)", "NOTCH SCREEN"));
 
             Screen[] screens = Screen.AllScreens;
+            int totalSlots = screens.Length + 1;
             float cardH = U(108f);
             RectangleF monWrap = new RectangleF(x, y, w, cardH);
             DrawCardShell(g, monWrap);
 
-            float cardW = Math.Min(U(185f), (w - U(36f)) / Math.Max(1, screens.Length));
+            float cardW = Math.Min(U(188f), (w - U(28f)) / Math.Max(2, totalSlots));
             float mx = x + U(16f);
             for (int i = 0; i < screens.Length; i++)
             {
@@ -861,11 +872,25 @@ namespace Kumo
 
                 mx += cardW;
             }
-            if (screens.Length == 1)
+
+            // Follow Cursor option card (MonitorIndex = -1)
             {
-                DrawLeftText(g,
-                    _state.T("Kết nối thêm màn hình rời để chọn vị trí đặt tai thỏ.", "Connect another display to choose where the notch appears."),
-                    _fRowDesc, ColTextSec, mx + U(12f), y + cardH * 0.5f);
+                string fcId = "mon_-1";
+                RectangleF fcRect = new RectangleF(mx, y + U(14f), cardW - U(8f), U(80f));
+                AddZone(fcId, fcRect, false);
+                bool fcSel = (_state.MonitorIndex == -1);
+                bool fcHov = (_hoverId == fcId);
+                FillRoundRect(g, fcRect, U(10f), fcSel ? (IsLight ? Color.FromArgb(219, 234, 254) : Color.FromArgb(45, 37, 99, 235)) : (fcHov ? (IsLight ? Color.FromArgb(238, 244, 252) : Color.FromArgb(26, 255, 255, 255)) : (IsLight ? Color.FromArgb(245, 248, 253) : Color.FromArgb(18, 20, 28))));
+                using (Pen bp = new Pen(fcSel ? (IsLight ? Color.FromArgb(37, 99, 235) : Color.FromArgb(56, 189, 248)) : ColCardBorder, fcSel ? 1.8f : 1f))
+                using (GraphicsPath gp = CreateRoundRect(fcRect, U(10f)))
+                {
+                    g.DrawPath(bp, gp);
+                }
+                FillRoundRect(g, new RectangleF(fcRect.X + (fcRect.Width - U(34f)) * 0.5f, fcRect.Y + U(5f), U(34f), U(6f)), U(3f),
+                    fcSel ? Color.FromArgb(56, 189, 248) : Color.FromArgb(80, 90, 110));
+                DrawCenterText(g, _state.T("Theo con trỏ chuột", "Follow Cursor"), _fRowTitle, ColTextPri, new RectangleF(fcRect.X, fcRect.Y + U(22f), fcRect.Width, U(22f)));
+                DrawCenterText(g, _state.T("Màn hình đang dùng", "Active cursor screen"), _fSmall, ColTextSec, new RectangleF(fcRect.X, fcRect.Y + U(46f), fcRect.Width, U(20f)));
+                mx += cardW;
             }
             y += cardH + U(16f);
 
@@ -873,7 +898,7 @@ namespace Kumo
 
             y = DrawSegmentedCard(g, x, y, w, "seg_open_",
                 _state.T("Cách mở tai thỏ (Open the notch)", "Open the notch"),
-                _state.T("Khi đóng: Lăn chuột chỉnh âm lượng · Shift+Lăn chỉnh sáng · Chuột giữa Phát/Dừng.", "When closed: Scroll adjusts volume · Shift+Scroll brightness · Middle-click Play/Pause."),
+                _state.T("Cuộn: Âm lượng · Shift+Cuộn: Độ sáng · Giữa: Nhạc.", "Scroll: Vol · Shift+Scroll: Bright · Middle: Play."),
                 new string[] { _state.T("Đưa chuột (Hover)", "Hover"), _state.T("Nhấp chuột (Click)", "Click") },
                 _state.OpenByClick ? 1 : 0);
 
@@ -990,6 +1015,11 @@ namespace Kumo
 
             y += U(106f);
             y = DrawSectionHeader(g, x, y, _state.T("KẾ HOẠCH (PLAN)", "PLAN"));
+
+            y = DrawToggleCard(g, x, y, w, "tog_water_rem",
+                _state.T("Nhắc uống nước định kỳ trên tai thỏ", "Gentle periodic water reminders"),
+                _state.T("Hiện thanh nhắc nhẹ 1 hàng mỗi 45 phút dùng máy khi chưa đạt mục tiêu (nhấn để +cốc).", "Show a calm 1-row reminder every 45 min of active use until goal is met (click to log +cup)."),
+                _state.WaterRemindersEnabled);
 
             int[] goals = new int[] { 1500, 2000, 2500, 3000 };
             int gIdx = Math.Max(0, Array.IndexOf(goals, _state.WaterGoalMl));
@@ -1588,6 +1618,21 @@ namespace Kumo
                 _state.WeatherEnabled = !_state.WeatherEnabled;
                 SaveAndApply();
             }
+            else if (id == "tog_eyecare")
+            {
+                _state.EyeCareEnabled = !_state.EyeCareEnabled;
+                SaveAndApply();
+            }
+            else if (id == "tog_smart_dnd")
+            {
+                _state.SmartDndEnabled = !_state.SmartDndEnabled;
+                SaveAndApply();
+            }
+            else if (id == "tog_water_rem")
+            {
+                _state.WaterRemindersEnabled = !_state.WaterRemindersEnabled;
+                SaveAndApply();
+            }
             else if (id.StartsWith("seg_mickey_"))
             {
                 int mk;
@@ -1605,7 +1650,7 @@ namespace Kumo
             else if (id.StartsWith("mon_"))
             {
                 int m;
-                if (int.TryParse(id.Substring(4), out m))
+                if (int.TryParse(id.Substring(4), out m) && m >= -1)
                 {
                     _state.MonitorIndex = m;
                     SaveAndApply();

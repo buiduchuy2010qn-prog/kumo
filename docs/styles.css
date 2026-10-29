@@ -269,6 +269,45 @@ button, input { font-family: inherit; }
 .spec-pills strong { color: var(--ink); font-weight: 700; }
 .spec-pills i { font-style: normal; }
 
+/* 1-Line PowerShell Installer Pill */
+.ps-install-bar {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  max-width: 100%;
+  background: #0b1120;
+  color: #e2e8f0;
+  border: 1px solid #1e293b;
+  border-radius: 9px;
+  padding: 5px 6px 5px 10px;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.08);
+}
+.ps-prompt { color: #38bdf8; font-weight: 700; user-select: none; flex-shrink: 0; }
+.ps-install-bar code {
+  color: #f8fafc;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 280px;
+}
+.ps-copy-btn {
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.1);
+  color: #ffffff;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 3px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background-color 140ms ease, border-color 140ms ease;
+}
+.ps-copy-btn:hover { background: rgba(56, 189, 248, 0.25); border-color: rgba(56, 189, 248, 0.55); }
+.ps-copy-btn.copied { background: #10b981; border-color: #10b981; color: #ffffff; }
+
 #demo, #features, #changelog, #credits { scroll-margin-top: 72px; }
 
 /* ===== INTERACTIVE LIVE SIMULATOR SHELL ===== */
@@ -445,6 +484,65 @@ button, input { font-family: inherit; }
 .kumo-notch.state-micro::before { left: -4px; background: radial-gradient(circle at 0 100%, transparent 4px, #000 4.3px); }
 .kumo-notch.state-micro::after  { right: -4px; background: radial-gradient(circle at 100% 100%, transparent 4px, #000 4.3px); }
 
+/* True Fullscreen Auto-Hide + Top-Edge Peek (v1.1.25) */
+.kumo-notch.state-fs-hidden {
+  height: 0 !important;
+  opacity: 0;
+  pointer-events: none;
+  box-shadow: none;
+}
+.fs-peek-sensor {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 8px;
+  z-index: 35;
+  display: none;
+}
+.win11-screen.fs-mode .fs-peek-sensor { display: block; }
+.fs-hint-pill {
+  position: absolute;
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 28;
+  display: none;
+  align-items: center;
+  gap: 10px;
+  background: rgba(9, 13, 22, 0.88);
+  color: #e2e8f0;
+  border: 1px solid rgba(56, 189, 248, 0.35);
+  border-radius: 99px;
+  padding: 5px 8px 5px 14px;
+  font-size: 11.5px;
+  backdrop-filter: blur(10px);
+  white-space: nowrap;
+}
+.win11-screen.fs-mode .fs-hint-pill { display: inline-flex; }
+.fs-hint-pill button {
+  border: 0;
+  background: #0284c7;
+  color: #ffffff;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 4px 10px;
+  border-radius: 99px;
+  cursor: pointer;
+}
+.fs-hint-pill button:hover { background: #0369a1; }
+.win11-screen.fs-mode .win11-taskbar { transform: translateY(100%); pointer-events: none; }
+.win11-screen.fs-mode .win-chrome { left: 0; right: 0; top: 0; bottom: 0; border-radius: 0; }
+.win11-screen.fs-mode .wc-titlebar,
+.win11-screen.fs-mode .wc-omnibar,
+.win11-screen.fs-mode .yt-topbar,
+.win11-screen.fs-mode .yt-list,
+.win11-screen.fs-mode .yt-vid-title,
+.win11-screen.fs-mode .yt-chan-row { display: none; }
+.win11-screen.fs-mode .yt-page { padding: 0; background: #000000; }
+.win11-screen.fs-mode .yt-grid { grid-template-columns: 1fr; height: 100%; }
+.win11-screen.fs-mode .yt-video { border-radius: 0; height: 100%; }
+
 .kumo-notch.state-osd { width: 326px; height: 32px; border-radius: 0 0 15px 15px; }
 .kumo-notch.state-expanded { width: 484px; height: 168px; border-radius: 0 0 26px 26px; cursor: default; }
 .kumo-notch.state-expanded.wide-lyrics { width: 676px; max-width: calc(100% - 20px); }
@@ -618,6 +716,25 @@ button, input { font-family: inherit; }
 }
 .kn-weather.hidden { display: none; }
 
+/* Clickable Header Date/Clock Pill -> Inline Mini Month Calendar (v1.1.25) */
+.kn-clk-pill {
+  border: 0;
+  background: transparent;
+  color: #cbd5e1;
+  font-family: inherit;
+  font-size: 11.2px;
+  padding: 2px 7px;
+  border-radius: 99px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  transition: background-color 140ms ease, color 140ms ease;
+}
+.kn-clk-pill:hover { background: rgba(255, 255, 255, 0.14); color: #ffffff; }
+.kn-clk-pill.cal-open { background: rgba(56, 189, 248, 0.24); color: #7dd3fc; }
+.kn-clk-pill.cal-open strong { color: #ffffff; }
+
 /* Flat Inline Header HUD Badge (v1.1.22+ — replaces floating popup!) */
 .kn-inline-hud {
   display: none;
@@ -741,6 +858,44 @@ button, input { font-family: inherit; }
 .sys-right { width: 174px; border-left: 1px solid rgba(255,255,255,0.14); padding-left: 10px; display: flex; flex-direction: column; gap: 4px; }
 .m-row { display: flex; justify-content: space-between; padding: 3.5px 7px; border-radius: 6px; font-size: 11px; cursor: pointer; background: rgba(255,255,255,0.08); border: 1px solid transparent; }
 .m-row.sel { border-color: #38bdf8; background: rgba(14, 165, 233, 0.2); }
+
+/* Inline Mini Month Calendar inside Expanded Notch (v1.1.25) */
+.cal-left {
+  width: 124px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+.cal-month-lbl { font-size: 10.8px; font-weight: 750; color: #38bdf8; }
+.cal-big-day { font-size: 27px; font-weight: 800; line-height: 1.05; color: #ffffff; font-variant-numeric: tabular-nums; }
+.cal-dow-lbl { font-size: 10.5px; color: #cbd5e1; white-space: nowrap; margin-bottom: 3px; }
+.cal-nav-row { display: flex; align-items: center; gap: 4px; }
+.cal-nav-row .pill-mini { padding: 2px 7px; font-size: 10.5px; }
+
+.cal-right {
+  flex: 1;
+  border-left: 1px solid rgba(255, 255, 255, 0.14);
+  padding-left: 10px;
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  row-gap: 2px;
+  column-gap: 2px;
+  text-align: center;
+  font-size: 10.2px;
+  font-variant-numeric: tabular-nums;
+}
+.cal-dow-h { font-size: 9.5px; font-weight: 700; color: #94a3b8; padding-bottom: 1px; }
+.cal-cell {
+  height: 14px;
+  line-height: 14px;
+  border-radius: 99px;
+  color: #f1f5f9;
+  font-weight: 650;
+}
+.cal-cell.dim { color: rgba(255, 255, 255, 0.28); font-weight: 500; }
+.cal-cell.today { background: #0ea5e9; color: #ffffff; font-weight: 800; }
 
 .kn-dots { display: flex; justify-content: center; gap: 5px; height: 6px; align-items: center; }
 .kn-dots i { width: 5px; height: 5px; border-radius: 99px; background: rgba(255,255,255,0.4); cursor: pointer; display: block; transition: all 0.2s; }

@@ -15,6 +15,10 @@ namespace Kumo
         public const int GWL_EXSTYLE = -20;
         public const int GWL_STYLE = -16;
         public const int WS_CAPTION = 0x00C00000;
+        public const int WS_MAXIMIZE = 0x01000000;
+
+        [DllImport("shell32.dll")]
+        public static extern int SHQueryUserNotificationState(out int pquns);
 
         public const int WM_NCHITTEST = 0x0084;
         public const int WM_NCLBUTTONDOWN = 0x00A1;

@@ -171,16 +171,21 @@
     qtRun: false,
     waterMl: 1500,
     waterGoal: 2000,
+    calOpen: false,
+    calOffset: 0,
+    showSeconds: false,
+    fsMode: false,
+    fsPeeking: false,
     clipMode: false,
     shelf: ["BaoCao_Q4.pdf", "Slide_Demo.pptx"],
     clips: [
       "https://github.com/buiduchuy2010qn-prog/kumo",
-      "KumoSetup-v1.1.24.exe",
+      "irm https://buiduchuy2010qn-prog.github.io/kumo/install.ps1 | iex",
       "Open-Meteo 28°C · Quy Nhơn"
     ],
     todos: [
       { text: "Đồng bộ lời nhạc MV 60 FPS", done: true },
-      { text: "Thử HUD 1 hàng Mic & Caps Lock", done: false }
+      { text: "Bấm ngày giờ mở Lịch Tháng", done: false }
     ],
     osdTimer: null,
     dlInterval: null
@@ -200,7 +205,7 @@
       const r = await fetch("https://api.github.com/repos/buiduchuy2010qn-prog/kumo/releases/latest");
       if (!r.ok) return;
       const d = await r.json();
-      const tag = d.tag_name || "v1.1.24";
+      const tag = d.tag_name || "v1.1.25";
       const exe = (d.assets || []).find(a => a.name && a.name.toLowerCase().endsWith(".exe"));
       const url = exe ? exe.browser_download_url : "https://github.com/buiduchuy2010qn-prog/kumo/releases/latest";
       $$("[data-dl-link]").forEach(el => { el.href = url; });
@@ -218,10 +223,45 @@
 
   function getClockStr() {
     const now = new Date();
+    const hhmm = String(now.getHours()).padStart(2, "0") + ":" + String(now.getMinutes()).padStart(2, "0");
     return {
       now,
-      hhmm: String(now.getHours()).padStart(2, "0") + ":" + String(now.getMinutes()).padStart(2, "0")
+      hhmm,
+      hdrTime: state.showSeconds ? `${hhmm}:${String(now.getSeconds()).padStart(2, "0")}` : hhmm
     };
+  }
+
+  function renderMiniCalendar(now, vi) {
+    const grid = $("#calGrid");
+    if (!grid) return;
+    const viewFirst = new Date(now.getFullYear(), now.getMonth() + state.calOffset, 1);
+    const y = viewFirst.getFullYear();
+    const m = viewFirst.getMonth();
+    const daysInMonth = new Date(y, m + 1, 0).getDate();
+    const daysInPrev = new Date(y, m, 0).getDate();
+    const startOffset = (viewFirst.getDay() + 6) % 7; // Mon=0..Sun=6
+    const monthsEn = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+    const dowVi = ["Chủ Nhật", "Thứ Hai", "Thứ Ba", "Thứ Tư", "Thứ Năm", "Thứ Sáu", "Thứ Bảy"];
+    const dowEn = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
+    $("#calMonthLbl").textContent = vi ? `Tháng ${m + 1} · ${y}` : `${monthsEn[m]} ${y}`;
+    $("#calBigDay").textContent = String(now.getDate());
+    $("#calDowLbl").textContent = state.calOffset === 0
+      ? (vi ? `${dowVi[now.getDay()]} · Hôm nay` : `${dowEn[now.getDay()]} · Today`)
+      : (vi ? "Cuộn chuột đổi tháng" : "Scroll to flip months");
+
+    const hdrs = vi ? ["T2", "T3", "T4", "T5", "T6", "T7", "CN"] : ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"];
+    let html = hdrs.map(h => `<span class="cal-dow-h">${h}</span>`).join("");
+    for (let cell = 0; cell < 42; cell++) {
+      const rel = cell - startOffset + 1;
+      let dayNum = rel;
+      let inCur = true;
+      if (rel < 1) { dayNum = daysInPrev + rel; inCur = false; }
+      else if (rel > daysInMonth) { dayNum = rel - daysInMonth; inCur = false; }
+      const isToday = inCur && state.calOffset === 0 && dayNum === now.getDate();
+      html += `<span class="cal-cell${inCur ? "" : " dim"}${isToday ? " today" : ""}">${dayNum}</span>`;
+    }
+    grid.innerHTML = html;
   }
 
   function curLyric() {
@@ -252,12 +292,18 @@
     const notch = $("#kumoNotch");
     if (!notch) return;
     const tr = TRACKS[state.trackIdx];
-    const { now, hhmm } = getClockStr();
+    const { now, hhmm, hdrTime } = getClockStr();
     const vi = state.lang === "vi";
 
     // Taskbar clock
     $("#tbTime").textContent = hhmm;
     $("#tbDate").textContent = `${String(now.getDate()).padStart(2, "0")}/${String(now.getMonth() + 1).padStart(2, "0")}/${now.getFullYear()}`;
+
+    // Fullscreen Auto-Hide + Top-Edge Peek (v1.1.25)
+    const screenEl = $("#win11Screen");
+    if (screenEl) screenEl.classList.toggle("fs-mode", state.fsMode);
+    const fsHidden = state.fsMode && !state.fsPeeking;
+    notch.classList.toggle("state-fs-hidden", fsHidden);
 
     // Mode segmented control active button
     const mapBtn = {
@@ -284,7 +330,7 @@
     const showColLyrics = !state.expanded && !state.autoMinimal && state.lyricsSplit && state.playing;
     if (state.expanded) {
       notch.classList.add("state-expanded");
-      if (state.page === 0 && state.lyricsSplit) notch.classList.add("wide-lyrics");
+      if (!state.calOpen && state.page === 0 && state.lyricsSplit) notch.classList.add("wide-lyrics");
     } else if (state.autoMinimal && !inOsd) {
       notch.classList.add("state-micro");
     } else if (!inOsd && showColLyrics) {
@@ -369,11 +415,17 @@
       ct.textContent = hhmm;
     }
 
-    // Expanded Header: Page Title + Smart Power/CPU + Weather + Date/Clock
-    const [p1, p2, pCol] = PAGE_TITLES[state.page];
-    $("#knTitle1").textContent = p1;
-    $("#knTitle2").textContent = p2;
-    $("#knTitle2").style.color = pCol;
+    // Expanded Header: Page Title (or Mini Calendar) + Smart Power/CPU + Weather + Date/Clock
+    if (state.calOpen) {
+      $("#knTitle1").textContent = vi ? "Lịch " : "Mini ";
+      $("#knTitle2").textContent = vi ? "Tháng" : "Calendar";
+      $("#knTitle2").style.color = "#38bdf8";
+    } else {
+      const [p1, p2, pCol] = PAGE_TITLES[state.page];
+      $("#knTitle1").textContent = p1;
+      $("#knTitle2").textContent = p2;
+      $("#knTitle2").style.color = pCol;
+    }
 
     const batHdr = $("#knBatHdr");
     batHdr.classList.toggle("cpu-mode", state.desktopCpuMode);
@@ -386,10 +438,14 @@
 
     const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
     $("#knDateHdr").textContent = `${String(now.getDate()).padStart(2, "0")} ${months[now.getMonth()]}`;
-    $("#knTimeHdr").textContent = hhmm;
+    $("#knTimeHdr").textContent = hdrTime;
+    const clkBtn = $("#knClockBtn");
+    if (clkBtn) clkBtn.classList.toggle("cal-open", state.calOpen);
 
-    $$(".kn-page").forEach((el, i) => el.classList.toggle("active", i === state.page));
+    const activeKey = state.calOpen ? "cal" : String(state.page);
+    $$(".kn-page").forEach(el => el.classList.toggle("active", el.dataset.p === activeKey));
     $$("#knDots i").forEach((el, i) => el.classList.toggle("on", i === state.page));
+    if (state.calOpen) renderMiniCalendar(now, vi);
 
     // Page 0: Music + Lyrics + 1-Click Audio Output Switcher
     $("#musTitle").textContent = tr.title;
@@ -538,13 +594,13 @@
         showHud({
           ico: "✓",
           icoCol: "#4ade80",
-          lbl: (vi ? "Tải xong · " : "Saved · ") + (isStore ? "Spotify Music" : "KumoSetup-v1.1.24.exe"),
+          lbl: (vi ? "Tải xong · " : "Saved · ") + (isStore ? "Spotify Music" : "KumoSetup-v1.1.25.exe"),
           lblCol: "#4ade80",
           fillBg: "linear-gradient(90deg,#10b981,#4ade80)",
           pct: 100,
-          val: isStore ? "100%" : "250 KB",
+          val: isStore ? "100%" : "255 KB",
           valCol: "#4ade80",
-          shortBadge: isStore ? "Store ✓" : "250 KB ✓",
+          shortBadge: isStore ? "Store ✓" : "255 KB ✓",
           durMs: 2500
         });
         return;
@@ -582,6 +638,9 @@
   function setPreset(key) {
     state.modeKey = key;
     state.autoMinimal = false;
+    state.fsMode = false;
+    state.fsPeeking = false;
+    state.calOpen = false;
     $("#winChrome").classList.remove("maximized");
     $("#kumoNotch").classList.remove("state-osd");
     $("#knInlineHud").classList.remove("on");
@@ -627,11 +686,35 @@
   function init() {
     initSpotlight();
 
-    $("#modeNormal").addEventListener("click", () => setPreset("normal"));
-    $("#modeColMusic").addEventListener("click", () => setPreset("colMusic"));
-    $("#modeColLyrics").addEventListener("click", () => setPreset("colLyrics"));
-    $("#modeExpLyrics").addEventListener("click", () => setPreset("expLyrics"));
-    $("#modeExpSys").addEventListener("click", () => {
+    const bind = (sel, ev, fn) => {
+      const el = $(sel);
+      if (el) el.addEventListener(ev, fn);
+    };
+
+    // 1-Line PowerShell Installer Copy Button (v1.1.25)
+    bind("#btnCopyPs", "click", () => {
+      const cmd = "irm https://buiduchuy2010qn-prog.github.io/kumo/install.ps1 | iex";
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(cmd).catch(() => {});
+      }
+      const btn = $("#btnCopyPs");
+      if (btn) {
+        btn.classList.add("copied");
+        btn.textContent = state.lang === "vi" ? "Đã chép ✓" : "Copied ✓";
+        setTimeout(() => {
+          btn.classList.remove("copied");
+          btn.textContent = state.lang === "vi" ? "Sao chép" : "Copy";
+        }, 2000);
+      }
+    });
+
+    bind("#modeNormal", "click", () => setPreset("normal"));
+    bind("#modeColMusic", "click", () => setPreset("colMusic"));
+    bind("#modeColLyrics", "click", () => setPreset("colLyrics"));
+    bind("#modeExpLyrics", "click", () => setPreset("expLyrics"));
+    bind("#modeExpSys", "click", () => {
+      state.fsMode = false;
+      state.calOpen = false;
       if (state.expanded && state.modeKey === "expSys") {
         state.page = (state.page + 1) % 6;
         renderAll();
@@ -644,12 +727,94 @@
       }
     });
 
-    $("#trigDlBrowser").addEventListener("click", () => simulateDownload(false));
-    $("#wcDlBtn").addEventListener("click", () => simulateDownload(false));
-    $("#trigDlStore").addEventListener("click", () => simulateDownload(true));
-    $("#tbStore").addEventListener("click", () => simulateDownload(true));
+    // Mini Month Calendar triggers (v1.1.25)
+    bind("#trigCal", "click", () => {
+      state.fsMode = false;
+      state.autoMinimal = false;
+      state.expanded = true;
+      state.calOpen = true;
+      state.calOffset = 0;
+      $("#kumoNotch").classList.remove("state-osd");
+      renderAll();
+    });
+    bind("#knClockBtn", "click", (e) => {
+      e.stopPropagation();
+      state.calOpen = !state.calOpen;
+      if (state.calOpen) state.calOffset = 0;
+      renderAll();
+    });
+    bind("#knClockBtn", "contextmenu", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      state.showSeconds = !state.showSeconds;
+      renderAll();
+    });
+    bind("#btnCalPrev", "click", (e) => { e.stopPropagation(); state.calOffset--; renderAll(); });
+    bind("#btnCalNext", "click", (e) => { e.stopPropagation(); state.calOffset++; renderAll(); });
+    bind("#btnCalToday", "click", (e) => { e.stopPropagation(); state.calOffset = 0; renderAll(); });
+    bind("#knCalPage", "wheel", (e) => {
+      e.preventDefault();
+      state.calOffset += e.deltaY > 0 ? 1 : -1;
+      renderAll();
+    });
 
-    $("#trigVol").addEventListener("click", () => {
+    // Gentle 20-20-20 Eye-Care 1-Row HUD (v1.1.25)
+    bind("#trigEye", "click", () => {
+      state.fsMode = false;
+      state.expanded = false;
+      const vi = state.lang === "vi";
+      showHud({
+        ico: "👁",
+        icoCol: "#34d399",
+        lbl: vi ? "Nghỉ mắt 20s · Nhìn xa 6m" : "20-20-20 · Look 20ft away",
+        fillBg: "linear-gradient(90deg,#10b981,#34d399)",
+        pct: 100,
+        val: "20s",
+        valCol: "#6ee7b7",
+        shortBadge: "20-20-20",
+        durMs: 3200
+      });
+    });
+
+    // True Fullscreen Auto-Hide + Top-Edge Peek (v1.1.25)
+    bind("#trigFs", "click", () => {
+      state.fsMode = !state.fsMode;
+      state.fsPeeking = false;
+      if (state.fsMode) {
+        state.expanded = false;
+        state.playing = true;
+        $("#winChrome").classList.remove("minimized");
+        $("#kumoNotch").classList.remove("state-osd");
+      }
+      renderAll();
+    });
+    bind("#btnExitFs", "click", (e) => {
+      e.stopPropagation();
+      state.fsMode = false;
+      state.fsPeeking = false;
+      renderAll();
+    });
+    bind("#fsPeekSensor", "pointerenter", () => {
+      if (state.fsMode) {
+        state.fsPeeking = true;
+        renderAll();
+      }
+    });
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && state.fsMode) {
+        state.fsMode = false;
+        state.fsPeeking = false;
+        renderAll();
+      }
+    });
+
+    bind("#trigDlBrowser", "click", () => { state.fsMode = false; simulateDownload(false); });
+    bind("#wcDlBtn", "click", () => simulateDownload(false));
+    bind("#trigDlStore", "click", () => { state.fsMode = false; simulateDownload(true); });
+    bind("#tbStore", "click", () => simulateDownload(true));
+
+    bind("#trigVol", "click", () => {
+      state.fsMode = false;
       state.muted = false;
       state.volume = state.volume >= 100 ? 44 : Math.min(100, state.volume + 8);
       showHud({
@@ -660,9 +825,9 @@
         val: state.volume + "%"
       });
     });
-    $("#tbVolTray").addEventListener("click", () => $("#trigVol").click());
+    bind("#tbVolTray", "click", () => $("#trigVol").click());
 
-    $("#trigBri").addEventListener("click", () => {
+    bind("#trigBri", "click", () => {
       state.brightness = state.brightness >= 100 ? 50 : state.brightness + 25;
       showHud({
         ico: "☀",
@@ -675,7 +840,8 @@
     });
 
     // Global Mic Mute Hotkey HUD (v1.1.23 / v1.1.24)
-    $("#trigMic").addEventListener("click", () => {
+    bind("#trigMic", "click", () => {
+      state.fsMode = false;
       state.micMuted = !state.micMuted;
       const vi = state.lang === "vi";
       showHud({
@@ -692,7 +858,8 @@
     });
 
     // Caps Lock 1-Row HUD (v1.1.23)
-    $("#trigCaps").addEventListener("click", () => {
+    bind("#trigCaps", "click", () => {
+      state.fsMode = false;
       state.capsOn = !state.capsOn;
       const vi = state.lang === "vi";
       showHud({
@@ -706,12 +873,16 @@
     });
 
     // Settings Window & Tabs
-    const toggleSet = () => $("#kumoSettingsWin").classList.toggle("open");
-    $("#trigSettings").addEventListener("click", toggleSet);
-    $("#knOpenSettings").addEventListener("click", (e) => { e.stopPropagation(); toggleSet(); });
-    $("#tbKumo").addEventListener("click", toggleSet);
-    $("#deskKumo").addEventListener("click", toggleSet);
-    $("#kswClose").addEventListener("click", () => $("#kumoSettingsWin").classList.remove("open"));
+    const toggleSet = () => {
+      state.fsMode = false;
+      $("#kumoSettingsWin").classList.toggle("open");
+      renderAll();
+    };
+    bind("#trigSettings", "click", toggleSet);
+    bind("#knOpenSettings", "click", (e) => { e.stopPropagation(); toggleSet(); });
+    bind("#tbKumo", "click", toggleSet);
+    bind("#deskKumo", "click", toggleSet);
+    bind("#kswClose", "click", () => $("#kumoSettingsWin").classList.remove("open"));
 
     $$("#kswNav button").forEach(btn => btn.addEventListener("click", () => {
       const idx = btn.dataset.stab;
@@ -733,7 +904,7 @@
       state.micHotkeyName = btn.textContent.trim();
     }));
 
-    $("#trigWall").addEventListener("click", () => {
+    bind("#trigWall", "click", () => {
       const sc = $("#win11Screen");
       sc.dataset.wall = sc.dataset.wall === "dark" ? "light" : "dark";
     });
@@ -747,29 +918,36 @@
         renderAll();
       }
     });
+    notch.addEventListener("pointerleave", () => {
+      if (state.fsMode && state.fsPeeking && !state.expanded) {
+        state.fsPeeking = false;
+        renderAll();
+      }
+    });
     $("#win11Screen").addEventListener("click", (e) => {
-      if (e.target.closest("#kumoNotch") || e.target.closest("#kumoSettingsWin")) return;
+      if (e.target.closest("#kumoNotch") || e.target.closest("#kumoSettingsWin") || e.target.closest("#fsHintPill")) return;
       if (state.expanded) {
         state.expanded = false;
+        if (state.fsMode) state.fsPeeking = false;
         renderAll();
       }
     });
 
     // Notch header & page navigation
-    $("#knBatHdr").addEventListener("click", (e) => {
+    bind("#knBatHdr", "click", (e) => {
       e.stopPropagation();
       state.desktopCpuMode = !state.desktopCpuMode;
       renderAll();
     });
-    $("#btnPcMode").addEventListener("click", (e) => {
+    bind("#btnPcMode", "click", (e) => {
       e.stopPropagation();
       state.desktopCpuMode = !state.desktopCpuMode;
       renderAll();
     });
 
-    $("#btnPrevPage").addEventListener("click", (e) => { e.stopPropagation(); state.page = (state.page + 5) % 6; renderAll(); });
-    $("#btnNextPage").addEventListener("click", (e) => { e.stopPropagation(); state.page = (state.page + 1) % 6; renderAll(); });
-    $$("#knDots i").forEach((d, i) => d.addEventListener("click", (e) => { e.stopPropagation(); state.page = i; renderAll(); }));
+    bind("#btnPrevPage", "click", (e) => { e.stopPropagation(); state.calOpen = false; state.page = (state.page + 5) % 6; renderAll(); });
+    bind("#btnNextPage", "click", (e) => { e.stopPropagation(); state.calOpen = false; state.page = (state.page + 1) % 6; renderAll(); });
+    $$("#knDots i").forEach((d, i) => d.addEventListener("click", (e) => { e.stopPropagation(); state.calOpen = false; state.page = i; renderAll(); }));
 
     // Music controls + 1-Click Speaker <-> Headphones Switcher
     $("#btnPlay").addEventListener("click", (e) => { e.stopPropagation(); state.playing = !state.playing; renderAll(); });
@@ -1030,6 +1208,7 @@
     const q = new URLSearchParams(window.location.search).get("view");
     if (q === "colLyrics") setPreset("colLyrics");
     else if (q === "expLyrics") setPreset("expLyrics");
+    else if (q === "calendar") { state.expanded = true; state.calOpen = true; }
     else if (q === "pomo") { state.expanded = true; state.page = 1; }
     else if (q === "shelf") { state.expanded = true; state.page = 3; state.clipMode = true; }
     else if (q === "settings") { $("#kumoSettingsWin").classList.add("open"); }
