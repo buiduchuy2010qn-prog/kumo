@@ -187,6 +187,7 @@ namespace Kumo
         private bool _previewForceCalendar = false;
         private int _activeScreenSec = 0;
         private int _waterRemindSec = 0;
+        private DateTime _lyricSyncToastUntilUtc = DateTime.MinValue;
 
         private bool IsSmartDndSuppressed
         {
@@ -268,6 +269,11 @@ namespace Kumo
             _showRestingMascot = _state.MascotEnabled;
             _alwaysMinimal = _state.AlwaysMinimal;
             _isLyricsSplit = _state.DefaultLyricsSplit && _state.ShowLyrics;
+            if (_media != null)
+            {
+                _media.UserLyricsOffsetSec = _state.LyricsOffsetMs / 1000.0;
+                _media.CurrentAudioDeviceName = (_osd != null) ? (_osd.AudioDeviceName ?? "") : "";
+            }
 
             FormBorderStyle = FormBorderStyle.None;
             StartPosition = FormStartPosition.Manual;
@@ -298,12 +304,13 @@ namespace Kumo
             {
                 _isScrubbingSeek = false;
                 _shelfDragCandidate = -1;
+                _lastHoverPt = new Point(-999, -999);
                 if (_hoveredId != null)
                 {
                     _hoveredId = null;
                     Cursor = Cursors.Default;
-                    _needsRedraw = true;
                 }
+                _needsRedraw = true;
             };
 
             _animTimer = new System.Windows.Forms.Timer();
@@ -559,6 +566,11 @@ namespace Kumo
             _showRestingMascot = _state.MascotEnabled;
             _alwaysMinimal = _state.AlwaysMinimal;
             if (!_state.ShowLyrics) _isLyricsSplit = false;
+            if (_media != null)
+            {
+                _media.UserLyricsOffsetSec = _state.LyricsOffsetMs / 1000.0;
+                _media.CurrentAudioDeviceName = (_osd != null) ? (_osd.AudioDeviceName ?? "") : "";
+            }
             if (!_state.HideInFullscreen) { _fullscreenPeek = false; _fsPeekDwellSec = 0f; }
 
             if (!_showRestingMascot)
@@ -923,7 +935,12 @@ namespace Kumo
 
         private void OnSecondTick(object sender, EventArgs e)
         {
-RefreshBatteryLevel();
+            RefreshBatteryLevel();
+            if (_media != null)
+            {
+                _media.UserLyricsOffsetSec = _state.LyricsOffsetMs / 1000.0;
+                _media.CurrentAudioDeviceName = (_osd != null) ? (_osd.AudioDeviceName ?? "") : "";
+            }
 
             if (IsQuickTimerRunning)
             {
@@ -2731,7 +2748,7 @@ RefreshBatteryLevel();
                     float availLineW = paneW;
                     if (lHov && dur > 0.5)
                     {
-                        double seekTarget = Math.Max(0.0, win[i].TimeSec + _media.TotalLyricsOffsetSec);
+                        double seekTarget = _media.GetLineSeekTargetSec(win[i]);
                         string tsBadge = FormatMMSS((int)seekTarget);
                         SizeF tsSz = g.MeasureString(tsBadge, _fShelfSub);
                         availLineW = Math.Max(U(80f), paneW - tsSz.Width - U(10f));
@@ -2763,7 +2780,72 @@ RefreshBatteryLevel();
                     }
                     lyY += U(24.5f);
                 }
+
+                bool hoverLyricsPane = _isExpanded && _lastHoverPt.X >= x0 + U(242f) && _lastHoverPt.Y >= U(28f);
+                if (_state.LyricsOffsetMs != 0 || hoverLyricsPane || DateTime.UtcNow < _lyricSyncToastUntilUtc)
+                {
+                    DrawLyricsSyncMicroBar(g, paneX + paneW, h - U(11.5f));
+                }
             }
+        }
+
+        private void StepLyricsOffsetMs(int deltaMs)
+        {
+            int next = Math.Max(-5000, Math.Min(5000, _state.LyricsOffsetMs + deltaMs));
+            if (Math.Abs(next) < 50) next = 0;
+            _state.LyricsOffsetMs = next;
+            if (_media != null) _media.UserLyricsOffsetSec = next / 1000.0;
+            _state.SaveAll();
+            _lyricSyncToastUntilUtc = DateTime.UtcNow.AddSeconds(2.8);
+            _needsRedraw = true;
+        }
+
+        private void DrawLyricsSyncMicroBar(Graphics g, float rightX, float cy)
+        {
+            int offMs = _state.LyricsOffsetMs;
+            string midTxt;
+            if (offMs == 0)
+            {
+                midTxt = _state.T("Nh\u1ECBp 0.0s", "Sync 0.0s");
+            }
+            else if (offMs > 0)
+            {
+                midTxt = string.Format(CultureInfo.InvariantCulture, _state.T("Tr\u1EC5 +{0:0.0}s", "+{0:0.0}s"), offMs / 1000.0);
+            }
+            else
+            {
+                midTxt = string.Format(CultureInfo.InvariantCulture, _state.T("S\u1EDBm {0:0.0}s", "{0:0.0}s"), offMs / 1000.0);
+            }
+
+            SizeF midSz = g.MeasureString(midTxt, _fShelfSub);
+            float btnW = U(16f);
+            float midW = Math.Max(U(46f), midSz.Width + U(8f));
+            float pillH = U(15.5f);
+            float totalW = btnW + midW + btnW + U(4f);
+            RectangleF tray = new RectangleF(rightX - totalW, cy - pillH * 0.5f, totalW, pillH);
+
+            FillPill(g, tray, IsLight ? Color.FromArgb(215, 226, 232, 240) : Color.FromArgb(155, 24, 28, 40));
+
+            RectangleF rMinus = new RectangleF(tray.X + U(1f), tray.Y + U(1f), btnW, pillH - U(2f));
+            RectangleF rReset = new RectangleF(rMinus.Right + U(1f), tray.Y + U(1f), midW, pillH - U(2f));
+            RectangleF rPlus  = new RectangleF(rReset.Right + U(1f), tray.Y + U(1f), btnW, pillH - U(2f));
+
+            _hitZones.Add(new HitZone { Id = "lyric_off_minus", Rect = rMinus });
+            _hitZones.Add(new HitZone { Id = "lyric_off_reset", Rect = rReset });
+            _hitZones.Add(new HitZone { Id = "lyric_off_plus",  Rect = rPlus });
+
+            if (_hoveredId == "lyric_off_minus") FillPill(g, rMinus, Nw(45));
+            if (_hoveredId == "lyric_off_reset") FillPill(g, rReset, Nw(38));
+            if (_hoveredId == "lyric_off_plus")  FillPill(g, rPlus,  Nw(45));
+
+            Color btnInk = ToCrispInk(Nw(215));
+            Color midInk = (offMs != 0)
+                ? (IsLight ? Color.FromArgb(2, 132, 199) : Color.FromArgb(125, 211, 252))
+                : ToCrispInk(Nw(168));
+
+            DrawCenteredText(g, "\u2212", _fShelfSub, btnInk, rMinus.X + rMinus.Width * 0.5f, cy);
+            DrawCenteredText(g, midTxt, _fShelfSub, midInk, rReset.X + rReset.Width * 0.5f, cy);
+            DrawCenteredText(g, "+", _fShelfSub, btnInk, rPlus.X + rPlus.Width * 0.5f, cy);
         }
 
         private void DrawClippedMarqueeText(Graphics g, string text, Font font, Color col, RectangleF viewport, bool animateWhenLong)
@@ -5197,6 +5279,17 @@ RefreshBatteryLevel();
             bool shiftHeld = (Control.ModifierKeys & Keys.Shift) != 0;
             bool ctrlHeld = (Control.ModifierKeys & Keys.Control) != 0;
 
+            if (_isExpanded && _pageIndex == 0 && _isLyricsSplit && _state.ShowLyrics && _media.HasMedia)
+            {
+                float x0Ly = (_canvasW - _curW) * 0.5f;
+                bool overSyncChip = (_hoveredId == "lyric_off_minus" || _hoveredId == "lyric_off_reset" || _hoveredId == "lyric_off_plus");
+                if (overSyncChip || (shiftHeld && e.X >= x0Ly + U(238f)))
+                {
+                    StepLyricsOffsetMs(e.Delta > 0 ? 100 : -100);
+                    return;
+                }
+            }
+
             if (shiftHeld && _osd != null)
             {
                 if (!_isExpanded)
@@ -5273,8 +5366,16 @@ RefreshBatteryLevel();
 
         private void OnNotchMouseMove(object sender, MouseEventArgs e)
         {
+            Point prevPt = _lastHoverPt;
             _lastHoverPt = e.Location;
             if (_hoveredId == "media_seek") _needsRedraw = true;
+            if (_isExpanded && _pageIndex == 0 && _isLyricsSplit)
+            {
+                float paneSep = (_canvasW - _curW) * 0.5f + U(242f);
+                bool wasOver = (prevPt.X >= paneSep && prevPt.Y >= U(28f));
+                bool nowOver = (e.X >= paneSep && e.Y >= U(28f));
+                if (wasOver != nowOver) _needsRedraw = true;
+            }
 
             if (_isScrubbingSeek && e.Button == MouseButtons.Left && _lastSeekBarRect.Width > 10f)
             {
@@ -5617,8 +5718,24 @@ RefreshBatteryLevel();
                 {
                     _lyricScrollOffset = 0;
                     _lyricScrollUntilUtc = DateTime.MinValue;
-                    _media.SeekToSeconds(Math.Max(0.0, _lastDisplayedLyrics[lIdx].TimeSec + _media.TotalLyricsOffsetSec));
+                    _media.SeekToSeconds(_media.GetLineSeekTargetSec(_lastDisplayedLyrics[lIdx]));
                 }
+            }
+            else if (id == "lyric_off_minus")
+            {
+                StepLyricsOffsetMs(-200);
+            }
+            else if (id == "lyric_off_reset")
+            {
+                _state.LyricsOffsetMs = 0;
+                if (_media != null) _media.UserLyricsOffsetSec = 0.0;
+                _state.SaveAll();
+                _lyricSyncToastUntilUtc = DateTime.UtcNow.AddSeconds(2.2);
+                _needsRedraw = true;
+            }
+            else if (id == "lyric_off_plus")
+            {
+                StepLyricsOffsetMs(200);
             }
             else if (id == "qt_chip")
             {

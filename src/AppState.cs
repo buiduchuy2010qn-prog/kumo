@@ -49,6 +49,7 @@ namespace Kumo
         // ==================== MUSIC & LYRICS ====================
         public bool ShowLyrics = true;         // Show synced lyrics from LRCLIB
         public bool DefaultLyricsSplit = false;
+        public int LyricsOffsetMs = 0;         // Fine-tune lyrics delay in ms (+delays lyrics if ahead, -advances lyrics)
         public bool EqualizerEnabled = true;
         public bool DownloadHudEnabled = true;   // Animated equalizer bars on Notch
         public bool AudioDeviceOsdEnabled = true;
@@ -256,7 +257,7 @@ namespace Kumo
                         string v = line.Substring(eq + 1).Trim();
                         if (k == "lang") IsVietnamese = (v == "vi");
                         else if (k == "theme") int.TryParse(v, out ThemeIndex);
-                        else if (k == "ui_theme_mode") { int.TryParse(v, out UiThemeMode); if (UiThemeMode < 0 || UiThemeMode > 2) UiThemeMode = 0; }
+                        else if (k == "ui_theme_mode" || k == "panel_theme_mode") { int.TryParse(v, out UiThemeMode); if (UiThemeMode < 0 || UiThemeMode > 2) UiThemeMode = 0; }
                         else if (k == "monitor") int.TryParse(v, out MonitorIndex);
                         else if (k == "compact") int.TryParse(v, out CompactMode);
                         else if (k == "size_preset") int.TryParse(v, out NotchSizePreset);
@@ -270,6 +271,7 @@ namespace Kumo
                         else if (k == "fast_anim") FastAnimation = (v == "1");
                         else if (k == "show_lyrics") ShowLyrics = (v == "1");
                         else if (k == "lyrics_split") DefaultLyricsSplit = (v == "1");
+                        else if (k == "lyrics_offset_ms") { int.TryParse(v, out LyricsOffsetMs); LyricsOffsetMs = Math.Max(-5000, Math.Min(5000, LyricsOffsetMs)); }
                         else if (k == "equalizer") EqualizerEnabled = (v == "1");
                         else if (k == "dl_hud") DownloadHudEnabled = (v == "1");
                         else if (k == "audio_dev_osd") AudioDeviceOsdEnabled = (v == "1");
@@ -409,6 +411,7 @@ namespace Kumo
                 sb.AppendLine("fast_anim=" + (FastAnimation ? "1" : "0"));
                 sb.AppendLine("show_lyrics=" + (ShowLyrics ? "1" : "0"));
                 sb.AppendLine("lyrics_split=" + (DefaultLyricsSplit ? "1" : "0"));
+                sb.AppendLine("lyrics_offset_ms=" + LyricsOffsetMs);
                 sb.AppendLine("equalizer=" + (EqualizerEnabled ? "1" : "0"));
                 sb.AppendLine("dl_hud=" + (DownloadHudEnabled ? "1" : "0"));
                 sb.AppendLine("audio_dev_osd=" + (AudioDeviceOsdEnabled ? "1" : "0"));

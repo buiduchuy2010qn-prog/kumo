@@ -5,6 +5,7 @@ using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
 using System.Drawing.Text;
+using System.Globalization;
 using System.IO;
 using System.Windows.Forms;
 
@@ -940,9 +941,94 @@ namespace Kumo
                 _state.T("Hiển thị biểu tượng sóng âm ở góc phải của tai thỏ.", "Display the minimal audio equalizer indicator on the right side of the notch."),
                 _state.EqualizerEnabled);
 
+            y = DrawSectionHeader(g, x, y, _state.T("ĐỒNG BỘ NHỊP HÁT (SYNC TIMING)", "LYRICS TIMING SYNC"));
+            y = DrawLyricsOffsetCard(g, x, y, w);
+
             RectangleF openMusicBtn = new RectangleF(x, y + U(6f), U(210f), U(34f));
             DrawActionPill(g, "jump_page_0", openMusicBtn, _state.T("Mở trang Nhạc trên tai thỏ", "Open Music Page in Notch"), true);
             return y + U(48f);
+        }
+
+        private float DrawLyricsOffsetCard(Graphics g, float x, float y, float w)
+        {
+            float h = U(68f);
+            RectangleF card = new RectangleF(x, y, w, h);
+            DrawCardShell(g, card);
+
+            int offMs = _state.LyricsOffsetMs;
+            string midLabel;
+            if (offMs == 0)
+            {
+                midLabel = _state.T("0.0s Chuẩn", "0.0s Auto");
+            }
+            else if (offMs > 0)
+            {
+                midLabel = string.Format(CultureInfo.InvariantCulture, _state.T("Đang +{0:0.0}s", "Now +{0:0.0}s"), offMs / 1000.0);
+            }
+            else
+            {
+                midLabel = string.Format(CultureInfo.InvariantCulture, _state.T("Đang {0:0.0}s", "Now {0:0.0}s"), offMs / 1000.0);
+            }
+
+            string[] labels = new string[]
+            {
+                _state.T("− Sớm", "−0.2s"),
+                midLabel,
+                _state.T("+ Trễ", "+0.2s")
+            };
+            string[] ids = new string[] { "ly_off_minus", "ly_off_zero", "ly_off_plus" };
+
+            float totalSegW = U(6f);
+            float[] itemWidths = new float[3];
+            for (int i = 0; i < 3; i++)
+            {
+                SizeF sz = g.MeasureString(labels[i], _fSeg);
+                itemWidths[i] = Math.Max(U(i == 1 ? 76f : 50f), sz.Width + U(14f));
+                totalSegW += itemWidths[i] + U(3f);
+            }
+
+            RectangleF tray = new RectangleF(x + w - totalSegW - U(14f), y + (h - U(32f)) * 0.5f, totalSegW, U(32f));
+
+            GraphicsState txtClip = g.Save();
+            g.SetClip(new RectangleF(x + U(12f), y + U(4f), Math.Max(U(80f), tray.X - x - U(22f)), h - U(8f)), CombineMode.Intersect);
+            DrawLeftText(g,
+                _state.T("Tinh chỉnh nhịp lời bài hát", "Fine-tune lyrics timing"),
+                _fRowTitle, ColTextPri, x + U(16f), y + U(23f));
+            DrawLeftText(g,
+                _state.T("Tự khớp giọng hát; bấm (+ Trễ) nếu lời chạy sớm hơn nhạc.", "Auto-aligns vocals; tap (+0.2s) if lyrics appear ahead of music."),
+                _fRowDesc, ColTextSec, x + U(16f), y + U(45f));
+            g.Restore(txtClip);
+
+            FillRoundRect(g, tray, U(8f), IsLight ? Color.FromArgb(234, 240, 248) : Color.FromArgb(18, 21, 30));
+
+            float curX = tray.X + U(3f);
+            for (int i = 0; i < 3; i++)
+            {
+                RectangleF segRect = new RectangleF(curX, tray.Y + U(3f), itemWidths[i], U(26f));
+                AddZone(ids[i], segRect, false);
+
+                bool sel = (i == 1);
+                bool hov = (_hoverId == ids[i]);
+                if (sel)
+                {
+                    Color cTop = (offMs != 0) ? Color.FromArgb(14, 165, 233) : Color.FromArgb(37, 99, 235);
+                    Color cBot = (offMs != 0) ? Color.FromArgb(2, 132, 199) : Color.FromArgb(29, 78, 216);
+                    using (LinearGradientBrush lgb = new LinearGradientBrush(segRect, cTop, cBot, LinearGradientMode.Vertical))
+                    using (GraphicsPath gp = CreateRoundRect(segRect, U(6f)))
+                    {
+                        g.FillPath(lgb, gp);
+                    }
+                }
+                else if (hov)
+                {
+                    FillRoundRect(g, segRect, U(6f), IsLight ? Color.FromArgb(219, 229, 243) : Color.FromArgb(30, 255, 255, 255));
+                }
+
+                DrawCenterText(g, labels[i], _fSeg, sel ? Color.White : (IsLight ? Color.FromArgb(51, 65, 85) : Color.FromArgb(175, 185, 205)), segRect);
+                curX += itemWidths[i] + U(3f);
+            }
+
+            return y + h + U(8f);
         }
 
         // ==================== TAB 3: POMODORO ====================
@@ -1684,6 +1770,25 @@ namespace Kumo
             else if (id == "tog_eq")
             {
                 _state.EqualizerEnabled = !_state.EqualizerEnabled;
+                SaveAndApply();
+            }
+            else if (id == "ly_off_minus")
+            {
+                int next = Math.Max(-5000, Math.Min(5000, _state.LyricsOffsetMs - 200));
+                if (Math.Abs(next) < 50) next = 0;
+                _state.LyricsOffsetMs = next;
+                SaveAndApply();
+            }
+            else if (id == "ly_off_zero")
+            {
+                _state.LyricsOffsetMs = 0;
+                SaveAndApply();
+            }
+            else if (id == "ly_off_plus")
+            {
+                int next = Math.Max(-5000, Math.Min(5000, _state.LyricsOffsetMs + 200));
+                if (Math.Abs(next) < 50) next = 0;
+                _state.LyricsOffsetMs = next;
                 SaveAndApply();
             }
             else if (id == "jump_page_0")

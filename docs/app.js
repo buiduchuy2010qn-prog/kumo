@@ -205,7 +205,7 @@
       const r = await fetch("https://api.github.com/repos/buiduchuy2010qn-prog/kumo/releases/latest");
       if (!r.ok) return;
       const d = await r.json();
-      const tag = d.tag_name || "v1.1.25";
+      const tag = d.tag_name || "v1.1.26";
       const exe = (d.assets || []).find(a => a.name && a.name.toLowerCase().endsWith(".exe"));
       const url = exe ? exe.browser_download_url : "https://github.com/buiduchuy2010qn-prog/kumo/releases/latest";
       $$("[data-dl-link]").forEach(el => { el.href = url; });
@@ -594,7 +594,7 @@
         showHud({
           ico: "✓",
           icoCol: "#4ade80",
-          lbl: (vi ? "Tải xong · " : "Saved · ") + (isStore ? "Spotify Music" : "KumoSetup-v1.1.25.exe"),
+          lbl: (vi ? "Tải xong · " : "Saved · ") + (isStore ? "Spotify Music" : "KumoSetup-v1.1.26.exe"),
           lblCol: "#4ade80",
           fillBg: "linear-gradient(90deg,#10b981,#4ade80)",
           pct: 100,
