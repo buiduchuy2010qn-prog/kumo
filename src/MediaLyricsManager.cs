@@ -68,6 +68,7 @@ namespace Kumo
         public string SourceAppId { get; private set; }
         public bool HasMedia { get; private set; }
         public bool IsPlaying { get; private set; }
+        public bool IsNonMusicMedia { get; private set; }
 
         public string CurrentLyricLine { get; private set; }
         public string NextLyricLine { get; private set; }
@@ -1318,9 +1319,18 @@ namespace Kumo
                     artist = props.AlbumArtist.Trim();
                 }
 
-                // Clean up YouTube "- YouTube" or "(123)" prefixes if present
+                string appIdNow = chosen.SourceAppUserModelId ?? "";
+                string rawSmtcArtist = artist;
+
+                // Clean up "(123)" notification prefixes and trailing "- YouTube" tab suffix if present
                 title = Regex.Replace(title, @"^\(\d+\)\s*", "").Trim();
-                if (string.IsNullOrEmpty(artist))
+                if (title.Length > 10 && Regex.IsMatch(title, @"\s+-\s+YouTube(\s+Music)?$", RegexOptions.IgnoreCase))
+                {
+                    title = Regex.Replace(title, @"\s+-\s+YouTube(\s+Music)?$", "", RegexOptions.IgnoreCase).Trim();
+                }
+
+                string rawTitleBeforeSplit = title;
+                if (string.IsNullOrEmpty(artist) && !IsSocialOrGenericTitle(rawTitleBeforeSplit, rawSmtcArtist, appIdNow))
                 {
                     int dash = title.IndexOf(" - ");
                     if (dash > 0 && dash < title.Length - 3)
@@ -1369,11 +1379,15 @@ namespace Kumo
                 }
                 catch { }
 
-                SourceAppId = chosen.SourceAppUserModelId ?? "";
+                SourceAppId = appIdNow;
                 CurrentTitle = title;
                 CurrentArtist = artist;
                 IsPlaying = playingNow;
                 HasMedia = true;
+
+                bool nowNonMusic = IsNonMusicOrSocialClip(rawTitleBeforeSplit, rawSmtcArtist, title, artist, SourceAppId, _durationSec);
+                bool wasNonMusic = IsNonMusicMedia;
+                IsNonMusicMedia = nowNonMusic;
 
                 string trackKey = artist + "|" + title;
                 bool trackChanged = !string.Equals(trackKey, _lastTrackKey, StringComparison.Ordinal);
@@ -1387,6 +1401,7 @@ namespace Kumo
                     {
                         if (_albumArt != null) { try { _albumArt.Dispose(); } catch { } _albumArt = null; }
                         _dominantColor = Color.FromArgb(44, 110, 215);
+                        _syncedLyrics.Clear();
                         _baseLrcSeeds.Clear();
                         _lrcAudioMasterDurSec = 0.0;
                         _lrcFirstTagSec = 0.0;
@@ -1409,8 +1424,54 @@ namespace Kumo
                         _sawNearZeroStart = (GetLivePositionSec() <= 3.0);
                         _sustainedMusicTicks = 0;
                         _silentIntroHold = false;
+                        if (nowNonMusic)
+                        {
+                            CurrentLyricLine = "";
+                            NextLyricLine = "";
+                            LyricsStatus = "Skipped";
+                        }
                     }
 
+                    if (!nowNonMusic)
+                    {
+                        string capKey = trackKey;
+                        string capTitle = title;
+                        string capArtist = artist;
+                        ThreadPool.QueueUserWorkItem(delegate
+                        {
+                            ResolveYoutubeEnrichment(capKey, capTitle, capArtist);
+                        });
+                    }
+                }
+                else if (nowNonMusic && !wasNonMusic)
+                {
+                    lock (_lock)
+                    {
+                        _syncedLyrics.Clear();
+                        _baseLrcSeeds.Clear();
+                        _ytAsrWords = null;
+                        _ytCaptionCues = null;
+                        _lastMatchedJson = null;
+                        CurrentLyricLine = "";
+                        NextLyricLine = "";
+                        LyricsStatus = "Skipped";
+                        if (!_hasRealSmtcThumb && _albumArt != null)
+                        {
+                            try { _albumArt.Dispose(); } catch { }
+                            _albumArt = null;
+                            _dominantColor = Color.FromArgb(44, 110, 215);
+                        }
+                    }
+                }
+                else if (!nowNonMusic && wasNonMusic)
+                {
+                    _lastLyricsQuery = "";
+                    lock (_lock)
+                    {
+                        _sawNearZeroStart = (GetLivePositionSec() <= 3.0);
+                        CurrentLyricLine = "Loading lyrics...";
+                        LyricsStatus = "Loading lyrics...";
+                    }
                     string capKey = trackKey;
                     string capTitle = title;
                     string capArtist = artist;
@@ -1419,7 +1480,7 @@ namespace Kumo
                         ResolveYoutubeEnrichment(capKey, capTitle, capArtist);
                     });
                 }
-                else
+                else if (!nowNonMusic)
                 {
                     string reEvalJson = null;
                     string reEvalSong = null;
@@ -1435,7 +1496,18 @@ namespace Kumo
                     }
                     if (reEvalJson != null)
                     {
-                        TryProcessLrclibJson(reEvalJson, reEvalSong, reEvalArtist);
+                        if (!TryProcessLrclibJson(reEvalJson, reEvalSong, reEvalArtist))
+                        {
+                            lock (_lock)
+                            {
+                                _syncedLyrics.Clear();
+                                _baseLrcSeeds.Clear();
+                                _lastMatchedJson = null;
+                                CurrentLyricLine = "Lyrics not available";
+                                NextLyricLine = "";
+                                LyricsStatus = "None";
+                            }
+                        }
                     }
                     else
                     {
@@ -1469,18 +1541,21 @@ namespace Kumo
                     }
                 }
 
-                // Fetch Synced Lyrics from LRCLIB when song changes
-                string queryKey = (artist + " " + title).Trim();
-                if (!string.IsNullOrEmpty(queryKey) && !string.Equals(queryKey, _lastLyricsQuery, StringComparison.OrdinalIgnoreCase))
+                // Fetch Synced Lyrics from LRCLIB when song changes (strictly skipped for voice notes / social clips)
+                if (!nowNonMusic)
                 {
-                    _lastLyricsQuery = queryKey;
-                    string capTk = trackKey;
-                    string capTi = title;
-                    string capAr = artist;
-                    ThreadPool.QueueUserWorkItem(delegate
+                    string queryKey = (artist + " " + title).Trim();
+                    if (!string.IsNullOrEmpty(queryKey) && !string.Equals(queryKey, _lastLyricsQuery, StringComparison.OrdinalIgnoreCase))
                     {
-                        FetchLyricsFromLrclib(capTk, capTi, capAr);
-                    });
+                        _lastLyricsQuery = queryKey;
+                        string capTk = trackKey;
+                        string capTi = title;
+                        string capAr = artist;
+                        ThreadPool.QueueUserWorkItem(delegate
+                        {
+                            FetchLyricsFromLrclib(capTk, capTi, capAr);
+                        });
+                    }
                 }
             }
             catch
@@ -1494,12 +1569,14 @@ namespace Kumo
         {
             HasMedia = false;
             IsPlaying = false;
+            IsNonMusicMedia = false;
             CurrentTitle = "";
             CurrentArtist = "";
             SourceAppId = "";
             _basePositionSec = 0.0;
             _durationSec = 0.0;
             _lastTrackKey = "";
+            _lastLyricsQuery = "";
             _lastThumbStreamSize = 0;
             _hasRealSmtcThumb = false;
             lock (_lock)
@@ -1510,6 +1587,154 @@ namespace Kumo
                     _albumArt = null;
                 }
             }
+        }
+
+        public string GetFallbackArtistLabel(bool vi)
+        {
+            if (IsNonMusicMedia)
+            {
+                if (_durationSec > 900.0)
+                    return vi ? "Video d\u00E0i \u00B7 Tuy\u1EC3n t\u1EADp" : "Long video \u00B7 Mix";
+                if (_durationSec > 0.5 && _durationSec < 45.0)
+                    return vi ? "Tin nh\u1EAFn tho\u1EA1i" : "Voice message";
+                string appLbl = GetCleanSourceAppLabel(SourceAppId);
+                if (!string.IsNullOrEmpty(appLbl))
+                    return appLbl;
+                return vi ? "\u00C2m thanh trang web" : "Web / Chat audio";
+            }
+            string cleanApp = GetCleanSourceAppLabel(SourceAppId);
+            if (!string.IsNullOrEmpty(cleanApp)) return cleanApp;
+            return vi ? "Tr\u00ECnh ph\u00E1t nh\u1EA1c" : "Media Player";
+        }
+
+        private static string GetCleanSourceAppLabel(string appId)
+        {
+            if (string.IsNullOrEmpty(appId)) return "";
+            if (appId.IndexOf("chrome", StringComparison.OrdinalIgnoreCase) >= 0) return "Google Chrome";
+            if (appId.IndexOf("msedge", StringComparison.OrdinalIgnoreCase) >= 0) return "Microsoft Edge";
+            if (appId.IndexOf("coccoc", StringComparison.OrdinalIgnoreCase) >= 0) return "C\u1ED1c C\u1ED1c";
+            if (appId.IndexOf("brave", StringComparison.OrdinalIgnoreCase) >= 0) return "Brave";
+            if (appId.IndexOf("firefox", StringComparison.OrdinalIgnoreCase) >= 0) return "Firefox";
+            if (appId.IndexOf("opera", StringComparison.OrdinalIgnoreCase) >= 0) return "Opera";
+            if (appId.IndexOf("vivaldi", StringComparison.OrdinalIgnoreCase) >= 0) return "Vivaldi";
+            if (appId.IndexOf("spotify", StringComparison.OrdinalIgnoreCase) >= 0) return "Spotify";
+            if (appId.IndexOf("zalo", StringComparison.OrdinalIgnoreCase) >= 0) return "Zalo";
+            if (appId.IndexOf("telegram", StringComparison.OrdinalIgnoreCase) >= 0) return "Telegram";
+            if (appId.IndexOf("discord", StringComparison.OrdinalIgnoreCase) >= 0) return "Discord";
+            if (appId.IndexOf("messenger", StringComparison.OrdinalIgnoreCase) >= 0) return "Messenger";
+            if (appId.IndexOf("whatsapp", StringComparison.OrdinalIgnoreCase) >= 0) return "WhatsApp";
+            if (appId.IndexOf("vlc", StringComparison.OrdinalIgnoreCase) >= 0) return "VLC";
+            return "";
+        }
+
+        private static readonly HashSet<string> _genericNonSongTitles = new HashSet<string>(StringComparer.Ordinal)
+        {
+            "facebook", "fb", "messenger", "meta", "meta ai", "instagram", "threads",
+            "zalo", "zalo web", "zalo pc", "telegram", "telegram web", "discord",
+            "whatsapp", "viber", "wechat", "line", "signal", "locket", "snapchat",
+            "tiktok", "douyin", "twitter", "x", "reddit", "pinterest", "linkedin", "twitch",
+            "youtube", "watch", "facebook watch", "reels", "reel", "thuoc phim",
+            "stories", "story", "shorts", "trang chu", "home", "new tab", "the moi",
+            "chatgpt", "openai", "gemini", "google gemini", "hoi gemini", "claude", "grok", "copilot", "perplexity",
+            "google", "google dich", "google translate", "google meet", "zoom", "microsoft teams", "teams",
+            "canva", "capcut", "shopee", "lazada", "tiki", "aternos", "roblox", "garena",
+            "tin nhan", "am thanh", "audio", "video", "media", "untitled", "dang tai", "loading"
+        };
+
+        private static bool IsChatOrCallApp(string appId)
+        {
+            if (string.IsNullOrEmpty(appId) || IsLikelyBrowserApp(appId)) return false;
+            return appId.IndexOf("zalo", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   appId.IndexOf("telegram", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   appId.IndexOf("discord", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   appId.IndexOf("whatsapp", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   appId.IndexOf("messenger", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   appId.IndexOf("viber", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   appId.IndexOf("skype", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   appId.IndexOf("teams", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   appId.IndexOf("zoom", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   appId.IndexOf("slack", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   appId.IndexOf("signal", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   appId.IndexOf("wechat", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   appId.IndexOf("line", StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+
+        private static bool IsSocialOrGenericTitle(string rawTitle, string rawSmtcArtist, string appId)
+        {
+            string t = (rawTitle ?? "").Trim();
+            if (string.IsNullOrEmpty(t)) return true;
+            if (t.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
+                t.StartsWith("https://", StringComparison.OrdinalIgnoreCase) ||
+                t.StartsWith("blob:", StringComparison.OrdinalIgnoreCase) ||
+                t.StartsWith("file://", StringComparison.OrdinalIgnoreCase) ||
+                t.StartsWith("about:", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            string tFold = NormalizeFold(t);
+            if (string.IsNullOrEmpty(tFold)) return true;
+
+            if (tFold == "voice" || tFold == "voice message" || tFold == "audio message" ||
+                tFold == "tin nhan thoai" || tFold == "ghi am" || tFold == "ban ghi am" ||
+                tFold == "nhac nen" || tFold == "am thanh goc" || tFold == "original sound" || tFold == "original audio" ||
+                tFold.StartsWith("voice message ", StringComparison.Ordinal) ||
+                tFold.StartsWith("audio message ", StringComparison.Ordinal) ||
+                tFold.StartsWith("tin nhan thoai ", StringComparison.Ordinal) ||
+                tFold.StartsWith("nhac nen ", StringComparison.Ordinal) ||
+                tFold.StartsWith("am thanh goc ", StringComparison.Ordinal) ||
+                tFold.StartsWith("original sound ", StringComparison.Ordinal) ||
+                tFold.StartsWith("original audio ", StringComparison.Ordinal))
+            {
+                return true;
+            }
+
+            if (Regex.IsMatch(t, @"^(audioclip|voice[_ -]?msg|voice[_ -]?message|recording[_ -]?\d|rec[_ -]?\d|vid[_ -]?\d{4}|img[_ -]?\d{4}|pxl[_ -]?\d{4}|dji[_ -]?\d{4})", RegexOptions.IgnoreCase))
+            {
+                return true;
+            }
+
+            string aFold = NormalizeFold(rawSmtcArtist);
+            if (string.IsNullOrEmpty(aFold) || string.Equals(aFold, tFold, StringComparison.Ordinal))
+            {
+                if (_genericNonSongTitles.Contains(tFold)) return true;
+
+                if (Regex.IsMatch(t, @"\.(ogg|opus|amr|3gp|webm)$", RegexOptions.IgnoreCase)) return true;
+                if (IsLikelyBrowserApp(appId) && t.IndexOf(" - ", StringComparison.Ordinal) < 0 &&
+                    Regex.IsMatch(t, @"\.(mp4|m4a|wav|mp3|mov)$", RegexOptions.IgnoreCase))
+                {
+                    return true;
+                }
+
+                if (Regex.IsMatch(t, @"(\|\s*(Facebook|Messenger|Instagram|Threads|TikTok|Zalo|Discord|Telegram|WhatsApp|Reddit|X|Twitter|LinkedIn|Twitch)\b|[-\u2013\u2014\u2022]\s*(Facebook|Messenger|Instagram|Threads|TikTok|Zalo|Discord|Telegram|WhatsApp)\s*$|^(Facebook|Messenger|Zalo|Telegram|Discord|Instagram|TikTok|WhatsApp)\s*[-\u2013\u2014|:]|\bon Instagram:)", RegexOptions.IgnoreCase))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        public static bool IsNonMusicOrSocialClip(string rawTitleBeforeSplit, string rawSmtcArtist, string resolvedTitle, string resolvedArtist, string appId, double durSec)
+        {
+            if (IsChatOrCallApp(appId)) return true;
+            if (durSec > 0.5 && durSec < 25.0) return true;
+            if (durSec > 0.5 && durSec < 45.0 && string.IsNullOrEmpty(resolvedArtist)) return true;
+            if (durSec > 900.0) return true;
+
+            if (IsSocialOrGenericTitle(rawTitleBeforeSplit, rawSmtcArtist, appId)) return true;
+            if (string.IsNullOrEmpty(resolvedArtist) && IsSocialOrGenericTitle(resolvedTitle, "", appId)) return true;
+
+            if (IsLikelyBrowserApp(appId) && string.IsNullOrEmpty(resolvedArtist))
+            {
+                string tFold = NormalizeFold(resolvedTitle);
+                if (string.IsNullOrEmpty(tFold) || !tFold.Contains(" "))
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         private static bool IsLikelyBrowserApp(string appId)
@@ -1642,8 +1867,11 @@ namespace Kumo
                 // Brief pause so _durationSec from SMTC timeline is populated if it arrived slightly after title
                 Thread.Sleep(250);
                 if (!string.Equals(_lastTrackKey, trackKey, StringComparison.Ordinal)) return;
+                if (IsNonMusicMedia) return;
+                if (_durationSec > 0.5 && (_durationSec < 28.0 || _durationSec > 900.0)) return;
 
                 bool browserPlay = IsLikelyBrowserApp(SourceAppId);
+                if (browserPlay && string.IsNullOrEmpty(rawArtist)) return;
                 if (!browserPlay && _hasRealSmtcThumb) return;
 
                 string searchQ = ((rawTitle ?? "") + " " + (rawArtist ?? "")).Trim();
@@ -1671,7 +1899,7 @@ namespace Kumo
                     }
                 }
 
-                if (string.IsNullOrEmpty(html) || !string.Equals(_lastTrackKey, trackKey, StringComparison.Ordinal)) return;
+                if (string.IsNullOrEmpty(html) || !string.Equals(_lastTrackKey, trackKey, StringComparison.Ordinal) || IsNonMusicMedia) return;
 
                 MatchCollection vrBlocks = Regex.Matches(html, "\"videoRenderer\":\\{\"videoId\":\"([A-Za-z0-9_-]{11})\"(?s:.*?)(?=\"videoRenderer\":\\{\"videoId\":|$)");
                 string chosenId = null;
@@ -1681,7 +1909,7 @@ namespace Kumo
                 for (int i = 0; i < Math.Min(8, vrBlocks.Count); i++)
                 {
                     string vid = vrBlocks[i].Groups[1].Value;
-                    if (chosenId == null && curDur <= 20.0) chosenId = vid;
+                    if (chosenId == null && curDur <= 1.0 && !browserPlay) chosenId = vid;
 
                     Match lenM = Regex.Match(vrBlocks[i].Value, "\"lengthText\":\\{.*?\"simpleText\":\"([0-9:]+)\"");
                     if (!lenM.Success) continue;
@@ -1696,7 +1924,7 @@ namespace Kumo
                     if (curDur > 20.0)
                     {
                         double dDiff = Math.Abs(sec - curDur);
-                        if (dDiff <= 5.5 && dDiff < bestDurDiff)
+                        if (dDiff <= 6.5 && dDiff < bestDurDiff)
                         {
                             bestDurDiff = dDiff;
                             chosenId = vid;
@@ -1705,14 +1933,17 @@ namespace Kumo
                     }
                 }
 
-                if (chosenId == null && vrBlocks.Count > 0)
+                if (chosenId == null && (!browserPlay || curDur <= 1.0))
                 {
-                    chosenId = vrBlocks[0].Groups[1].Value;
-                }
-                if (chosenId == null)
-                {
-                    Match mFallback = Regex.Match(html, "\"videoRenderer\":\\{\"videoId\":\"([A-Za-z0-9_-]{11})\"");
-                    if (mFallback.Success) chosenId = mFallback.Groups[1].Value;
+                    if (vrBlocks.Count > 0)
+                    {
+                        chosenId = vrBlocks[0].Groups[1].Value;
+                    }
+                    else
+                    {
+                        Match mFallback = Regex.Match(html, "\"videoRenderer\":\\{\"videoId\":\"([A-Za-z0-9_-]{11})\"");
+                        if (mFallback.Success) chosenId = mFallback.Groups[1].Value;
+                    }
                 }
                 if (string.IsNullOrEmpty(chosenId)) return;
 
@@ -2189,10 +2420,39 @@ namespace Kumo
             }
             CurrentTitle = "Chiều Hoàng Hôn";
             CurrentArtist = "Indie Chill · YouTube Music";
+            SourceAppId = "chrome.exe";
             HasMedia = true;
             IsPlaying = true;
+            IsNonMusicMedia = false;
             _basePositionSec = 47.0;
             _durationSec = 214.0;
+            _positionSampledUtc = DateTime.UtcNow;
+        }
+
+        public void SetMockVoiceNotePreview(bool enable)
+        {
+            if (!enable)
+            {
+                ClearMediaState();
+                return;
+            }
+            lock (_lock)
+            {
+                if (_albumArt != null) { try { _albumArt.Dispose(); } catch { } _albumArt = null; }
+                _dominantColor = Color.FromArgb(44, 110, 215);
+                _syncedLyrics.Clear();
+                CurrentLyricLine = "";
+                NextLyricLine = "";
+                LyricsStatus = "Skipped";
+            }
+            CurrentTitle = "Facebook";
+            CurrentArtist = "";
+            SourceAppId = "chrome.exe";
+            HasMedia = true;
+            IsPlaying = true;
+            IsNonMusicMedia = true;
+            _basePositionSec = 3.0;
+            _durationSec = 10.0;
             _positionSampledUtc = DateTime.UtcNow;
         }
 
@@ -2232,7 +2492,7 @@ namespace Kumo
 
         public bool HasCollapsedLyricNow()
         {
-            if (!HasMedia || !IsPlaying) return false;
+            if (!HasMedia || !IsPlaying || IsNonMusicMedia) return false;
             double effPos = GetEffectiveLyricsPosSec();
             lock (_lock)
             {
@@ -2402,12 +2662,13 @@ namespace Kumo
             }
         }
 
-        private static double ScoreCandidateTitle(string targetSongFold, string candTrackFold, string candArtistFold, out bool isSameSong)
+        private static double ScoreCandidateTitle(string targetSongFold, string candTrackFold, string candArtistFold, out bool isSameSong, out int matchedArtistWords)
         {
+            matchedArtistWords = 0;
             if (string.IsNullOrEmpty(targetSongFold))
             {
-                isSameSong = true;
-                return 0.0;
+                isSameSong = false;
+                return -400.0;
             }
             if (string.IsNullOrEmpty(candTrackFold))
             {
@@ -2427,8 +2688,8 @@ namespace Kumo
                 : candArtistFold.Split(new char[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
             if (tWords.Length == 0)
             {
-                isSameSong = true;
-                return 0.0;
+                isSameSong = false;
+                return -400.0;
             }
 
             int matchedTrack = 0;
@@ -2459,6 +2720,7 @@ namespace Kumo
                 }
             }
 
+            matchedArtistWords = matchedArtist;
             int effectiveTargetLen = Math.Max(1, tWords.Length - matchedArtist);
             if (matchedTrack == tWords.Length || (matchedTrack >= 2 && matchedTrack == effectiveTargetLen && cWords.Length <= matchedTrack + 3))
             {
@@ -2559,6 +2821,17 @@ namespace Kumo
         private bool TryProcessLrclibJson(string json, string targetSongFold, string targetArtistFold)
         {
             if (string.IsNullOrEmpty(json)) return false;
+            if (IsNonMusicMedia) return false;
+            if (_durationSec > 0.5 && (_durationSec < 28.0 || _durationSec > 900.0)) return false;
+
+            string[] targetWords = string.IsNullOrEmpty(targetSongFold)
+                ? new string[0]
+                : targetSongFold.Split(new char[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+            int targetWordCount = targetWords.Length;
+            if (targetWordCount == 0) return false;
+
+            string artistCompact = (targetArtistFold ?? "").Replace(" ", "");
+            if (string.IsNullOrEmpty(artistCompact) && targetWordCount < 2) return false;
 
             MatchCollection objs = Regex.Matches(json, @"\{\s*""id""\s*:[\s\S]*?(?=\},\s*\{\s*""id""|\}\s*\]\s*$|\}\s*$)");
             if (objs.Count == 0) return false;
@@ -2566,7 +2839,6 @@ namespace Kumo
             List<LrcCandidate> cands = new List<LrcCandidate>();
             string bestPlain = null;
             double bestPlainScore = -1e9;
-            string artistCompact = (targetArtistFold ?? "").Replace(" ", "");
 
             double minSameSongAudioDur = 1e9;
             double minSameSongFirstSec = 0.0;
@@ -2591,9 +2863,10 @@ namespace Kumo
                 if (mAr.Success) cArtist = Regex.Unescape(mAr.Groups[1].Value);
 
                 bool isSame;
+                int matchedArtistWords;
                 string cTrackFold = NormalizeFold(cTrack);
                 string cArtistFold = NormalizeFold(cArtist);
-                double tScore = ScoreCandidateTitle(targetSongFold, cTrackFold, cArtistFold, out isSame);
+                double tScore = ScoreCandidateTitle(targetSongFold, cTrackFold, cArtistFold, out isSame, out matchedArtistWords);
                 if (isSame && !string.IsNullOrEmpty(_lastRawVersionHint) && (" " + cTrackFold + " ").IndexOf(" " + _lastRawVersionHint + " ", StringComparison.Ordinal) >= 0)
                 {
                     tScore += 145.0;
@@ -2605,6 +2878,30 @@ namespace Kumo
                     if (cArtCompact.Contains(artistCompact) || artistCompact.Contains(cArtCompact))
                     {
                         aBonus = 220.0;
+                    }
+                }
+
+                bool hasArtistEvidence = (aBonus > 0.0 || matchedArtistWords > 0);
+                if (isSame)
+                {
+                    if (_durationSec >= 28.0 && cDur > 15.0)
+                    {
+                        if (string.IsNullOrEmpty(artistCompact) && matchedArtistWords == 0)
+                        {
+                            if (Math.Abs(cDur - _durationSec) > 8.0) isSame = false;
+                        }
+                        else if (!hasArtistEvidence && targetWordCount == 1)
+                        {
+                            if (Math.Abs(cDur - _durationSec) > 10.0) isSame = false;
+                        }
+                        else if (cDur > _durationSec + 85.0 || _durationSec > cDur + 165.0)
+                        {
+                            isSame = false;
+                        }
+                    }
+                    else if (string.IsNullOrEmpty(artistCompact) && matchedArtistWords == 0 && _durationSec <= 0.5)
+                    {
+                        isSame = false;
                     }
                 }
 
@@ -2644,8 +2941,10 @@ namespace Kumo
                 Match mPl = Regex.Match(chunk, "\"plainLyrics\"\\s*:\\s*\"((?:\\\\.|[^\"\\\\])*)\"");
                 if (mPl.Success && !string.IsNullOrEmpty(mPl.Groups[1].Value))
                 {
+                    bool plainDurOk = (_durationSec <= 0.5 && cDur > 25.0) ||
+                                      (_durationSec >= 35.0 && cDur > 25.0 && Math.Abs(cDur - _durationSec) <= 45.0);
                     double pSc = tScore + aBonus - i * 1.5;
-                    if (isSame && pSc > bestPlainScore)
+                    if (isSame && hasArtistEvidence && plainDurOk && pSc > bestPlainScore)
                     {
                         bestPlainScore = pSc;
                         bestPlain = Regex.Unescape(mPl.Groups[1].Value);
@@ -2784,6 +3083,7 @@ namespace Kumo
 
         private void FetchLyricsFromLrclib(string expectedTrackKey, string track, string artist)
         {
+            if (IsNonMusicMedia) return;
             lock (_lock)
             {
                 _syncedLyrics.Clear();
@@ -2794,6 +3094,12 @@ namespace Kumo
 
             try
             {
+                if (_durationSec <= 0.5 && string.IsNullOrEmpty(artist))
+                {
+                    Thread.Sleep(250);
+                    if (!string.Equals(_lastTrackKey, expectedTrackKey, StringComparison.Ordinal) || IsNonMusicMedia) return;
+                }
+
                 string songCore;
                 string artistCore;
                 bool isMv;
@@ -2809,6 +3115,19 @@ namespace Kumo
 
                 string songFold = NormalizeFold(songCore);
                 string artistFold = NormalizeFold(artistCore);
+                if (string.IsNullOrEmpty(songFold) || (string.IsNullOrEmpty(artistFold) && !songFold.Contains(" ")))
+                {
+                    lock (_lock)
+                    {
+                        if (!IsNonMusicMedia && string.Equals(_lastTrackKey, expectedTrackKey, StringComparison.Ordinal))
+                        {
+                            CurrentLyricLine = "Lyrics not available";
+                            NextLyricLine = "";
+                            LyricsStatus = "None";
+                        }
+                    }
+                    return;
+                }
                 string cachePath = GetLyricsCacheFilePath(songFold, artistFold);
 
                 // 0. Instant local disk cache hit (0.3ms, works even if LRCLIB is 503 overloaded!)
@@ -2830,7 +3149,7 @@ namespace Kumo
 
                 for (int round = 0; round < 3; round++)
                 {
-                    if (!string.Equals(_lastTrackKey, expectedTrackKey, StringComparison.Ordinal)) return;
+                    if (!string.Equals(_lastTrackKey, expectedTrackKey, StringComparison.Ordinal) || IsNonMusicMedia) return;
 
                     bool anyBusy = false;
 
@@ -2877,7 +3196,7 @@ namespace Kumo
                     // LRCLIB was 503 ServerOverloaded: wait 3.5s and auto-retry while song is still playing!
                     lock (_lock)
                     {
-                        if (string.Equals(_lastTrackKey, expectedTrackKey, StringComparison.Ordinal))
+                        if (!IsNonMusicMedia && string.Equals(_lastTrackKey, expectedTrackKey, StringComparison.Ordinal))
                         {
                             CurrentLyricLine = "Loading lyrics...";
                         }
@@ -2885,7 +3204,7 @@ namespace Kumo
                     Thread.Sleep(3500);
                 }
 
-                if (!string.Equals(_lastTrackKey, expectedTrackKey, StringComparison.Ordinal)) return;
+                if (!string.Equals(_lastTrackKey, expectedTrackKey, StringComparison.Ordinal) || IsNonMusicMedia) return;
                 bool usedYtFallback = false;
                 lock (_lock)
                 {
@@ -2904,7 +3223,7 @@ namespace Kumo
             }
             catch
             {
-                if (!string.Equals(_lastTrackKey, expectedTrackKey, StringComparison.Ordinal)) return;
+                if (!string.Equals(_lastTrackKey, expectedTrackKey, StringComparison.Ordinal) || IsNonMusicMedia) return;
                 bool usedYtFallback = false;
                 lock (_lock)
                 {

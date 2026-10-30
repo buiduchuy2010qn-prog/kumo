@@ -2560,7 +2560,7 @@ namespace Kumo
                 ? _media.CurrentTitle
                 : _state.T("Chưa phát nhạc", "Nothing playing");
             string artist = hasMedia
-                ? (!string.IsNullOrEmpty(_media.CurrentArtist) ? _media.CurrentArtist : _state.T("Đang mở trình phát", "Media Player"))
+                ? (!string.IsNullOrEmpty(_media.CurrentArtist) ? _media.CurrentArtist : _media.GetFallbackArtistLabel(_state.IsVietnamese))
                 : _state.T("Mở nhạc trên YouTube, Spotify hoặc trình duyệt", "Play music on Spotify, YouTube or browser");
 
             Color titleCol = hasMedia ? InkPri : Nw(205);
@@ -2641,8 +2641,8 @@ namespace Kumo
             string title = hasMedia && !string.IsNullOrEmpty(_media.CurrentTitle)
                 ? _media.CurrentTitle
                 : _state.T("Chưa phát nhạc", "Nothing playing");
-            string artist = hasMedia && !string.IsNullOrEmpty(_media.CurrentArtist)
-                ? _media.CurrentArtist
+            string artist = hasMedia
+                ? (!string.IsNullOrEmpty(_media.CurrentArtist) ? _media.CurrentArtist : _media.GetFallbackArtistLabel(_state.IsVietnamese))
                 : _state.T("YouTube · Spotify", "YouTube · Spotify");
 
             // Clipped smooth marquee inside Left Song Column (x0+96 .. x0+226, 12dp clear of vertical divider at x0+238!)
@@ -2703,6 +2703,21 @@ namespace Kumo
                 _lastDisplayedLyrics = new LyricLine[0];
                 DrawLeftVCenteredText(g, _state.T("♪ Phát một bài hát để xem", "♪ Play a song to see"), _fLyricOff, Nw(140), paneX, U(66f));
                 DrawLeftVCenteredText(g, _state.T("lời bài hát Karaoke đồng bộ LRCLIB.", "word-by-word LRCLIB synced lyrics."), _fLyricOff, Nw(105), paneX, U(89f));
+                return;
+            }
+
+            if (_media.IsNonMusicMedia)
+            {
+                _lastDisplayedLyrics = new LyricLine[0];
+                bool isLongMix = (dur > 900.0);
+                string topMsg = isLongMix
+                    ? _state.T("♪ Video dài / Tuyển tập", "♪ Long video / Mix")
+                    : _state.T("♪ Tin nhắn thoại / Âm thanh ngắn", "♪ Voice message / Short audio");
+                string subMsg = isLongMix
+                    ? _state.T("Tự động bỏ qua lời bài hát đơn.", "Single-track lyrics skipped automatically.")
+                    : _state.T("Tự động bỏ qua tìm lời bài hát.", "Lyrics lookup skipped automatically.");
+                DrawLeftVCenteredText(g, topMsg, _fLyricOff, Nw(150), paneX, U(66f));
+                DrawLeftVCenteredText(g, subMsg, _fLyricOff, Nw(105), paneX, U(89f));
                 return;
             }
 
